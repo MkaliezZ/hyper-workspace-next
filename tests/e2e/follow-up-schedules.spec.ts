@@ -1,3 +1,4 @@
+import { testOrigin } from "./origin";
 import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 
@@ -114,7 +115,7 @@ test("Finite schedules run through the worker and share direct and AI pause/resu
     await expect(active).toContainText("每 60 分钟");
     await expect(active).toContainText("/3 次");
     await active.scrollIntoViewIfNeeded();
-    expect(page.url()).toBe("http://127.0.0.1:5173/");
+    expect(page.url()).toBe(testOrigin + "/");
     await expect(page).toHaveTitle(/Hyper Workspace/);
     await expect(page.locator("vite-error-overlay")).toHaveCount(0);
     await page.screenshot({
@@ -138,7 +139,7 @@ test("Finite schedules run through the worker and share direct and AI pause/resu
     for (const row of await records())
       if (["active", "paused"].includes(row.state))
         await page.request.post(path, {
-          headers: { Origin: "http://127.0.0.1:5173" },
+          headers: { Origin: testOrigin },
           data: {
             plan: {
               operation: "cancel",

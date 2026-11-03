@@ -1,3 +1,4 @@
+import { testOrigin } from "./origin";
 import { test, expect } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 test("Project directory, exact employee assignment and AI unassignment retain versions, fit mobile and clear delayed denied-directory responses", async ({
@@ -171,7 +172,7 @@ test("Project directory, exact employee assignment and AI unassignment retain ve
   await dialog.getByRole("button", { name: "关闭", exact: true }).click();
   await expect(directory.getByRole("alert")).toContainText("scope revoked");
   await expect(directory.locator(".member-list li")).toHaveCount(0);
-  expect(page.url()).toBe("http://127.0.0.1:5173/");
+  expect(page.url()).toBe(testOrigin + "/");
   await expect(page).toHaveTitle(/Hyper Workspace/);
   await expect(page.locator("vite-error-overlay")).toHaveCount(0);
   expect(errors).toEqual([]);

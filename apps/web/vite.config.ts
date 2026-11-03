@@ -1,9 +1,15 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+function port(value: string | undefined, fallback: number) {
+  const parsed = value === undefined ? fallback : Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535)
+    throw new Error("Invalid development port");
+  return parsed;
+}
 export default defineConfig({
   plugins: [react()],
   server: {
-    port: 5173,
+    port: port(process.env.WEB_PORT, 5173),
     strictPort: true,
     fs: {
       deny: [
@@ -17,7 +23,7 @@ export default defineConfig({
     },
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:3100",
+        target: "http://127.0.0.1:" + port(process.env.API_PORT, 3100),
         changeOrigin: true,
         configure(proxy) {
           proxy.on("error", (_error, _req, res) => {

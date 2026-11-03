@@ -211,6 +211,29 @@ test("CalDAV expanded query uses a bounded source expansion and marks it as a re
   assert.equal(object?.etag, '"v1"');
 });
 
+test("CalDAV decodes Sabre numeric XML line endings once, preserving literal entity text and Unicode", async () => {
+  const original = ical.replace("SUMMARY:项目排期", "SUMMARY:字面 &#13; 😀");
+  const payload = escape(original)
+    .replaceAll("\r", "&#13;")
+    .replaceAll("😀", "&#x1F600;");
+  handler = (_req, res) =>
+    reply(
+      res,
+      multi(
+        row(
+          home + "personal/event.ics",
+          `<a:getetag>&quot;v1&quot;</a:getetag><b:calendar-data>${payload}</b:calendar-data>`,
+        ),
+      ),
+    );
+  const [object] = await provider.query("personal", {
+    start: "2026-11-01T00:00:00Z",
+    end: "2026-12-01T00:00:00Z",
+  });
+  assert.equal(object?.ical, original);
+  assert.match(object!.ical, /字面 &#13; 😀/);
+});
+
 test("CalDAV rejects foreign, sibling, traversal, encoded separators and duplicate source references", async () => {
   for (const href of [
     "https://foreign.invalid/private.ics",

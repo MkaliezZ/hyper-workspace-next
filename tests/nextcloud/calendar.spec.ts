@@ -5,9 +5,12 @@ import {
   NextcloudCalendarProvider,
   CalendarSourceRejected,
 } from "../../apps/api/src/providers/nextcloud-calendar.js";
-import { source, password } from "./helpers.js";
+import { source, password, login, origin } from "./helpers.js";
 
-test("Real CalDAV discovers source permissions and conditionally creates, queries, updates and removes private events", async () => {
+test("Real CalDAV and product UI preserve source permissions, versions, recurring instances and private command receipts", async ({
+  browser,
+}) => {
+  test.setTimeout(240000);
   const calendarId = "hyper-calendar-" + randomUUID();
   const objectId = "event-" + randomUUID() + ".ics";
   const uid = randomUUID();
@@ -93,6 +96,116 @@ test("Real CalDAV discovers source permissions and conditionally creates, querie
         (event) => event.uid === uid && event.etag === saved.etag,
       ),
     ).toBe(true);
+    const actor = await login(browser, "calendar-alice");
+    try {
+      await actor.page
+        .getByRole("navigation", { name: "工作区导航" })
+        .getByRole("button", { name: "日历", exact: true })
+        .click();
+      const panel = actor.page.getByRole("region", {
+        name: "企业日历",
+        exact: true,
+      });
+      await panel.getByLabel("日历", { exact: true }).selectOption(calendarId);
+      await panel.getByLabel("起始日期", { exact: true }).fill("2026-11-04");
+      await expect(
+        panel.getByRole("heading", {
+          name: "Synthetic private calendar source test",
+          exact: true,
+        }),
+      ).toBeVisible({ timeout: 60000 });
+      await panel
+        .getByRole("button", { name: "新建日程", exact: true })
+        .click();
+      const dialog = actor.page.getByRole("dialog", {
+        name: "新建日程",
+        exact: true,
+      });
+      await dialog
+        .getByLabel("日程标题", { exact: true })
+        .fill("Synthetic product calendar event");
+      await dialog.getByLabel("地点", { exact: true }).fill("Synthetic room");
+      await dialog
+        .getByLabel("开始（本机时区）", { exact: true })
+        .fill("2026-11-04T09:00");
+      await dialog
+        .getByLabel("结束（本机时区）", { exact: true })
+        .fill("2026-11-04T10:00");
+      await dialog
+        .getByRole("button", { name: "保存日程", exact: true })
+        .click();
+      await expect(dialog).not.toBeVisible({ timeout: 60000 });
+      await expect(
+        panel.getByRole("heading", {
+          name: "Synthetic product calendar event",
+          exact: true,
+        }),
+      ).toBeVisible({ timeout: 60000 });
+      const receipts = await (
+        await actor.context.request.get(origin + "/api/calendar/commands")
+      ).json();
+      const receipt = receipts.find(
+        (r: any) => r.title === "Synthetic product calendar event",
+      );
+      expect(receipt.state).toBe("succeeded");
+      expect(receipt.observedResult).toBe("matched");
+      const original = await alice.read(calendarId, receipt.objectId);
+      expect(original.uid).toBe(receipt.id + "@hyper-workspace");
+      const prepared = await actor.context.request.post(
+        origin + "/api/calendar/commands",
+        {
+          headers: { Origin: origin },
+          data: {
+            operation: "update",
+            calendarId,
+            objectId: receipt.objectId,
+            etag: original.etag,
+            scope: "series",
+            patch: { title: "Synthetic product update" },
+            idempotencyKey: randomUUID(),
+          },
+        },
+      );
+      expect(prepared.ok()).toBe(true);
+      const update = await prepared.json();
+      const changed = await actor.context.request.post(
+        origin + "/api/calendar/commands/" + update.id + "/apply",
+        { headers: { Origin: origin }, data: { confirmed: true } },
+      );
+      expect(changed.ok()).toBe(true);
+      const changedReceipt = await changed.json();
+      expect(changedReceipt.state).toBe("succeeded");
+      expect((await alice.read(calendarId, receipt.objectId)).ical).toContain(
+        "Synthetic product update",
+      );
+      const removal = await actor.context.request.post(
+        origin + "/api/calendar/commands",
+        {
+          headers: { Origin: origin },
+          data: {
+            operation: "delete",
+            calendarId,
+            objectId: receipt.objectId,
+            etag: changedReceipt.sourceEtag,
+            scope: "series",
+            idempotencyKey: randomUUID(),
+          },
+        },
+      );
+      expect(removal.ok()).toBe(true);
+      const remove = await removal.json();
+      const removed = await actor.context.request.post(
+        origin + "/api/calendar/commands/" + remove.id + "/apply",
+        { headers: { Origin: origin }, data: { confirmed: true } },
+      );
+      expect(removed.ok()).toBe(true);
+      expect((await removed.json()).observedResult).toBe("absent");
+      await expect(
+        alice.read(calendarId, receipt.objectId),
+      ).rejects.toMatchObject({ status: 404 });
+    } finally {
+      await actor.context.close();
+    }
     expect((await bob.calendars()).some((c) => c.id === calendarId)).toBe(
       false,
     );

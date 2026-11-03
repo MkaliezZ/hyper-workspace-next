@@ -103,6 +103,7 @@ jobs:
       NC_TEST_PASSWORD: Hyper-CI-Fixture-Only-1234!
       NEXTCLOUD_TALK_ENABLED: "true"
       NEXTCLOUD_FILES_ENABLED: "true"
+      NEXTCLOUD_CALENDAR_ENABLED: "true"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4

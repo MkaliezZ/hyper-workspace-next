@@ -1,3 +1,4 @@
+import { testOrigin } from "./origin";
 import { test, expect } from "@playwright/test";
 const files = [
   {
@@ -111,7 +112,7 @@ test("Selected multi-file questions keep exact source versions, private answers 
   });
   const state = await setup(page),
     panel = page.getByRole("region", { name: "选定资料 AI 问答" });
-  expect(page.url()).toBe("http://127.0.0.1:5173/");
+  expect(page.url()).toBe(testOrigin + "/");
   await expect(page).toHaveTitle(/Hyper Workspace/);
   await expect(page.locator("vite-error-overlay")).toHaveCount(0);
   await panel

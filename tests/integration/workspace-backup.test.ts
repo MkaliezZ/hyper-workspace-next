@@ -153,6 +153,30 @@ async function fixture(t: any) {
       "a".repeat(64),
     ],
   );
+  for (const state of ["prepared", "applying"]) {
+    const id = randomUUID();
+    await db.pool.query(
+      "INSERT INTO cw_calendar_commands(id,workspace_id,actor_id,identity_credential_id,provider_key,source_actor_id,calendar_id,object_id,source_uid,operation,idempotency_key,params_hash,plan,title,expected_etag,state,attempted_at)VALUES($1,$2,$3,$4,'synthetic-backup','synthetic-owner','personal',$5,'synthetic-calendar-uid','delete',$6,'synthetic-hash',$7,'Synthetic calendar backup intent',$8,$9,now())",
+      [
+        id,
+        DEMO.workspace,
+        DEMO.user,
+        credential,
+        id + ".ics",
+        randomUUID(),
+        {
+          operation: "delete",
+          calendarId: "personal",
+          objectId: id + ".ics",
+          etag: '"v1"',
+          scope: "series",
+          idempotencyKey: randomUUID(),
+        },
+        '"v1"',
+        state,
+      ],
+    );
+  }
   const company = new OrganizationBudgetService(db),
     subject = {
       id: DEMO.user,
@@ -284,6 +308,7 @@ test("A real PostgreSQL archive restores stable assets, vectors, encrypted crede
   assert.equal(report.servicesStarted, false);
   assert.equal(report.credentialChecks, 2);
   assert.equal(report.quarantine.recoveryRuns, 1);
+  assert.equal(report.quarantine.activeCalendarCommands, 0);
   assert.equal(report.quarantine.queueAbsent, true);
   assert.equal(report.quarantine.reviewModelRequests, 1);
   assert.equal(report.quarantine.reviewCompanyCharges, 1);
@@ -348,6 +373,7 @@ test("A real PostgreSQL archive restores stable assets, vectors, encrypted crede
       "cw_communication_sends",
       "cw_attachment_sends",
       "cw_attachment_uploads",
+      "cw_calendar_commands",
     ]) {
       assert.equal(
         (await restored.query(`SELECT state FROM ${table}`)).rows[0].state,

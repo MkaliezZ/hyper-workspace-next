@@ -1,6 +1,7 @@
+import { testOrigin } from "./origin";
 import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-const headers = { Origin: "http://127.0.0.1:5173" };
+const headers = { Origin: testOrigin };
 
 async function seed(page: Page) {
   await page.goto("/");
@@ -150,7 +151,7 @@ test("Version-bound human and AI acceptance preserve manual edits, display revie
   await expect(panel.locator(".artifact-review-history")).toContainText(
     "AI 代执行，员工确认",
   );
-  expect(page.url()).toBe("http://127.0.0.1:5173/");
+  expect(page.url()).toBe(testOrigin + "/");
   await expect(page).toHaveTitle(/Hyper Workspace/);
   await expect(page.locator("vite-error-overlay")).toHaveCount(0);
   await panel.locator(".artifact-review-current").scrollIntoViewIfNeeded();

@@ -1,6 +1,7 @@
+import { testOrigin } from "./origin";
 import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-const headers = { Origin: "http://127.0.0.1:5173" };
+const headers = { Origin: testOrigin };
 async function seed(page: Page) {
   await page.goto("/");
   await page.getByRole("button", { name: "进入演示工作区" }).click();
@@ -130,7 +131,7 @@ test("Manual and AI task edits retain versions, preserve a manual draft and requ
   await expect(panel.locator(".task-version-history li")).toHaveCount(3);
   await expect(panel).toContainText("AI 修改");
   await expect(page).toHaveTitle(/Hyper Workspace/);
-  expect(page.url()).toBe("http://127.0.0.1:5173/");
+  expect(page.url()).toBe(testOrigin + "/");
   await expect(page.locator("vite-error-overlay")).toHaveCount(0);
   await panel.scrollIntoViewIfNeeded();
   await page.screenshot({ path: "/tmp/hyper-task-revision-desktop.png" });

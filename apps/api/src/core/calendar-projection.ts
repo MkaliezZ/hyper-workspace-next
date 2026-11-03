@@ -3,28 +3,14 @@ import ICAL from "ical.js";
 import type { ExpandedCalendarObject } from "../providers/calendar.js";
 import { calendarUid } from "../providers/nextcloud-calendar.js";
 
-export type CalendarPoint =
-  | { kind: "date"; value: string }
-  | { kind: "instant"; value: string; timeZone: string }
-  | { kind: "floating"; value: string }
-  | { kind: "unresolved_timezone"; value: string; timeZone: string };
-
-export interface CalendarOccurrence {
-  calendarId: string;
-  objectId: string;
-  etag: string;
-  uid: string;
-  recurrenceId: string | null;
-  title: string;
-  description: string;
-  location: string;
-  start: CalendarPoint;
-  /** Exclusive end for date intervals. */
-  end: CalendarPoint;
-  status: "tentative" | "confirmed" | "cancelled" | "unspecified";
-  transparency: "opaque" | "transparent";
-  truncatedFields: string[];
-}
+import type {
+  CalendarPoint,
+  CalendarOccurrence,
+} from "@hyper/contracts/calendar";
+export type {
+  CalendarPoint,
+  CalendarOccurrence,
+} from "@hyper/contracts/calendar";
 
 type Time = InstanceType<typeof ICAL.Time>;
 type Component = InstanceType<typeof ICAL.Component>;

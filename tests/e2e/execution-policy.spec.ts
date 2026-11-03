@@ -1,3 +1,4 @@
+import { testOrigin } from "./origin";
 import { test, expect } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 test("Execution rules show effective scope, save directly or through AI, reject stale changes and apply task limits", async ({
@@ -126,7 +127,7 @@ test("Execution rules show effective scope, save directly or through AI, reject 
     (await (await page.request.get("/api/runs/" + task.id)).json()).error,
   ).toContain("动作数量");
   expect(errors).toEqual([]);
-  expect(page.url()).toBe("http://127.0.0.1:5173/");
+  expect(page.url()).toBe(testOrigin + "/");
   await expect(page).toHaveTitle(/Hyper Workspace/);
   await expect(page.locator("vite-error-overlay")).toHaveCount(0);
 });

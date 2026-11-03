@@ -1,3 +1,4 @@
+import { testOrigin } from "./origin";
 import { test, expect } from "@playwright/test";
 async function workspace(page: any, request: any) {
   await page.route("**/api/talk/rooms/*/attachment-uploads", (route: any) =>
@@ -190,7 +191,7 @@ test("Attachment selection, explicit confirmation, unknown receipts and AI queue
     .getByRole("button", { name: "企业消息", exact: true })
     .click();
   await expect(page).toHaveTitle(/Hyper Workspace/);
-  expect(page.url()).toBe("http://127.0.0.1:5173/");
+  expect(page.url()).toBe(testOrigin + "/");
   await expect(page.locator("vite-error-overlay")).toHaveCount(0);
   await page.getByRole("button", { name: "发送附件", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "发送企业附件" });
@@ -564,7 +565,7 @@ test("Attachment cards use protected routes, download opaque bytes and clear whe
     .getByRole("button", { name: "企业消息", exact: true })
     .click();
   await expect(page).toHaveTitle(/Hyper Workspace/);
-  expect(page.url()).toBe("http://127.0.0.1:5173/");
+  expect(page.url()).toBe(testOrigin + "/");
   await expect(page.getByText(attachment.name, { exact: true })).toBeVisible();
   const open = page.getByRole("link", {
     name: "在来源中查看 " + attachment.name,
@@ -662,7 +663,7 @@ test("Local upload preserves raw bytes and selects current source file before a 
     .getByRole("navigation", { name: "工作区导航" })
     .getByRole("button", { name: "企业消息", exact: true })
     .click();
-  expect(page.url()).toBe("http://127.0.0.1:5173/");
+  expect(page.url()).toBe(testOrigin + "/");
   await expect(page).toHaveTitle(/Hyper Workspace/);
   await expect(page.locator("vite-error-overlay")).toHaveCount(0);
   await page.getByRole("button", { name: "发送附件", exact: true }).click();
@@ -809,13 +810,11 @@ test("Lost local upload response survives dialog reload without automatic retran
     ];
     return route.fulfill({ json: rows[0] });
   });
-  await upload
-    .getByLabel("选择本机附件")
-    .setInputFiles({
-      name: "合成重选.bin",
-      mimeType: "application/octet-stream",
-      buffer: Buffer.from([1, 2, 3]),
-    });
+  await upload.getByLabel("选择本机附件").setInputFiles({
+    name: "合成重选.bin",
+    mimeType: "application/octet-stream",
+    buffer: Buffer.from([1, 2, 3]),
+  });
   await upload.getByRole("checkbox").check();
   await upload.getByRole("button", { name: "上传并选中", exact: true }).click();
   await expect(upload.getByRole("checkbox")).not.toBeChecked();

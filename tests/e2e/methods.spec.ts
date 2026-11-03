@@ -1,6 +1,7 @@
+import { testOrigin } from "./origin";
 import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-const headers = { Origin: "http://127.0.0.1:5173" };
+const headers = { Origin: testOrigin };
 async function seed(page: Page) {
   await page.goto("/");
   await page.getByRole("button", { name: "进入演示工作区" }).click();

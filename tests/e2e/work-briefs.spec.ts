@@ -1,3 +1,4 @@
+import { testOrigin } from "./origin";
 import { test, expect } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 test("Work brief clarification, explicit confirmation, bound worker execution, AI revision and denied-read cleanup work on desktop/mobile", async ({
@@ -194,7 +195,7 @@ test("Work brief clarification, explicit confirmation, bound worker execution, A
     panel.getByRole("textbox", { name: "工作目标", exact: true }),
   ).toHaveValue("");
   await expect(panel).not.toContainText("演示任务说明");
-  expect(page.url()).toBe("http://127.0.0.1:5173/");
+  expect(page.url()).toBe(testOrigin + "/");
   await expect(page).toHaveTitle(/Hyper Workspace/);
   await expect(page.locator("vite-error-overlay")).toHaveCount(0);
   expect(errors).toEqual([]);

@@ -1,3 +1,4 @@
+import { testOrigin } from "./origin";
 import { test, expect } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 test("Decision proposals require separate version confirmation, preserve histories and replace adopted records on desktop and mobile", async ({
@@ -16,7 +17,7 @@ test("Decision proposals require separate version confirmation, preserve histori
   });
   await page.goto("/");
   await expect(page).toHaveTitle(/Hyper Workspace/);
-  expect(page.url()).toBe("http://127.0.0.1:5173/");
+  expect(page.url()).toBe(testOrigin + "/");
   await expect(page.locator("vite-error-overlay")).toHaveCount(0);
   await page.getByRole("tab", { name: "决定", exact: true }).click();
   const panel = page.getByRole("region", { name: "项目决定" }),

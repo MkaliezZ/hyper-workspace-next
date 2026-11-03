@@ -1,4 +1,6 @@
 import { NotificationPolicyService } from "./core/notification-policy.js";
+import { CalendarService } from "./core/calendar.js";
+import { CalendarCommandInput, CalendarQuery } from "@hyper/contracts/calendar";
 import { NotificationInput } from "@hyper/contracts/notifications";
 import { RoomManagementService } from "./core/room-management.js";
 import { CommunicationSearchService } from "./core/communication-search.js";
@@ -158,6 +160,62 @@ class ApiErrors implements ExceptionFilter {
 @Controller("api")
 @UseFilters(ApiErrors)
 class ApiController {
+  @Get("calendar/calendars") async calendars(@Req() req: Request) {
+    return new CalendarService(db).calendars(await subject(req));
+  }
+  @Post("calendar/query") async calendarQuery(
+    @Req() req: Request,
+    @Body() body: unknown,
+  ) {
+    return new CalendarService(db).occurrences(
+      await subject(req),
+      CalendarQuery.parse(body),
+    );
+  }
+  @Get("calendar/commands") async calendarCommands(@Req() req: Request) {
+    return new CalendarService(db).history(await subject(req));
+  }
+  @Post("calendar/commands") async prepareCalendar(
+    @Req() req: Request,
+    @Body() body: unknown,
+  ) {
+    return new CalendarService(db).prepare(
+      await subject(req),
+      CalendarCommandInput.parse(body),
+    );
+  }
+  @Get("calendar/commands/:id") async calendarCommand(
+    @Req() req: Request,
+    @Param("id") id: string,
+  ) {
+    return new CalendarService(db).get(await subject(req), uuid(id));
+  }
+  @Post("calendar/commands/:id/apply") async applyCalendar(
+    @Req() req: Request,
+    @Param("id") id: string,
+    @Body() body: unknown,
+  ) {
+    z.object({ confirmed: z.literal(true) })
+      .strict()
+      .parse(body);
+    return new CalendarService(db).apply(await subject(req), uuid(id));
+  }
+  @Post("calendar/commands/:id/reconcile") async reconcileCalendar(
+    @Req() req: Request,
+    @Param("id") id: string,
+    @Body() body: unknown,
+  ) {
+    z.object({}).strict().parse(body);
+    return new CalendarService(db).reconcile(await subject(req), uuid(id));
+  }
+  @Post("calendar/commands/:id/cancel") async cancelCalendar(
+    @Req() req: Request,
+    @Param("id") id: string,
+    @Body() body: unknown,
+  ) {
+    z.object({}).strict().parse(body);
+    return new CalendarService(db).cancel(await subject(req), uuid(id));
+  }
   @Get("health") async health() {
     await db.pool.query("SELECT 1");
     return { status: "ok", service: "Hyper Workspace", version: "0.1.0" };

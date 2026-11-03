@@ -1,3 +1,4 @@
+import { testOrigin } from "./origin";
 import { test, expect } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 
@@ -35,7 +36,7 @@ test("Task checks stay quiet without changes and merge current facts once after 
   await page.getByRole("button", { name: "创建项目", exact: true }).click();
   const project = await (await created).json();
   await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
-  expect(page.url()).toBe("http://127.0.0.1:5173/");
+  expect(page.url()).toBe(testOrigin + "/");
   await expect(page).toHaveTitle(/Hyper Workspace/);
   const check = async (reason: string) => {
     await page.getByRole("button", { name: "发起任务", exact: true }).click();
@@ -81,7 +82,7 @@ test("Task checks stay quiet without changes and merge current facts once after 
   const second = await page.request.post(
     "/api/conversations/" + project.conversationId + "/tasks",
     {
-      headers: { Origin: "http://127.0.0.1:5173" },
+      headers: { Origin: testOrigin },
       data: { title: "确认验收记录", assignee: "演示同事", dueDate: null },
     },
   );

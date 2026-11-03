@@ -2728,3 +2728,45 @@ p {
   font-size: 12px;
   overflow-wrap: anywhere;
 }
+
+/* Calendar: blue actions, white surfaces and black primary text. */
+.calendar-panel { padding: 26px 28px 40px; overflow-y: auto; min-width: 0; flex: 1; }
+.calendar-toolbar, .calendar-controls, .calendar-range { display: flex; align-items: center; gap: 12px; }
+.calendar-toolbar { justify-content: space-between; flex-wrap: wrap; margin-bottom: 22px; }
+.calendar-toolbar h2 { font-size: 23px; margin: 0 0 6px; color: #111827; }
+.calendar-toolbar p { margin: 0; }
+.calendar-toolbar button, .calendar-controls button { display: inline-flex; align-items: center; gap: 6px; }
+.calendar-controls { flex-wrap: wrap; }
+.calendar-controls label, .calendar-form label { display: grid; gap: 6px; font-size: 13px; color: #334155; }
+.calendar-controls input, .calendar-controls select, .calendar-form input:not([type=checkbox]), .calendar-form textarea { border: 1px solid #dbe3ee; border-radius: 9px; padding: 10px; background: white; color: #111827; font: inherit; max-width: 100%; min-width: 0; }
+.calendar-controls select { min-width: 180px; }
+.calendar-zone { font-size: 12px; line-height: 1.7; margin: 14px 0 20px; }
+.calendar-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border: 1px solid #dbe3ee; border-radius: 12px; overflow: hidden; background: #fff; }
+.calendar-day { min-height: 270px; border-right: 1px solid #e7edf5; min-width: 0; padding: 10px 8px; }
+.calendar-day:last-child { border-right: 0; }
+.calendar-day > header { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 3px; font-size: 12px; padding: 3px 1px 14px; }
+.calendar-day > .muted { font-size: 11px; }
+.calendar-event { background: #edf4ff; border-left: 3px solid #2875e8; border-radius: 6px; padding: 9px 7px; margin-bottom: 8px; overflow-wrap: anywhere; color: #16233b; }
+.calendar-event h3 { margin: 0 0 7px; font-size: 13px; line-height: 1.5; }
+.calendar-event p { font-size: 11px; line-height: 1.6; margin: 5px 0; }
+.calendar-event.is-cancelled { opacity: .65; border-color: #64748b; }
+.calendar-event-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.calendar-event-actions button, .calendar-history article button { color: #1958b9; border: 0; background: transparent; cursor: pointer; font-size: 12px; padding: 3px; }
+.calendar-event-actions button:disabled { color: #64748b; cursor: default; }
+.calendar-empty { padding: 45px 15px; text-align: center; color: #64748b; }
+.calendar-history { margin-top: 28px; }
+.calendar-history > h3 { font-size: 15px; }
+.calendar-history article { display: flex; justify-content: space-between; gap: 12px; padding: 14px 0; border-bottom: 1px solid #e7edf5; font-size: 13px; }
+.calendar-history article strong, .calendar-history article span { display: block; overflow-wrap: anywhere; }
+.calendar-history article span, .calendar-history article p { margin-top: 5px; font-size: 12px; color: #64748b; }
+.calendar-form { padding: 18px 24px 24px; }
+.calendar-form fieldset { padding: 0; margin: 0; border: 0; display: grid; gap: 14px; min-width: 0; }
+.calendar-form textarea { min-height: 85px; resize: vertical; }
+.calendar-form .calendar-check { display: flex; align-items: center; }
+.calendar-form > p { font-size: 13px; line-height: 1.7; }
+.calendar-form .dialog-actions { padding: 18px 0 0; flex-wrap: wrap; }
+@media (max-width: 1100px) { .calendar-week { grid-template-columns: repeat(2,minmax(0,1fr)); } .calendar-day { min-height: 150px; border-bottom: 1px solid #e7edf5; } }
+@media (max-width: 600px) { .calendar-panel { padding: 18px 14px 30px; } .calendar-week { grid-template-columns: minmax(0,1fr); } .calendar-day { min-height: 70px; border-right: 0; } .calendar-controls { align-items: flex-start; gap: 14px; } .calendar-controls > label { width: 100%; } .calendar-controls select { width: 100%; } .calendar-range { gap: 4px; } .calendar-history article { flex-wrap: wrap; } }
+.calendar-history time { display: block; margin-top: 5px; font-size: 11px; color: #64748b; }
+.calendar-preview { font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.calendar-preview details { margin-top: 12px; color: #64748b; }

@@ -1,3 +1,4 @@
+import { testOrigin } from "./origin";
 import { test, expect } from "@playwright/test";
 import { createServer } from "node:http";
 import { once } from "node:events";
@@ -211,7 +212,7 @@ test("Versioned prices, unknown-charge review, real request admission and AI bud
     await expect(panel.getByLabel("计价依据", { exact: true })).toHaveCount(0);
     await expect(panel.locator(".usage-row")).toHaveCount(0);
     expect(errors).toEqual([]);
-    expect(page.url()).toBe("http://127.0.0.1:5173/");
+    expect(page.url()).toBe(testOrigin + "/");
     await expect(page).toHaveTitle(/Hyper Workspace/);
     await expect(page.locator("vite-error-overlay")).toHaveCount(0);
   } finally {

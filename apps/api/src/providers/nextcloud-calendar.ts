@@ -203,7 +203,15 @@ function multistatus(xml: string) {
     parseTagValue: false,
     parseAttributeValue: false,
     trimValues: false,
-    processEntities: true,
+    processEntities: {
+      enabled: true,
+      maxExpandedLength: MAX_RESPONSE_BYTES,
+      maxTotalExpansions: MAX_RESPONSE_BYTES,
+    },
+    // Numeric XML references (e.g. Sabre's &#13;) need explicit support in
+    // fast-xml-parser 5.11. Only the five XML predefined names are enabled.
+    // @ts-expect-error 5.11.2 runtime supports a name map; its bundled declaration only lists boolean.
+    htmlEntities: { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" },
     maxNestedTags: 24,
   }).parse(xml, true);
   const root = one({ value: parsed, ns: {} }, DAV, "multistatus");

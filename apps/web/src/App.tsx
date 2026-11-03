@@ -1,3 +1,4 @@
+import { CalendarPanel } from "./components/CalendarPanel";
 import { OrganizationBudgetPanel } from "./components/OrganizationBudgetPanel";
 import { OrganizationPanel } from "./components/OrganizationPanel";
 import { DecisionPanel } from "./components/DecisionPanel";
@@ -339,15 +340,17 @@ export function App() {
       />
     );
   const projectTitle =
-    section === "organization"
-      ? "通讯录"
-      : section === "knowledge"
-        ? "知识库"
-        : section === "settings"
-          ? "设置"
-          : section === "enterprise"
-            ? "企业消息"
-            : view.project.name;
+    section === "calendar"
+      ? "日历排期"
+      : section === "organization"
+        ? "通讯录"
+        : section === "knowledge"
+          ? "知识库"
+          : section === "settings"
+            ? "设置"
+            : section === "enterprise"
+              ? "企业消息"
+              : view.project.name;
   const selectedRunModel = runModels.find(
     (model) => model.id === modelProfileId,
   );
@@ -363,7 +366,7 @@ export function App() {
     <div
       className={
         "app-shell" +
-        (["enterprise", "organization"].includes(section)
+        (["enterprise", "organization", "calendar"].includes(section)
           ? " enterprise-view"
           : "")
       }
@@ -399,17 +402,21 @@ export function App() {
         <MainHeader
           title={projectTitle}
           enterprise={section === "enterprise"}
-          hideProjectTools={section === "organization"}
+          hideProjectTools={
+            section === "organization" || section === "calendar"
+          }
           subtitle={
-            section === "organization"
-              ? "企业成员、组织部门与当前角色"
-              : section === "knowledge"
-                ? "有来源、可复用的工作资料"
-                : section === "settings"
-                  ? "模型与执行服务"
-                  : section === "enterprise"
-                    ? "查看和回复你有权限访问的会话"
-                    : "项目空间"
+            section === "calendar"
+              ? "来源日历与可核对的排期操作"
+              : section === "organization"
+                ? "企业成员、组织部门与当前角色"
+                : section === "knowledge"
+                  ? "有来源、可复用的工作资料"
+                  : section === "settings"
+                    ? "模型与执行服务"
+                    : section === "enterprise"
+                      ? "查看和回复你有权限访问的会话"
+                      : "项目空间"
           }
           query={query}
           onQuery={setQuery}
@@ -434,7 +441,8 @@ export function App() {
         {view.project.source &&
         section !== "enterprise" &&
         section !== "settings" &&
-        section !== "knowledge" ? (
+        section !== "knowledge" &&
+        section !== "calendar" ? (
           <div className="project-source-banner">
             <span>
               已关联「{view.project.source.name}
@@ -731,6 +739,9 @@ export function App() {
             engines={view.engines}
           />
         ) : null}
+        {section === "calendar" ? (
+          <CalendarPanel key={view.user.id + view.user.workspaceId} />
+        ) : null}
         {section === "organization" ? (
           <OrganizationPanel
             key={view.user.id + view.user.workspaceId}
@@ -848,7 +859,9 @@ export function App() {
           </>
         ) : null}
       </main>
-      {section !== "enterprise" && section !== "organization" ? (
+      {section !== "enterprise" &&
+      section !== "organization" &&
+      section !== "calendar" ? (
         <ContextPanel
           view={view}
           open={contextOpen}

@@ -1,3 +1,4 @@
+import { testOrigin } from "./origin";
 import { test, expect } from "@playwright/test";
 import { createServer } from "node:http";
 import { once } from "node:events";
@@ -157,7 +158,7 @@ test("Usage shows actual provider counters and unknowns, supports private AI rea
     await expect(panel.locator(".usage-row")).toHaveCount(0);
     await expect(panel.getByLabel("用量查询执行服务")).toHaveCount(0);
     expect(errors).toEqual([]);
-    expect(page.url()).toBe("http://127.0.0.1:5173/");
+    expect(page.url()).toBe(testOrigin + "/");
     await expect(page).toHaveTitle(/Hyper Workspace/);
     await expect(page.locator("vite-error-overlay")).toHaveCount(0);
   } finally {

@@ -1,3 +1,4 @@
+import { testOrigin } from "./origin";
 import { test, expect } from "@playwright/test";
 const id = "50000000-0000-4000-8000-000000000001",
   title = "项目说明.md",
@@ -115,7 +116,7 @@ test("Document extraction preview shows source locations and limitations, stays 
   await expect(preview).toContainText("未执行 OCR");
   await expect(preview).toContainText("[第 1 页]");
   await expect(page).toHaveTitle(/Hyper Workspace/);
-  expect(page.url()).toBe("http://127.0.0.1:5173/");
+  expect(page.url()).toBe(testOrigin + "/");
   await expect(page.locator("vite-error-overlay")).toHaveCount(0);
   await preview.scrollIntoViewIfNeeded();
   await page.screenshot({ path: "/tmp/hyper-document-preview-desktop.png" });
@@ -394,7 +395,7 @@ test("AI feedback appends a saved version while preserving an in-progress manual
   await expect(page.getByText("v3 · HERMES", { exact: true })).toBeVisible();
   await expect(page).toHaveTitle(/Hyper Workspace/);
   await expect(page.locator("vite-error-overlay")).toHaveCount(0);
-  expect(page.url()).toBe("http://127.0.0.1:5173/");
+  expect(page.url()).toBe(testOrigin + "/");
   await expect(
     page.getByRole("navigation", { name: "工作区导航", exact: true }),
   ).toBeVisible();

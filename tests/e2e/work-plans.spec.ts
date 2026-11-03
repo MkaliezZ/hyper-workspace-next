@@ -1,6 +1,7 @@
+import { testOrigin } from "./origin";
 import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-const headers = { Origin: "http://127.0.0.1:5173" };
+const headers = { Origin: testOrigin };
 async function setup(page: Page) {
   await page.request.post("/api/auth/demo", { data: {} });
   const response = await page.request.post("/api/projects", {

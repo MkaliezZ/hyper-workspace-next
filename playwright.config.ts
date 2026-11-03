@@ -1,9 +1,10 @@
 import { defineConfig, devices } from "@playwright/test";
+const origin = process.env.HYPER_TEST_ORIGIN ?? "http://127.0.0.1:5173";
 export default defineConfig({
   testDir: "tests/e2e",
   fullyParallel: false,
   retries: process.env.CI ? 1 : 0,
-  use: { baseURL: "http://127.0.0.1:5173", trace: "retain-on-failure" },
+  use: { baseURL: origin, trace: "retain-on-failure" },
   projects: [
     {
       name: "chromium",
@@ -16,7 +17,7 @@ export default defineConfig({
   ],
   webServer: {
     command: "npm run dev",
-    url: "http://127.0.0.1:5173",
+    url: origin,
     reuseExistingServer: !process.env.CI,
     timeout: 60000,
     stdout: "pipe",
