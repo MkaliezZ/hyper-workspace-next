@@ -6,7 +6,7 @@
 
 `apps/api/src/providers/calendar.ts` 定义 CalendarProvider；`nextcloud-calendar.ts` 使用员工来源凭据和后端解析的 remote UID。日历路径限制在本人 CalDAV calendar-home，支持来源挂载到本人根下的共享日历；实际共享路径兼容性待真实 Nextcloud 验证。不使用模型指定身份、服务器或任意 URL。
 
-PROPFIND 按 XML namespace 识别日历及当前读取/新增/修改/删除权限。REPORT 查询采用半开 UTC 时间窗口，单次最多 93 天、500 对象、2 MiB；单对象最多 256 KiB。不静默截断结果。返回完整 VCALENDAR，保留 VTIMEZONE、重复主事件/例外/EXDATE；REPORT 的 XML 换行规范化回 CRLF，GET 保留来源文本。这里未展开重复实例或计算忙闲。
+PROPFIND 按 XML namespace 识别日历及当前读取/新增/修改/删除权限。REPORT 查询采用半开 UTC 时间窗口，单次最多 93 天、500 对象、2 MiB；单对象最多 256 KiB。不静默截断结果。返回完整 VCALENDAR，保留 VTIMEZONE、重复主事件/例外/EXDATE；REPORT 的 XML 换行规范化回 CRLF，GET 保留来源文本。原始查询不展开重复实例。新增 occurrences 查询将相同有界窗口交给来源 CalDAV expand，返回标记为 expanded 的只读表示；编辑前必须重新读取原始主事件。calendar-projection 将已展开事件转成日期/UTC 实例，缺失时区或浮动时间保持明确状态，不能偷偷采用服务器本地时区；来源未展开、反向时间、重复实例或超过1000实例则整体失败。忙闲计算仍未接入。
 
 GET 要求 ETag。创建使用 If-None-Match:*，替换/删除要求确切强 ETag；412 不覆盖他人更新。所有请求禁止重定向，来源 href 限定当前员工根与所选日历；XML DTD、重复关键属性、外部 URL、路径穿越及部分响应拒绝返回。
 
@@ -23,3 +23,5 @@ GET 要求 ETag。创建使用 If-None-Match:*，替换/删除要求确切强 ET
 技术依据：[RFC4791 CalDAV](https://www.rfc-editor.org/rfc/rfc4791.html)、[ICAL.js](https://github.com/kewisch/ical.js)。依赖锁定 ical.js 2.2.1，MPL-2.0，许可证清单随 lock 更新。
 
 本地验证（2026-11-04）：全库 75 单元（含新增 10 日历协议用例）、全工作区类型检查、构建、npm audit（0 漏洞）、依赖许可证清单校验、v1.0 冻结包校验通过。新增真实 CalDAV 用例已纳入 Nextcloud job，当前尚未运行通过，不据协议测试声称真实兼容。构建沿用既有 bundle 大小提示，未改前端。
+
+追加本地验证：新增实例投影 6 项及来源展开请求协议 1 项，全库 82 单元与全工作区类型检查通过。真实来源用例补入三次重复事件展开及来源版本一致性断言，等待新仓库 CI 实测。当前未变更前端，不以构建代替渲染验收。

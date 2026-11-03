@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import { calendarOccurrences } from "../../apps/api/src/core/calendar-projection.js";
 import {
   NextcloudCalendarProvider,
   CalendarSourceRejected,
@@ -76,6 +77,22 @@ test("Real CalDAV discovers source permissions and conditionally creates, querie
     });
     expect(queried.map((event) => event.uid)).toEqual([uid]);
     expect(queried[0]?.etag).toBe(saved.etag);
+    const occurrences = calendarOccurrences(
+      await alice.occurrences(calendarId, {
+        start: "2026-11-01T00:00:00Z",
+        end: "2026-12-01T00:00:00Z",
+      }),
+    );
+    expect(occurrences.map((event) => event.start.value)).toEqual([
+      "2026-11-04T01:00:00.000Z",
+      "2026-11-11T01:00:00.000Z",
+      "2026-11-18T01:00:00.000Z",
+    ]);
+    expect(
+      occurrences.every(
+        (event) => event.uid === uid && event.etag === saved.etag,
+      ),
+    ).toBe(true);
     expect((await bob.calendars()).some((c) => c.id === calendarId)).toBe(
       false,
     );

@@ -10,6 +10,7 @@ import type {
   CalendarObject,
   CalendarProvider,
   CalendarWindow,
+  ExpandedCalendarObject,
   SourceCalendar,
 } from "./calendar.js";
 
@@ -393,10 +394,25 @@ export class NextcloudCalendarProvider implements CalendarProvider {
     calendarId: string,
     window: CalendarWindow,
   ): Promise<CalendarObject[]> {
+    return this.queryObjects(calendarId, window, false);
+  }
+  async occurrences(
+    calendarId: string,
+    window: CalendarWindow,
+  ): Promise<ExpandedCalendarObject[]> {
+    return (await this.queryObjects(calendarId, window, true)).map(
+      (object) => ({ ...object, representation: "expanded" }),
+    );
+  }
+  private async queryObjects(
+    calendarId: string,
+    window: CalendarWindow,
+    expand: boolean,
+  ): Promise<CalendarObject[]> {
     const interval = range(window);
     const body =
       HEADER +
-      `<c:calendar-query xmlns:d="DAV:" xmlns:c="${CALDAV}"><d:prop><d:getetag/><c:calendar-data/></d:prop><c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name="VEVENT"><c:time-range start="${interval.start}" end="${interval.end}"/></c:comp-filter></c:comp-filter></c:filter></c:calendar-query>`;
+      `<c:calendar-query xmlns:d="DAV:" xmlns:c="${CALDAV}"><d:prop><d:getetag/><c:calendar-data>${expand ? `<c:expand start="${interval.start}" end="${interval.end}"/>` : ""}</c:calendar-data></d:prop><c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name="VEVENT"><c:time-range start="${interval.start}" end="${interval.end}"/></c:comp-filter></c:comp-filter></c:filter></c:calendar-query>`;
     const response = await this.request(this.url(calendarId), {
       method: "REPORT",
       headers: { Depth: "1", "Content-Type": "application/xml; charset=utf-8" },

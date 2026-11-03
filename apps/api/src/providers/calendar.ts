@@ -24,9 +24,18 @@ export interface CalendarWindow {
   end: string;
 }
 
+export interface ExpandedCalendarObject extends CalendarObject {
+  /** Read representation only; editing must retrieve the original object first. */
+  representation: "expanded";
+}
+
 export interface CalendarProvider {
   calendars(): Promise<SourceCalendar[]>;
   query(calendarId: string, window: CalendarWindow): Promise<CalendarObject[]>;
+  occurrences(
+    calendarId: string,
+    window: CalendarWindow,
+  ): Promise<ExpandedCalendarObject[]>;
   read(calendarId: string, objectId: string): Promise<CalendarObject>;
   create(calendarId: string, objectId: string, ical: string): Promise<void>;
   replace(

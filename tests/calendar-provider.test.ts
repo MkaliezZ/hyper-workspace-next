@@ -194,6 +194,23 @@ test("CalDAV merges successful propstat blocks and does not invent absent write 
   assert.equal(calendar?.canUpdate, false);
 });
 
+test("CalDAV expanded query uses a bounded source expansion and marks it as a read representation", async () => {
+  handler = (_req, res, body) => {
+    assert.match(
+      body,
+      /<c:expand start="20261101T000000Z" end="20261201T000000Z"\/>/,
+    );
+    reply(res, multi(event().replace("RRULE:FREQ=WEEKLY;COUNT=4", "")));
+  };
+  const [object] = await provider.occurrences("personal", {
+    start: "2026-11-01T00:00:00Z",
+    end: "2026-12-01T00:00:00Z",
+  });
+  assert.equal(object?.representation, "expanded");
+  assert.equal(object?.uid, uid);
+  assert.equal(object?.etag, '"v1"');
+});
+
 test("CalDAV rejects foreign, sibling, traversal, encoded separators and duplicate source references", async () => {
   for (const href of [
     "https://foreign.invalid/private.ics",
