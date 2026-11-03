@@ -1,5 +1,8 @@
 # Hyper Workspace
 
+
+> **扩展阶段开发仓库：hyper-workspace-next。** 由首阶段 `61082e0` 派生，依次开发日历排期、复杂审批、图片 OCR、复杂表格与 Office 协作。当前新增 CalDAV 来源接口与协议测试，尚无日历产品界面/AI 业务入口，不能视为新增功能已交付。三层定义和完整完成标准见 [扩展基线 v2.0](docs/PHASE2-BASELINE.md) 与 [日历进展](docs/CALENDAR.md)。下文旧仓库 Actions 和首阶段验收均为对应历史版本证据，不证明本仓库新增代码。
+
 [![CI](https://github.com/MkaliezZ/hyper-workspace/actions/workflows/ci.yml/badge.svg)](https://github.com/MkaliezZ/hyper-workspace/actions/workflows/ci.yml)
 
 面向企业内部的 AI 协作 IM：讨论有沉淀，行动有回执，成果能修改，经验能复用。蓝、白、黑配色；拥有自己的业务核心与企业资产服务。

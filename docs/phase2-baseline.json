@@ -1,0 +1,116 @@
+{
+  "version": "2.0",
+  "status": "authorized_in_development",
+  "change_id": "PHASE2-001",
+  "product": "Hyper Workspace",
+  "repository": "MkaliezZ/hyper-workspace-next",
+  "derived_from": "61082e0d2a872df25e94bb935d073afae9421729",
+  "frozen_baseline": "docs/handoff-v1/AI-IM基线/product-baseline.v1.json",
+  "normative_text": "PHASE2-BASELINE.md",
+  "execution_order": [
+    "calendar",
+    "approvals",
+    "ocr",
+    "office_and_complex_spreadsheets"
+  ],
+  "ui_colors": ["blue", "white", "black"],
+  "engines": {
+    "default": "dsh",
+    "required_compatibility": "hermes",
+    "shared_product_tools": true
+  },
+  "ownership": {
+    "source_calendar_and_files": "source_system",
+    "policy_permissions_relations_assets_receipts": "product",
+    "vector_index": "rebuildable_derived_data"
+  },
+  "requirements": {
+    "calendar": {
+      "provider": "Nextcloud Calendar/CalDAV",
+      "policy_ids": ["P01", "P02", "P04", "P05", "P07", "P08"],
+      "capability_ids": ["C02", "C03", "C04", "C05"],
+      "asset_ids": ["A01", "A02", "A06", "A08", "A10"],
+      "features": [
+        "current_permissions",
+        "shared_calendars",
+        "timezones",
+        "all_day",
+        "recurrence_exceptions",
+        "free_busy_conflicts_candidates",
+        "create_update_cancel",
+        "invitations_and_status",
+        "project_task_relations",
+        "durable_receipts_reconciliation"
+      ]
+    },
+    "approvals": {
+      "policy_ids": ["P01", "P02", "P03", "P04", "P05", "P07", "P08"],
+      "capability_ids": ["C01", "C03", "C04", "C05"],
+      "asset_ids": ["A01", "A02", "A06", "A08", "A10"],
+      "features": [
+        "versioned_workflows_forms",
+        "conditions",
+        "serial_parallel_countersign",
+        "approve_reject_return_withdraw_delegate",
+        "reminders",
+        "audit",
+        "inflight_versions_and_concurrency"
+      ]
+    },
+    "ocr": {
+      "policy_ids": ["P02", "P04", "P05", "P07", "P08"],
+      "capability_ids": ["C02", "C04", "C05"],
+      "asset_ids": ["A04", "A05", "A06", "A08", "A09", "A10"],
+      "features": [
+        "image_pdf_pages",
+        "layout_tables_positions",
+        "provenance_versions",
+        "quality_uncertainty",
+        "editable_corrections",
+        "index_revocation_deletion"
+      ],
+      "candidate": "SoMarkAI/OXR",
+      "candidate_license_declaration": "LicenseRef-OXR",
+      "selected": false
+    },
+    "office_and_complex_spreadsheets": {
+      "policy_ids": ["P01", "P02", "P04", "P05", "P06", "P07", "P08"],
+      "capability_ids": ["C02", "C03", "C04", "C05", "C06"],
+      "asset_ids": ["A01", "A04", "A06", "A07", "A08", "A09", "A10"],
+      "features": [
+        "single_office_engine",
+        "docx_xlsx_pptx_round_trip",
+        "coediting",
+        "comments_track_changes_versions",
+        "formula_recalculation",
+        "cross_sheet_references",
+        "filter_validation_pivots_charts",
+        "ai_writing_and_sheet_operations",
+        "save_conflicts_recovery"
+      ],
+      "selected": false
+    }
+  },
+  "completion_evidence": [
+    "implementation",
+    "protocol_tests",
+    "real_source_permissions_versions",
+    "both_native_engines",
+    "real_model_business_results",
+    "desktop_mobile_rendered_ui",
+    "software_installation",
+    "separate_company_acceptance"
+  ],
+  "company_environment": {
+    "target": "company_lan_linux",
+    "machine_status": "pending_user_preparation",
+    "addressing": "fixed_private_ip_internal_ca_https",
+    "blocks_independent_feature_development": false
+  },
+  "external_mutations": {
+    "readback_required": true,
+    "unknown_outcome": "recovery_required",
+    "blind_retry": false,
+    "cancel_is_rollback": false
+  }
+}

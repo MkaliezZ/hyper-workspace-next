@@ -1,5 +1,11 @@
 # Hyper Workspace 开发规则
 
+## 当前扩展阶段（用户明确授权）
+
+当前仓库为 `hyper-workspace-next`，由首阶段交付版本 `61082e0d2a872df25e94bb935d073afae9421729` 派生。依次完成：日历排期 → 复杂审批 → 图片 OCR（评估 SoMarkAI/OXR）→ 复杂表格与 Office 协作。不得把 Provider、原型或协议测试通过当作某阶段已交付，也不得将后续功能永久排除。新范围以 [扩展基线](docs/PHASE2-BASELINE.md) 及配套 JSON 为准；原 v1.0 快照保持不变。
+
+新代码保存到用户指定的新公开仓库 `MkaliezZ/hyper-workspace-next`；原交付仓库、桌面交付包和公司待准备环境保持独立。日历、审批、OCR 与 Office 都须具备人工入口、DSH/Hermes 共用业务服务、当前权限与源版本检查、可修改成果及实际执行回执。蓝白黑 UI；持续更新 README，并核对本仓库当前提交的 Actions，失败及时修复。旧仓库的 CI 只证明其对应版本。
+
 必须先读取 docs/handoff-v1/AGENTS.md、docs/handoff-v1/AI-IM基线/README.md、三层定义-v1.0.md、product-baseline.v1.json、技术选型与模块契约-v1.0.md。原交接包中的路径以 docs/handoff-v1/ 为根解析。原快照保持可校验，开发状态另存 docs/IMPLEMENTATION.md。
 
 固定 React + TypeScript、NestJS、PostgreSQL + pgvector + pg-boss、独立 Worker、Docker Compose；DSH 默认执行器，Hermes 必须兼容；Nextcloud 通过 Provider 接入；企业资产、权限、Policy 和回执归产品核心拥有。

@@ -20,6 +20,7 @@
     "@nestjs/platform-express": "11.2.8",
     "express": "5.2.1",
     "fast-xml-parser": "5.11.2",
+    "ical.js": "2.2.1",
     "pg": "8.16.3",
     "pg-boss": "12.38.0",
     "reflect-metadata": "0.2.2",

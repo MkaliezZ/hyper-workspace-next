@@ -1,5 +1,5 @@
 # npm license declarations, including dev/optional and duplicate installations
-# package-lock.json sha256:527fa28e8149fba9dfec315aa18198bd31810fcaba06d6d9384ac960609000f3
+# package-lock.json sha256:b6dc36c1e4f63f65e351c619d8ec9b9b1d2660217223c964aa9af360baf178ec
 # runtime/dsh/package-lock.json sha256:370c04d71f74c09ab7861ea19862c2de3a0ee5ba97143ae9cadc2c3b33e0766c
 # runtime/evaluations/package-lock.json sha256:b167070d05463984150d3650799495cf32b2d84c3c09199d1e0252061e8c02bc
 lockfile	package_path	version	declared_license	declaration_source	dev_only	optional
@@ -172,6 +172,7 @@ package-lock.json	node_modules/has-flag	4.0.0	MIT	lock	yes	no
 package-lock.json	node_modules/has-symbols	1.1.0	MIT	lock	no	no
 package-lock.json	node_modules/hasown	2.0.4	MIT	lock	no	no
 package-lock.json	node_modules/http-errors	2.0.1	MIT	lock	no	no
+package-lock.json	node_modules/ical.js	2.2.1	MPL-2.0	lock	no	no
 package-lock.json	node_modules/iconv-lite	0.7.3	MIT	lock	no	no
 package-lock.json	node_modules/ieee754	1.2.1	BSD-3-Clause	lock	no	no
 package-lock.json	node_modules/inherits	2.0.4	ISC	lock	no	no
