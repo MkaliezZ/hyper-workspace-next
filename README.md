@@ -1,19 +1,19 @@
 # Hyper Workspace
 
 
-> **扩展阶段开发仓库：hyper-workspace-next。** 由首阶段 `61082e0` 派生，按日历排期 → 复杂审批 → 图片 OCR → 复杂表格与 Office 协作推进。日历现有来源读写、周视图、人工建改删除和持久回执，仍在补邀请/排期/重复编辑/项目关联与双执行器；不声称日历或完整扩展已交付。规则见 [扩展基线 v2.0](docs/PHASE2-BASELINE.md)，实际状态及失败修复见 [日历进展](docs/CALENDAR.md)。旧仓库 CI 只证明对应历史版本。
+> **扩展阶段开发仓库：hyper-workspace-next。** 由首阶段 `61082e0` 派生，按日历排期 → 复杂审批 → 图片 OCR → 复杂表格与 Office 协作推进。日历现有来源读写、周视图、人工建改删除和持久回执，已接人工与双执行器操作，仍在补邀请/排期/重复编辑/项目关联；不声称日历或完整扩展已交付。规则见 [扩展基线 v2.0](docs/PHASE2-BASELINE.md)，实际状态及失败修复见 [日历进展](docs/CALENDAR.md)。旧仓库 CI 只证明对应历史版本。
 
 ## 日历开发进展
 
-当前人工界面可选择获准日历、浏览 7 天、创建单次/全天日程、改标题/说明/地点、调整单次时间及删除整个系列；保留版本条件、停止请求、未知结果核对和本人历史。Nextcloud 连接完成后设置 `NEXTCLOUD_CALENDAR_ENABLED=true` 并重启 API；默认关闭。原始重复规则/例外保留，新建重复、邀请、完整时区编辑、忙闲排期及 AI 入口仍在开发。
+当前人工界面可选择获准日历、浏览 7 天、创建单次/全天日程、改标题/说明/地点、调整单次时间及删除整个系列；保留版本条件、停止请求、未知结果核对和本人历史。Nextcloud 连接完成后设置 `NEXTCLOUD_CALENDAR_ENABLED=true` 并重启 API；默认关闭。日历界面可选择人工 / DSH / Hermes 与个人或工作区 chat 连接；AI 使用同一业务服务，支持核对选定窗口和执行已确认的建改删计划，私人 Run 不进入项目讨论。原始重复规则/例外保留，新建重复、邀请、完整时区编辑、忙闲排期及自然语言排期草案仍在开发。
 
-本地 262 数据库/HTTP 场景、2 新增日历 UI（含手机、刷新恢复、失权清理）及类型检查通过；新增代码还需自己的完整 CI。之前 `dc5488f` 的 [CI 41721739129](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/41721739129) 常规/容器成功，真实来源 18 过/1 新增展开用例失败；已定位并修复 `&#13;` 数字 XML 实体处理，使用临时私有 Nextcloud 的合成响应复现并验证，等待修正版本 CI。该记录保留，不将上一批失败覆盖为成功。
+本批本地 267 项数据库/HTTP、87 单元、3 项日历 UI（桌面/手机、未知回执、双执行器入口）、类型及构建通过。原生 DSH/Hermes 各完成写入、读取与拒绝模型篡改目标，共6次协议模型请求；只有2次有效来源写入。协议模型不代表真实供应商质量验收。`3a36c16` 的 [CI 41727288615](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/41727288615) 常规/容器通过，真实来源18过/1日历UI选择器失败，正在实际来源复现；数字XML实体修复后的来源展开已通过，失败未覆盖为成功。当前新增代码须以自己的CI为准。
 
 ![日历桌面界面，合成协议资料](docs/images/calendar-desktop.png)
 
-[手机界面截图](docs/images/calendar-mobile.png) · [行为、API、迁移与尚未完成项](docs/CALENDAR.md)
+[手机界面截图](docs/images/calendar-mobile.png) · [AI 入口桌面](docs/images/calendar-ai-desktop.png) · [AI 入口手机](docs/images/calendar-ai-mobile.png) · [行为、API、迁移与尚未完成项](docs/CALENDAR.md)
 
-[![CI](https://github.com/MkaliezZ/hyper-workspace/actions/workflows/ci.yml/badge.svg)](https://github.com/MkaliezZ/hyper-workspace/actions/workflows/ci.yml)
+[![CI](https://github.com/MkaliezZ/hyper-workspace-next/actions/workflows/ci.yml/badge.svg)](https://github.com/MkaliezZ/hyper-workspace-next/actions/workflows/ci.yml)
 
 面向企业内部的 AI 协作 IM：讨论有沉淀，行动有回执，成果能修改，经验能复用。蓝、白、黑配色；拥有自己的业务核心与企业资产服务。
 

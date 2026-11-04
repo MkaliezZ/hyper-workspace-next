@@ -740,7 +740,15 @@ export function App() {
           />
         ) : null}
         {section === "calendar" ? (
-          <CalendarPanel key={view.user.id + view.user.workspaceId} />
+          <CalendarPanel
+            key={view.user.id + view.user.workspaceId}
+            engines={view.engines}
+            run={run}
+            onRun={(value) => {
+              setRun(value);
+              setDetailsRunId(value.id);
+            }}
+          />
         ) : null}
         {section === "organization" ? (
           <OrganizationPanel

@@ -22,6 +22,7 @@ const workflowLabels: Record<Workflow, string> = {
   directory_report: "通讯录",
   manage_organization: "组织管理",
   manage_communication: "会话管理",
+  manage_calendar: "日历操作",
   share_attachment: "分享附件",
   manage_decision: "项目决定",
   query_knowledge: "资料问答",

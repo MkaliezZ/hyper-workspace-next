@@ -1,6 +1,11 @@
 import { NotificationPolicyService } from "./core/notification-policy.js";
 import { CalendarService } from "./core/calendar.js";
-import { CalendarCommandInput, CalendarQuery } from "@hyper/contracts/calendar";
+import { CalendarRunService } from "./core/calendar-runs.js";
+import {
+  CalendarCommandInput,
+  CalendarQuery,
+  CalendarRunInput,
+} from "@hyper/contracts/calendar";
 import { NotificationInput } from "@hyper/contracts/notifications";
 import { RoomManagementService } from "./core/room-management.js";
 import { CommunicationSearchService } from "./core/communication-search.js";
@@ -160,6 +165,20 @@ class ApiErrors implements ExceptionFilter {
 @Controller("api")
 @UseFilters(ApiErrors)
 class ApiController {
+  @Get("calendar/runs") async calendarRunHistory(@Req() req: Request) {
+    return new CalendarRunService(db).history(await subject(req));
+  }
+  @Post("calendar/runs") async calendarRun(
+    @Req() req: Request,
+    @Body() body: unknown,
+  ) {
+    const run = await service.startCalendarRun(
+      await subject(req),
+      CalendarRunInput.parse(body),
+    );
+    await queue.enqueue(run.id);
+    return run;
+  }
   @Get("calendar/calendars") async calendars(@Req() req: Request) {
     return new CalendarService(db).calendars(await subject(req));
   }

@@ -110,6 +110,7 @@ export interface CalendarOccurrence {
   truncatedFields: string[];
 }
 export interface CalendarCommandReceipt {
+  sourceRunId?: string | null;
   plan: CalendarCommandInput;
   id: string;
   operation: "create" | "update" | "delete";
@@ -128,5 +129,34 @@ export interface CalendarCommandReceipt {
   sourceEtag: string | null;
   observedResult: "matched" | "absent" | null;
   acknowledgedAt: string | null;
+  createdAt: string;
+}
+
+export const CalendarRunPlan = z.discriminatedUnion("operation", [
+  z.object({ operation: z.literal("read"), query: CalendarQuery }).strict(),
+  z
+    .object({
+      operation: z.literal("apply"),
+      commandId: z.uuid(),
+      confirmed: z.literal(true),
+    })
+    .strict(),
+]);
+export type CalendarRunPlan = z.infer<typeof CalendarRunPlan>;
+export const CalendarRunInput = z
+  .object({
+    plan: CalendarRunPlan,
+    engine: z.enum(["dsh", "hermes"]).default("dsh"),
+    modelProfileId: z.uuid().optional(),
+    idempotencyKey: z.uuid(),
+  })
+  .strict();
+export type CalendarRunInput = z.infer<typeof CalendarRunInput>;
+export interface CalendarRunSummary {
+  id: string;
+  state: string;
+  engine: "dsh" | "hermes";
+  operation: "read" | "apply";
+  calendarId: string;
   createdAt: string;
 }

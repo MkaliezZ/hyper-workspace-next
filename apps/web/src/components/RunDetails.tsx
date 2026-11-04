@@ -52,6 +52,7 @@ const actionLabels: Record<PlannedAction["tool"], string> = {
   "directory.read": "读取通讯录",
   "organization.manage": "管理组织",
   "communication.manage": "管理会话",
+  "calendar.manage": "核对日历操作",
   "attachment.share": "分享文件附件",
   "decision.write": "保存项目决定",
   "decision.manage": "管理项目决定",

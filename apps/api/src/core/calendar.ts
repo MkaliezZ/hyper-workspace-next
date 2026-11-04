@@ -28,6 +28,7 @@ import {
 import { calendarOccurrences } from "./calendar-projection.js";
 
 const publicReceipt = (row: any): CalendarCommandReceipt => ({
+  sourceRunId: row.source_run_id ?? null,
   plan: row.plan,
   id: row.id,
   operation: row.operation,
@@ -44,7 +45,7 @@ const publicReceipt = (row: any): CalendarCommandReceipt => ({
 });
 type Source = Awaited<ReturnType<CalendarService["connection"]>>;
 
-/** Private calendar commands; manual UI and later host-bound AI tools share this service. */
+/** Private calendar commands shared by manual UI and host-bound AI tools. */
 export class CalendarService {
   constructor(private readonly db: Database) {}
   async connection(s: Subject) {
@@ -58,6 +59,20 @@ export class CalendarService {
         source.credentials,
         source.remoteUid,
       ),
+    };
+  }
+  async scope(s: Subject, calendarId: string) {
+    const source = await this.connection(s);
+    const calendar = await this.calendar(source, calendarId);
+    return {
+      calendar,
+      bindingKey: stableDigest({
+        provider: source.config.providerKey,
+        transport: source.config.transportUrl,
+        workspaceId: source.config.workspaceId,
+        memberGroup: source.config.memberGroup,
+        actor: source.remoteUid,
+      }),
     };
   }
   private async calendar(
@@ -272,9 +287,25 @@ export class CalendarService {
     return rows.filter((row) => live.has(row.calendar_id)).map(publicReceipt);
   }
   async cancel(s: Subject, id: string) {
-    const { source } = await this.authorized(s, id);
+    const { source, row } = await this.authorized(s, id);
     await this.db.tx(async (c) => {
       await this.guard(c, s, source);
+      if (row.source_run_id) {
+        const stopped = await c.query(
+          "UPDATE cw_runs SET state='cancelled',next_sequence=next_sequence+1,updated_at=now() WHERE id=$1 AND workspace_id=$2 AND actor_id=$3 AND state IN ('queued','running') RETURNING next_sequence-1 AS sequence",
+          [row.source_run_id, s.workspaceId, s.id],
+        );
+        if (stopped.rowCount)
+          await c.query(
+            "INSERT INTO cw_run_events(event_id,run_id,sequence,kind,data) VALUES($1,$2,$3,'run.cancelled',$4)",
+            [
+              randomUUID(),
+              row.source_run_id,
+              stopped.rows[0].sequence,
+              { message: "已停止后续日历执行；已发生效果以来源回执为准。" },
+            ],
+          );
+      }
       await c.query(
         "UPDATE cw_calendar_commands SET stop_requested_at=COALESCE(stop_requested_at,now()),state=CASE WHEN state='prepared' THEN 'cancelled' ELSE state END,updated_at=now() WHERE id=$1 AND workspace_id=$2 AND actor_id=$3",
         [id, s.workspaceId, s.id],
@@ -329,11 +360,37 @@ export class CalendarService {
       return publicReceipt(row);
     return this.observe(s, id);
   }
-  async apply(s: Subject, id: string) {
+  async apply(
+    s: Subject,
+    id: string,
+    execution?: {
+      runId: string;
+      lease: string;
+      signal?: AbortSignal;
+      beforeWrite: () => Promise<void>;
+    },
+  ) {
     const { source, row } = await this.authorized(s, id, true);
     if (row.state !== "prepared") return publicReceipt(row);
+    execution?.signal?.throwIfAborted();
+    if (execution) await execution.beforeWrite();
     const claimed = await this.db.tx(async (c) => {
       await this.guard(c, s, source);
+      if (execution) {
+        const run = await c.query(
+          "SELECT id FROM cw_runs WHERE id=$1 AND workspace_id=$2 AND actor_id=$3 AND state='running' AND lease_owner=$4 AND lease_expires_at>clock_timestamp() AND workflow='manage_calendar' AND calendar_plan->>'commandId'=$5 FOR UPDATE",
+          [execution.runId, s.workspaceId, s.id, execution.lease, id],
+        );
+        if (!run.rowCount)
+          throw new ConflictException("日历执行已停止或租约失效。");
+      } else if (row.source_run_id) {
+        const active = await c.query(
+          "SELECT id FROM cw_runs WHERE id=$1 AND state IN ('queued','running') FOR UPDATE",
+          [row.source_run_id],
+        );
+        if (active.rowCount)
+          throw new ConflictException("请先停止此日历AI执行，再人工接管。");
+      }
       return (
         await c.query(
           "UPDATE cw_calendar_commands SET state='applying',attempted_at=now(),updated_at=now() WHERE id=$1 AND state='prepared' AND stop_requested_at IS NULL RETURNING id",
@@ -342,6 +399,7 @@ export class CalendarService {
       ).rowCount;
     });
     if (!claimed) return this.get(s, id);
+    let dispatched = false;
     try {
       const live = await this.recheck(s, source);
       await this.calendar(live, row.calendar_id, row.operation);
@@ -353,6 +411,9 @@ export class CalendarService {
         );
         return this.get(s, id);
       }
+      execution?.signal?.throwIfAborted();
+      if (execution) await execution.beforeWrite();
+      dispatched = true;
       if (row.operation === "create")
         await live.provider.create(
           row.calendar_id,
@@ -377,6 +438,13 @@ export class CalendarService {
         [id],
       );
     } catch (error) {
+      if (!dispatched) {
+        await this.db.pool.query(
+          "UPDATE cw_calendar_commands SET state=$2,error='calendar_dispatch_not_started',updated_at=now() WHERE id=$1 AND state='applying'",
+          [id, execution?.signal?.aborted ? "cancelled" : "failed"],
+        );
+        return this.get(s, id);
+      }
       const rejected = error instanceof CalendarSourceRejected;
       await this.db.pool.query(
         "UPDATE cw_calendar_commands SET state=$2,error=$3,updated_at=now() WHERE id=$1 AND state='applying'",

@@ -1,4 +1,6 @@
 import { NotificationPolicyService } from "./notification-policy.js";
+import { CalendarRunService } from "./calendar-runs.js";
+import { CalendarRunInput } from "@hyper/contracts/calendar";
 import { RoomManagementService } from "./room-management.js";
 import type { RoomManagementRunInput } from "@hyper/contracts/room-management";
 import { OrganizationService } from "./organization.js";
@@ -521,6 +523,101 @@ export class WorkspaceService {
     if (result.rowCount) return { ...result.rows[0], created: true };
     return replay((await lookup()).rows[0]);
   }
+  async startCalendarRun(s: Subject, raw: CalendarRunInput) {
+    const input = CalendarRunInput.parse(raw),
+      calendars = new CalendarRunService(this.db);
+    const hash = stableDigest({ ...input, idempotencyKey: undefined });
+    const previous = async () =>
+      (
+        await this.db.pool.query(
+          "SELECT * FROM cw_runs WHERE workspace_id=$1 AND actor_id=$2 AND idempotency_key=$3",
+          [s.workspaceId, s.id, input.idempotencyKey],
+        )
+      ).rows[0];
+    const replay = async (row: any) => {
+      if (row.input_hash !== hash || row.workflow !== "manage_calendar")
+        throw new ConflictException("同一执行键不能更换日历任务。");
+      await calendars.assertRunScope(s, row);
+      return { id: row.id, state: row.state, created: false };
+    };
+    const old = await previous();
+    if (old) return replay(old);
+    const prepared = await calendars.prepare(s, input.plan);
+    if (
+      !this.engines
+        .get(input.engine)
+        ?.describeCapabilities()
+        .operations.includes("manage_calendar")
+    )
+      throw new BadRequestException("执行器尚未声明日历能力。");
+    const model = await this.runModel(s, input.engine, input.modelProfileId);
+    const result = await this.db.tx(async (c) => {
+      await ExecutionPolicyService.lock(c, s.workspaceId);
+      if (
+        (
+          await c.query(
+            "SELECT id FROM cw_runs WHERE workspace_id=$1 AND actor_id=$2 AND idempotency_key=$3",
+            [s.workspaceId, s.id, input.idempotencyKey],
+          )
+        ).rowCount
+      )
+        return null;
+      const member = await c.query(
+        "SELECT user_id FROM cw_members WHERE workspace_id=$1 AND user_id=$2 FOR SHARE",
+        [s.workspaceId, s.id],
+      );
+      const identity = await c.query(
+        "SELECT c.id FROM cw_identity_credentials c JOIN cw_external_identities i ON i.id=c.identity_id WHERE c.id=$1 AND i.workspace_id=$2 AND i.user_id=$3 AND c.disabled_at IS NULL FOR SHARE OF c,i",
+        [s.identityCredentialId, s.workspaceId, s.id],
+      );
+      if (!member.rowCount || !identity.rowCount)
+        throw new ForbiddenException("当前员工或登录已失效。");
+      if (input.plan.operation === "apply") {
+        const active = await c.query(
+          "SELECT id FROM cw_runs WHERE workspace_id=$1 AND actor_id=$2 AND workflow='manage_calendar' AND calendar_plan->>'commandId'=$3 AND state IN ('queued','running') LIMIT 1",
+          [s.workspaceId, s.id, input.plan.commandId],
+        );
+        if (active.rowCount)
+          throw new ConflictException(
+            "此日历操作已有AI执行，请先查看或停止原执行。",
+          );
+        const command = await c.query(
+          "SELECT state FROM cw_calendar_commands WHERE id=$1 AND workspace_id=$2 AND actor_id=$3 FOR UPDATE",
+          [input.plan.commandId, s.workspaceId, s.id],
+        );
+        if (
+          !command.rowCount ||
+          ["failed", "cancelled", "applying", "recovery_required"].includes(
+            command.rows[0].state,
+          )
+        )
+          throw new ConflictException("请先核对原日历操作，不重新发起AI写入。");
+      }
+      const id = randomUUID();
+      const inserted = await c.query(
+        "INSERT INTO cw_runs(id,workspace_id,actor_id,conversation_id,engine,workflow,instruction,idempotency_key,input_hash,demo,model_profile_id,identity_credential_id,calendar_plan,calendar_binding) VALUES($1,$2,$3,NULL,$4,'manage_calendar','执行员工选定的私人日历计划；只以来源回执报告结果。',$5,$6,false,$7,$8,$9,$10) RETURNING id,state",
+        [
+          id,
+          s.workspaceId,
+          s.id,
+          input.engine,
+          input.idempotencyKey,
+          hash,
+          model?.id,
+          s.identityCredentialId,
+          prepared.plan,
+          prepared.bindingKey,
+        ],
+      );
+      if (input.plan.operation === "apply")
+        await c.query(
+          "UPDATE cw_calendar_commands SET source_run_id=$2 WHERE id=$1",
+          [input.plan.commandId, id],
+        );
+      return inserted.rows[0];
+    });
+    return result ? { ...result, created: true } : replay(await previous());
+  }
   async startFileRun(s: Subject, assetId: string, input: FileReadingInput) {
     const files = new SourceFileService(this.db);
     await files.assertVersion(s, assetId, input.expectedSourceVersion);
@@ -653,6 +750,8 @@ export class WorkspaceService {
     });
   }
   async startRun(s: Subject, input: RunInput) {
+    if (input.workflow === "manage_calendar")
+      throw new BadRequestException("请从日历专用入口发起。");
     if (input.workflow === "manage_communication")
       throw new BadRequestException("请从通信管理专用入口发起。");
     if (isFileWorkflow(input.workflow))
@@ -1325,7 +1424,7 @@ export class WorkspaceService {
     await assertMember(this.db, s);
     const target = (
       await this.db.pool.query(
-        "SELECT conversation_id,source_file_asset_id,expected_file_version,knowledge_plan,room_management_plan,room_management_provider_key,(instruction='') AS source_redacted FROM cw_runs WHERE id=$1 AND workspace_id=$2 AND actor_id=$3",
+        "SELECT conversation_id,source_file_asset_id,expected_file_version,knowledge_plan,room_management_plan,room_management_provider_key,calendar_plan,calendar_binding,(instruction='') AS source_redacted FROM cw_runs WHERE id=$1 AND workspace_id=$2 AND actor_id=$3",
         [id, s.workspaceId, s.id],
       )
     ).rows[0];
@@ -1338,6 +1437,11 @@ export class WorkspaceService {
         target.source_file_asset_id,
         target.expected_file_version,
       );
+    else if (target.calendar_plan)
+      await new CalendarRunService(this.db).assertRunScope(s, {
+        ...target,
+        id,
+      });
     else if (target.room_management_plan)
       await new RoomManagementService(this.db).assertReceiptScope(s, {
         ...target,
@@ -1413,9 +1517,14 @@ export class WorkspaceService {
     if (!owned.rowCount) throw new NotFoundException("执行不存在或无权访问。");
     await this.db.tx(async (c) => {
       const r = await c.query(
-        "UPDATE cw_runs SET state='cancelled',updated_at=now() WHERE id=$1 AND state IN ('queued','running','waiting_input','waiting_confirmation') RETURNING id",
+        "UPDATE cw_runs SET state='cancelled',updated_at=now() WHERE id=$1 AND state IN ('queued','running','waiting_input','waiting_confirmation') RETURNING id,calendar_plan",
         [id],
       );
+      if (r.rows[0]?.calendar_plan?.operation === "apply")
+        await c.query(
+          "UPDATE cw_calendar_commands SET stop_requested_at=COALESCE(stop_requested_at,now()),state=CASE WHEN state='prepared' THEN 'cancelled' ELSE state END,updated_at=now() WHERE id=$1 AND workspace_id=$2 AND actor_id=$3 AND source_run_id=$4",
+          [r.rows[0].calendar_plan.commandId, s.workspaceId, s.id, id],
+        );
       if (r.rowCount)
         await appendEvent(c, id, "run.cancelled", {
           message: "已停止后续执行；已完成操作保留。",

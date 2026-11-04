@@ -11,6 +11,9 @@ test("Real CalDAV and product UI preserve source permissions, versions, recurrin
   browser,
 }) => {
   test.setTimeout(240000);
+  const prefix = process.env.HYPER_CALENDAR_TEST_PREFIX ?? "calendar";
+  const aliceUid = prefix + "-alice",
+    bobUid = prefix + "-bob";
   const calendarId = "hyper-calendar-" + randomUUID();
   const objectId = "event-" + randomUUID() + ".ics";
   const uid = randomUUID();
@@ -19,23 +22,23 @@ test("Real CalDAV and product UI preserve source permissions, versions, recurrin
     transportUrl: source,
     providerKey: "nextcloud:calendar-ci",
     workspaceId: process.env.NEXTCLOUD_WORKSPACE_ID!,
-    memberGroup: "hyper-members",
+    memberGroup: process.env.NEXTCLOUD_MEMBER_GROUP ?? "hyper-members",
     bootstrapAdminIds: [],
   };
   const alice = new NextcloudCalendarProvider(
     config,
-    { loginName: "calendar-alice", appPassword: password },
-    "calendar-alice",
+    { loginName: aliceUid, appPassword: password },
+    aliceUid,
   );
   const bob = new NextcloudCalendarProvider(
     config,
-    { loginName: "calendar-bob", appPassword: password },
-    "calendar-bob",
+    { loginName: bobUid, appPassword: password },
+    bobUid,
   );
   const url =
-    source + "/remote.php/dav/calendars/calendar-alice/" + calendarId + "/";
+    source + "/remote.php/dav/calendars/" + aliceUid + "/" + calendarId + "/";
   const authorization =
-    "Basic " + Buffer.from("calendar-alice:" + password).toString("base64");
+    "Basic " + Buffer.from(aliceUid + ":" + password).toString("base64");
   const ical = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
@@ -96,8 +99,32 @@ test("Real CalDAV and product UI preserve source permissions, versions, recurrin
         (event) => event.uid === uid && event.etag === saved.etag,
       ),
     ).toBe(true);
-    const actor = await login(browser, "calendar-alice");
+    const actor = await login(browser, aliceUid);
     try {
+      // Separate source/API readiness from a missing rendered selector in failure evidence.
+      try {
+        await expect(
+          actor.page.getByRole("navigation", { name: "工作区导航" }),
+        ).toBeVisible({ timeout: 60000 });
+      } catch (error) {
+        // Static UI messages only: no cookies, login-flow URLs, values or source content.
+        console.error(
+          "Calendar product readiness",
+          JSON.stringify({
+            headings: await actor.page.getByRole("heading").allTextContents(),
+            alerts: await actor.page.getByRole("alert").allTextContents(),
+            status: await actor.page.getByRole("status").allTextContents(),
+          }).replaceAll(password, "[redacted]"),
+        );
+        throw error;
+      }
+      const sourceList = await actor.context.request.get(
+        origin + "/api/calendar/calendars",
+      );
+      await expect(sourceList).toBeOK();
+      expect(
+        (await sourceList.json()).some((c: any) => c.id === calendarId),
+      ).toBe(true);
       await actor.page
         .getByRole("navigation", { name: "工作区导航" })
         .getByRole("button", { name: "日历", exact: true })
@@ -106,6 +133,7 @@ test("Real CalDAV and product UI preserve source permissions, versions, recurrin
         name: "企业日历",
         exact: true,
       });
+      await expect(panel).toBeVisible();
       await panel.getByLabel("日历", { exact: true }).selectOption(calendarId);
       await panel.getByLabel("起始日期", { exact: true }).fill("2026-11-04");
       await expect(

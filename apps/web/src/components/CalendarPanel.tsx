@@ -12,7 +12,14 @@ import type {
   CalendarOccurrence,
   CalendarPoint,
   CalendarSummary,
+  CalendarRunPlan,
+  CalendarRunInput,
+  CalendarRunSummary,
 } from "@hyper/contracts/calendar";
+import type { WorkspaceView } from "@hyper/contracts";
+import type { ModelSummary } from "./ModelSettings";
+import { runStateLabels } from "./RunDetails";
+import type { RunState } from "@hyper/contracts";
 import { api, mutation, ApiError } from "../api";
 import { Dialog } from "./Dialog";
 
@@ -48,7 +55,7 @@ function pointLabel(point: CalendarPoint) {
   );
 }
 function initialTime(day: string, hour: string) {
-  return day + "T" + hour + ":00";
+  return day + "T" + hour;
 }
 function inputTime(point: CalendarPoint) {
   if (point.kind === "date") return point.value;
@@ -124,13 +131,32 @@ function CalendarPreview({ receipt }: { receipt: CalendarCommandReceipt }) {
     </div>
   );
 }
-export function CalendarPanel() {
+export function CalendarPanel({
+  engines,
+  run,
+  onRun,
+}: {
+  engines: WorkspaceView["engines"];
+  run: { id: string; state: string } | null;
+  onRun: (run: any) => void;
+}) {
+  const [executor, setExecutor] = useState<"manual" | "dsh" | "hermes">(
+    "manual",
+  );
+  const [models, setModels] = useState<ModelSummary[]>([]),
+    [modelId, setModelId] = useState("");
+  const [modelError, setModelError] = useState("");
+  const aiPending = useRef<{
+    fingerprint: string;
+    input: CalendarRunInput;
+  } | null>(null);
   const [calendars, setCalendars] = useState<CalendarSummary[]>([]),
     [calendarId, setCalendarId] = useState("");
   const [day, setDay] = useState(localDate(new Date())),
     [events, setEvents] = useState<CalendarOccurrence[]>([]);
   const [history, setHistory] = useState<CalendarCommandReceipt[]>([]),
     [error, setError] = useState("");
+  const [runHistory, setRunHistory] = useState<CalendarRunSummary[]>([]);
   const [listLoading, setListLoading] = useState(true),
     [queryLoading, setQueryLoading] = useState(false),
     [busy, setBusy] = useState(false),
@@ -158,10 +184,14 @@ export function CalendarPanel() {
     setCalendarId("");
     setEvents([]);
     setHistory([]);
+    setRunHistory([]);
     setMode(null);
     setSelected(null);
     setIntent(null);
     pending.current = null;
+    aiPending.current = null;
+    setModels([]);
+    setModelId("");
   }, []);
   const failure = useCallback(
     (e: unknown) => {
@@ -173,6 +203,84 @@ export function CalendarPanel() {
   );
   useEffect(() => {
     const controller = new AbortController();
+    void api<ModelSummary[]>("/models", { signal: controller.signal })
+      .then((rows) => {
+        if (!controller.signal.aborted) {
+          setModels(rows.filter((m) => m.purpose === "chat"));
+          setModelError("");
+        }
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted) setModelError(e.message);
+      });
+    return () => controller.abort();
+  }, []);
+  useEffect(() => {
+    if (
+      run &&
+      ["succeeded", "failed", "cancelled", "recovery_required"].includes(
+        run.state,
+      )
+    )
+      setRevision((v) => v + 1);
+  }, [run?.id, run?.state]);
+  const aiReady =
+    executor !== "manual" &&
+    engines[executor]?.configured &&
+    !!models.find(
+      (m) =>
+        m.id === modelId &&
+        (!engines[executor]?.modelProviders ||
+          engines[executor].modelProviders!.includes(m.provider)),
+    );
+  async function ai(plan: CalendarRunPlan) {
+    if (executor === "manual" || !aiReady)
+      throw new Error("请选择可用的执行器和模型连接。");
+    const base = { plan, engine: executor, modelProfileId: modelId };
+    const fingerprint = JSON.stringify(base);
+    if (!aiPending.current || aiPending.current.fingerprint !== fingerprint)
+      aiPending.current = {
+        fingerprint,
+        input: { ...base, idempotencyKey: crypto.randomUUID() },
+      };
+    const result = await mutation("/calendar/runs", aiPending.current.input);
+    onRun(result);
+    setMode(null);
+    setIntent(null);
+    setSelected(null);
+    pending.current = null;
+    aiPending.current = null;
+    setRevision((v) => v + 1);
+  }
+  async function readWithAi() {
+    setBusy(true);
+    setError("");
+    try {
+      await ai({
+        operation: "read",
+        query: {
+          calendarId,
+          start: utc(new Date(day + "T00:00:00")),
+          end: utc(new Date(addDays(day, 7) + "T00:00:00")),
+        },
+      });
+    } catch (e) {
+      failure(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function applyPrepared(receipt: CalendarCommandReceipt) {
+    if (receipt.sourceRunId) {
+      onRun(await api("/runs/" + receipt.sourceRunId));
+      return;
+    }
+    if (executor === "manual") await execute(receipt, "apply");
+    else
+      await ai({ operation: "apply", commandId: receipt.id, confirmed: true });
+  }
+  useEffect(() => {
+    const controller = new AbortController();
     setListLoading(true);
     setError("");
     void Promise.all([
@@ -182,11 +290,15 @@ export function CalendarPanel() {
       api<CalendarCommandReceipt[]>("/calendar/commands", {
         signal: controller.signal,
       }),
+      api<CalendarRunSummary[]>("/calendar/runs", {
+        signal: controller.signal,
+      }),
     ])
-      .then(([list, receipts]) => {
+      .then(([list, receipts, runs]) => {
         if (controller.signal.aborted) return;
         setCalendars(list);
         setHistory(receipts);
+        setRunHistory(runs);
         setCalendarId((previous) =>
           list.some((c) => c.id === previous) ? previous : (list[0]?.id ?? ""),
         );
@@ -286,7 +398,7 @@ export function CalendarPanel() {
     setModalError("");
     try {
       if (intent) {
-        if (intent.state === "prepared") await execute(intent, "apply");
+        if (intent.state === "prepared") await applyPrepared(intent);
         else if (["applying", "recovery_required"].includes(intent.state))
           await execute(intent, "reconcile");
         return;
@@ -346,7 +458,7 @@ export function CalendarPanel() {
           pending.current.input,
         ));
       setIntent(receipt);
-      if (receipt.state === "prepared") await execute(receipt, "apply");
+      if (receipt.state === "prepared") await applyPrepared(receipt);
       else if (
         receipt.state === "applying" ||
         receipt.state === "recovery_required"
@@ -401,8 +513,61 @@ export function CalendarPanel() {
       ) : null}
       <div className="calendar-controls">
         <label>
+          操作方式
+          <select
+            aria-label="日历操作方式"
+            value={executor}
+            disabled={busy || !!aiPending.current}
+            onChange={(e) => setExecutor(e.target.value as typeof executor)}
+          >
+            <option value="manual">人工操作</option>
+            <option value="dsh" disabled={!engines.dsh?.configured}>
+              DSH
+            </option>
+            <option value="hermes" disabled={!engines.hermes?.configured}>
+              Hermes
+            </option>
+          </select>
+        </label>
+        {executor !== "manual" ? (
+          <>
+            <label>
+              模型连接
+              <select
+                aria-label="日历模型连接"
+                value={modelId}
+                disabled={busy || !!aiPending.current}
+                onChange={(e) => setModelId(e.target.value)}
+              >
+                <option value="">选择 chat 连接</option>
+                {models
+                  .filter(
+                    (m) =>
+                      !engines[executor]?.modelProviders ||
+                      engines[executor].modelProviders!.includes(m.provider),
+                  )
+                  .map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name} · {m.model}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <button
+              disabled={!aiReady || !calendarId || loading || busy}
+              onClick={() => void readWithAi()}
+            >
+              AI 核对本周
+            </button>
+            {modelError ? <span role="alert">{modelError}</span> : null}
+          </>
+        ) : null}
+      </div>
+      <div className="calendar-controls">
+        <label>
           日历
           <select
+            aria-label="日历"
             value={calendarId}
             onChange={(e) => setCalendarId(e.target.value)}
             disabled={busy}
@@ -561,6 +726,18 @@ export function CalendarPanel() {
                   </button>
                 ) : null}
                 <strong>{receipt.title}</strong>
+                {receipt.sourceRunId ? (
+                  <button
+                    disabled={busy}
+                    onClick={() => {
+                      void api("/runs/" + receipt.sourceRunId)
+                        .then(onRun)
+                        .catch(failure);
+                    }}
+                  >
+                    查看 AI 执行
+                  </button>
+                ) : null}
                 <span>
                   {labels[receipt.state]}
                   {receipt.stopRequested && receipt.state !== "cancelled"
@@ -602,6 +779,40 @@ export function CalendarPanel() {
           ))
         ) : (
           <p className="muted">尚无日历操作。</p>
+        )}
+      </section>
+      <section aria-label="本人日历执行历史">
+        <h3>本人 AI 日历执行</h3>
+        {runHistory.length ? (
+          runHistory.map((r) => (
+            <article key={r.id} className="calendar-receipt">
+              <div>
+                <strong>
+                  {r.operation === "read"
+                    ? "核对日历窗口"
+                    : "执行确认的日历操作"}{" "}
+                  · {r.engine === "dsh" ? "DSH" : "Hermes"}
+                </strong>
+                <span>
+                  {runStateLabels[r.state as RunState] ?? "请打开核对"}
+                </span>
+                <time dateTime={r.createdAt}>
+                  {new Date(r.createdAt).toLocaleString("zh-CN")}
+                </time>
+              </div>
+              <button
+                onClick={() =>
+                  void api("/runs/" + r.id)
+                    .then(onRun)
+                    .catch(failure)
+                }
+              >
+                查看执行
+              </button>
+            </article>
+          ))
+        ) : (
+          <p className="muted">尚无可访问的日历 AI 执行。</p>
         )}
       </section>
       {mode ? (
@@ -761,6 +972,7 @@ export function CalendarPanel() {
                 className="primary"
                 disabled={
                   busy ||
+                  (executor !== "manual" && !aiReady) ||
                   (!!intent &&
                     ["failed", "cancelled", "succeeded"].includes(intent.state))
                 }
@@ -772,7 +984,9 @@ export function CalendarPanel() {
                     ? "核对原操作"
                     : mode === "delete"
                       ? "确认删除系列"
-                      : "保存日程"}
+                      : executor === "manual"
+                        ? "保存日程"
+                        : "确认并交给 AI"}
               </button>
             </div>
           </form>

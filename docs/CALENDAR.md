@@ -10,7 +10,7 @@ PROPFIND 按 XML namespace 识别日历及当前读取/新增/修改/删除权�
 
 GET 要求 ETag。创建使用 If-None-Match:*，替换/删除要求确切强 ETag；412 不覆盖他人更新。所有请求禁止重定向，来源 href 限定当前员工根与所选日历；XML DTD、重复关键属性、外部 URL、路径穿越及部分响应拒绝返回。
 
-此 Provider 不自动重试写入。网络中断、重定向/5xx、非预期成功状态标记 CalendarDeliveryUnknown；调用方必须先持久化意图并按 UID/源版本/操作标记回读和对账，再形成业务回执。PUT 201/204 只代表来源接受，不能宣称完整动作成功。CalendarService 已接持久意图与回读；人工写接口已开放，AI 业务入口尚未接通。
+此 Provider 不自动重试写入。网络中断、重定向/5xx、非预期成功状态标记 CalendarDeliveryUnknown；调用方必须先持久化意图并按 UID/源版本/操作标记回读和对账，再形成业务回执。PUT 201/204 只代表来源接受，不能宣称完整动作成功。CalendarService 已接持久意图与回读；人工写接口与固定计划的AI业务入口已接通。
 
 普通对象 PUT 暂拒绝 METHOD/ATTENDEE/ORGANIZER，避免绕过明确授权隐式发邀请；后续必须实现专用排期服务和真实邀请/取消/状态验收，这项保护不构成邀请功能已完成或永久取消。
 
@@ -32,7 +32,7 @@ GET 要求 ETag。创建使用 If-None-Match:*，替换/删除要求确切强 ET
 - 044 保存私人主体、来源连接/UID、精确日历/对象/版本、请求键、结构化计划、期望内容/摘要、尝试状态与观察回执。准备不写来源；并发 apply 只有一个可领取，创建 If-None-Match、更新/删除 If-Match；主体/成员/来源权限在业务及事务边界重新检查。
 - 只有源 UID、产品操作标记、完整语义摘要均一致才记录 matched；删除记录 absent，表示已核对不存在，不捏造删除动作归因。未知结果只核对，不重发；HTTP 明确拒绝记录失败。取消前未发出则 cancelled；已发生效果仍据实保存，同时显示停止请求。
 - 桌面7列/手机单列周视图、新建/修改/删除、刷新、只读控制、时区标记、当前员工最近30条操作；未知回执刷新后仍可核对，已准备计划可再次查看后执行。所有标题/正文作为文本渲染。来源失权清理旧内容。
-- 普通手动 API：GET `/api/calendar/calendars`、POST `/api/calendar/query`、GET/POST `/api/calendar/commands`、GET `/api/calendar/commands/:id`、POST `/:id/apply`（confirmed=true）、`/:id/reconcile`、`/:id/cancel`。身份来自登录，输入拒绝 actor/服务器/任意URL；AI以后共用该业务服务，不能绕过授权调用 Provider。
+- 普通手动 API：GET `/api/calendar/calendars`、POST `/api/calendar/query`、GET/POST `/api/calendar/commands`、GET `/api/calendar/commands/:id`、POST `/:id/apply`（confirmed=true）、`/:id/reconcile`、`/:id/cancel`。身份来自登录，输入拒绝 actor/服务器/任意URL；DSH/Hermes共用该业务服务，不能绕过授权调用 Provider。
 - 配置：Nextcloud 企业登录与成员组就绪后，`NEXTCLOUD_CALENDAR_ENABLED=true`；Compose API/Worker 共用开关。开发可用进程环境 `WEB_PORT`/`API_PORT` 启动隔离端口，Playwright 可指定 `HYPER_TEST_ORIGIN`；默认仍为5173/3100。
 
 ## 本批验证与故障记录
@@ -52,3 +52,26 @@ GET 要求 ETag。创建使用 If-None-Match:*，替换/删除要求确切强 ET
 追加证据：87单元、262数据库/HTTP、全工作区类型/构建、npm审计（0漏洞）、许可证清单与冻结包通过。完整本地UI首轮因旧断言固定5173而不适用于独立5174端口，已统一测试Origin及页面身份断言，未放宽服务端Origin检查。修正后80项中79过，唯一失败是新克隆未安装DSH而被明确拒绝；当前按锁定版本补齐原生运行环境，不能把该轮记成80通过。日历2项本身通过。已准备计划可查看明确目标后续做，长字段节选只读，更新仅提交改动字段，保留来源全文。
 
 另一次阿里杭州私有源合成验证：直接写入本产品codec生成的单次事件，GET回读后的完整语义摘要相同，操作标记保留；该合成日历已删除。此结果仅证明来源往返，不替代产品登录/UI/完整CI或真实模型。
+
+
+## 私人日历 AI 执行（045）
+
+POST `/api/calendar/runs` 接受严格的 CalendarRunInput：engine=dsh|hermes、modelProfileId、idempotencyKey，以及read（选定日历和有界UTC窗口）或apply（已有commandId、confirmed=true）计划。拒绝fixture、调用者身份、任意URL、模型指令和额外字段。模型只提出一个 `calendar.manage {}`，宿主绑定不可替换的目标/时间/版本；当前还没有自然语言改期草案或参会邀请能力。
+
+Run为本人私有、conversation_id为空；不继承页面当前项目规则、不写入项目讨论。每次上下文、模型请求和业务动作沿用当前成员、来源连接/remote UID、日历权限以及执行/用量/费用限制。只发送有界计划或最多30条标题/时间/状态元数据；不发送来源凭据、完整ICS或其他项目内容。结束后清理原生运行目录。真实回执由宿主执行并回读，不采信模型宣称的成功。
+
+同命令仅允许一个活跃AI Run；响应丢失重试同一准入键，未知来源结果仅reconcile而不重发。人工接管前需停止活跃Run；停止Run同步阻断未发送命令，停止命令也同步停止关联Run。发出后已发生效果保留source receipt与stopRequested，停止不等于撤销。sourceRunId仅随本人当前授权的命令返回，刷新后可打开原执行。
+
+045添加calendar_plan/calendar_binding与命令source_run_id，保留原其他工作流约束。先停止Worker后执行`npm run migrate`，API/Worker同版本再启动；旧数据库不应被本开发库迁移。备份恢复对未完成Run与日历命令均隔离为recovery_required。回退需先停新入口/Worker并核对副作用、保留归档，再备份并处理045外键/索引/约束；不能仅删迁移记录或将回退当作撤销外部日程。
+
+验证：全库267真实PG/HTTP用例（新增5项准入、并发/人工隔离、租约/当前规则、停止、回执丢失、私有读取），87单元、类型/构建、许可证与冻结快照校验通过。原生运行用例通过：DSH和Hermes各完成一次创建/读回、一次私有窗口读取及一次模型注入目标被拒；共6次本机协议模型请求，2次合成CalDAV写入，无真实供应商调用。3项日历UI在独立5175/3102通过，含默认时间直接保存、丢失准入回执同键重试、选定Hermes与模型连接、重开原Run及手机无横向溢出；Browser plugin not available，使用既有Playwright，页面身份/非空/无Vite覆盖层/无页面异常及互动通过。截图为明确合成fixture。
+
+UI首轮新增用例发现默认datetime含秒、往返校验按分钟导致不能直接保存；统一默认输入精度后3项通过。原80项UI唯一DSH未安装失败已在锁定SDK安装后单独2项复验通过，不把多轮合并称为单轮80过。`3a36c16`完整CI的verify/deployment通过、来源18过/1日历选择器失败；数字实体与实际展开断言已过，正在定位产品UI问题。阿里临时源新增隔离合成账号/成员组用于复现，不修改已交付产品配置或真实企业数据；其结果另行记录。
+
+
+来源UI故障进一步定位：在浏览器最小HTML复现，嵌套select的HTML label含选项文字时，Playwright精确getByLabel("日历")匹配0个，而combobox可访问名称匹配1个。日历select现显式设置独立aria-label，并加入UI选日历回归。云端合成账号流程已复现同一失败；其后一次边开发边运行的复测遇到watch重启/API代理ECONNREFUSED，保留失败、不当作来源业务结论。代码冻结后再跑完整单来源场景，结果待核对。来源授权测试不再等待首个跳转的全部页面资源，改由后续输入/授权控件和产品导航明确等待；默认CI时限不变，本机跨网源可显式放宽action时限。
+
+GET `/api/calendar/runs` 返回本人当前授权来源下最近20次日历Run元数据，包含读取任务；不含提示词、源正文或模型Key。查询前后核对当前身份与可读日历；失权/来源不可用不保留旧列表。界面可以刷新后重新打开Run，适用于没有写入命令的只读任务。新增数据库历史隔离/撤权断言5项整组通过，3项日历UI重新通过（包含刷新找回只读历史）；类型检查通过。
+
+
+限制解除后接续核对：未提交代码和本地通过记录完整保留。上一轮冻结复测在企业登录后工作区导航就绪门槛失败，未据此声称真实来源产品流程通过；新增就绪失败诊断只记录静态标题/状态/错误，不记录cookies、表单值、一次性URL或请求正文。恢复时原8090私有SSH隧道已不存在，首个实测因ECONNREFUSED终止；核实远端来源仍running后重建仅限本机回环的隧道，再按同一场景复验。失败与环境准备分别保留。

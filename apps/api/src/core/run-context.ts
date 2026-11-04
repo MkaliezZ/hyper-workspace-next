@@ -1,4 +1,5 @@
 import { NotificationPolicyService } from "./notification-policy.js";
+import { CalendarRunService } from "./calendar-runs.js";
 import { isOrganizationBudgetPlan } from "@hyper/contracts";
 import { OrganizationBudgetService } from "./organization-budgets.js";
 import { RoomManagementService } from "./room-management.js";
@@ -32,6 +33,8 @@ export async function assertRunScope(
   run: any,
 ) {
   await assertScheduledRun(service.db.pool, run);
+  if (run.workflow === "manage_calendar")
+    return new CalendarRunService(service.db).assertRunScope(s, run);
   if (run.workflow === "manage_communication")
     return new RoomManagementService(service.db).assertRunScope(s, run);
   if (isFileWorkflow(run.workflow))
@@ -93,6 +96,8 @@ async function baseRunContext(
   subject: Subject,
   run: any,
 ) {
+  if (run.workflow === "manage_calendar")
+    return new CalendarRunService(service.db).context(subject, run);
   if (run.workflow === "manage_communication") {
     const selected = await new RoomManagementService(service.db).prepare(
       subject,

@@ -6,7 +6,7 @@ import {
 } from "@playwright/test";
 export const source = process.env.NEXTCLOUD_URL!,
   password = process.env.NC_TEST_PASSWORD!,
-  origin = "http://127.0.0.1:5173";
+  origin = process.env.HYPER_TEST_ORIGIN ?? "http://127.0.0.1:5173";
 async function grant(popup: Page, uid: string) {
   const errors: string[] = [];
   popup.on("pageerror", (error) =>
@@ -16,16 +16,16 @@ async function grant(popup: Page, uid: string) {
     await popup
       .getByRole("link", { name: "Log in", exact: true })
       .or(popup.getByRole("button", { name: "Log in", exact: true }))
-      .click();
+      .click({ noWaitAfter: true });
     await popup.locator('input[name="user"]').fill(uid);
     await popup.locator('input[name="password"]').fill(password);
     await popup
       .locator('form[name="login"]')
       .locator('button[type="submit"]')
-      .click();
+      .click({ noWaitAfter: true });
     await popup
       .getByRole("button", { name: "Grant access", exact: true })
-      .click();
+      .click({ noWaitAfter: true });
   } catch (error) {
     // Synthetic CI accounts only. Never dump cookies, form values, page HTML or request bodies.
     const text = await popup
