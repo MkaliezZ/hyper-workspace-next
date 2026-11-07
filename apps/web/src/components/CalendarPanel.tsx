@@ -20,6 +20,7 @@ import type { WorkspaceView } from "@hyper/contracts";
 import type { ModelSummary } from "./ModelSettings";
 import { runStateLabels } from "./RunDetails";
 import type { RunState } from "@hyper/contracts";
+import { CalendarAvailabilityPanel } from "./CalendarAvailabilityPanel";
 import { api, mutation, ApiError } from "../api";
 import { Dialog } from "./Dialog";
 
@@ -176,10 +177,14 @@ export function CalendarPanel({
     fingerprint: string;
     input: CalendarCommandInput;
   } | null>(null);
+  const loaders = useRef(new Set<AbortController>());
   const currentCalendar = calendars.find((c) => c.id === calendarId);
   const loading = listLoading || queryLoading;
   const displayZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const clearPrivate = useCallback(() => {
+    for (const controller of loaders.current) controller.abort();
+    setListLoading(false);
+    setQueryLoading(false);
     setCalendars([]);
     setCalendarId("");
     setEvents([]);
@@ -203,6 +208,7 @@ export function CalendarPanel({
   );
   useEffect(() => {
     const controller = new AbortController();
+    loaders.current.add(controller);
     void api<ModelSummary[]>("/models", { signal: controller.signal })
       .then((rows) => {
         if (!controller.signal.aborted) {
@@ -213,7 +219,10 @@ export function CalendarPanel({
       .catch((e) => {
         if (!controller.signal.aborted) setModelError(e.message);
       });
-    return () => controller.abort();
+    return () => {
+      loaders.current.delete(controller);
+      controller.abort();
+    };
   }, []);
   useEffect(() => {
     if (
@@ -281,44 +290,68 @@ export function CalendarPanel({
   }
   useEffect(() => {
     const controller = new AbortController();
+    loaders.current.add(controller);
     setListLoading(true);
     setError("");
-    void Promise.all([
-      api<CalendarSummary[]>("/calendar/calendars", {
-        signal: controller.signal,
-      }),
-      api<CalendarCommandReceipt[]>("/calendar/commands", {
-        signal: controller.signal,
-      }),
-      api<CalendarRunSummary[]>("/calendar/runs", {
-        signal: controller.signal,
-      }),
-    ])
-      .then(([list, receipts, runs]) => {
+    setHistory([]);
+    setRunHistory([]);
+    const denied = (e: unknown) =>
+      e instanceof ApiError && [401, 403, 404].includes(e.status);
+    const historyFailure = (e: unknown) => {
+      if (controller.signal.aborted) return;
+      if (denied(e)) {
+        controller.abort();
+        clearPrivate();
+        setListLoading(false);
+      }
+      failure(e);
+    };
+    void api<CalendarSummary[]>("/calendar/calendars", {
+      signal: controller.signal,
+    })
+      .then((list) => {
         if (controller.signal.aborted) return;
         setCalendars(list);
-        setHistory(receipts);
-        setRunHistory(runs);
         setCalendarId((previous) =>
           list.some((c) => c.id === previous) ? previous : (list[0]?.id ?? ""),
         );
       })
       .catch((e) => {
         if (!controller.signal.aborted) {
+          controller.abort();
           clearPrivate();
+          setListLoading(false);
           failure(e);
         }
       })
       .finally(() => {
         if (!controller.signal.aborted) setListLoading(false);
       });
-    return () => controller.abort();
+    void api<CalendarCommandReceipt[]>("/calendar/commands", {
+      signal: controller.signal,
+    })
+      .then((rows) => {
+        if (!controller.signal.aborted) setHistory(rows);
+      })
+      .catch(historyFailure);
+    void api<CalendarRunSummary[]>("/calendar/runs", {
+      signal: controller.signal,
+    })
+      .then((rows) => {
+        if (!controller.signal.aborted) setRunHistory(rows);
+      })
+      .catch(historyFailure);
+    return () => {
+      loaders.current.delete(controller);
+      controller.abort();
+    };
   }, [revision, clearPrivate, failure]);
   useEffect(() => {
     setEvents([]);
     setQueryLoading(false);
     if (!calendarId) return;
     const controller = new AbortController();
+    loaders.current.add(controller);
     setQueryLoading(true);
     setError("");
     void api<CalendarOccurrence[]>("/calendar/query", {
@@ -342,7 +375,10 @@ export function CalendarPanel({
       .finally(() => {
         if (!controller.signal.aborted) setQueryLoading(false);
       });
-    return () => controller.abort();
+    return () => {
+      loaders.current.delete(controller);
+      controller.abort();
+    };
   }, [calendarId, day, revision, failure]);
   function open(
     operation: "create" | "update" | "delete",
@@ -781,6 +817,26 @@ export function CalendarPanel({
           <p className="muted">尚无日历操作。</p>
         )}
       </section>
+      {currentCalendar ? (
+        <CalendarAvailabilityPanel
+          key={calendarId + ":" + day + ":" + revision}
+          calendars={calendars}
+          selectedId={calendarId}
+          start={utc(new Date(day + "T00:00:00"))}
+          end={utc(new Date(addDays(day, 7) + "T00:00:00"))}
+          disabled={busy || listLoading}
+          aiReady={!!aiReady}
+          onAi={async (query) => {
+            setBusy(true);
+            try {
+              await ai({ operation: "availability", query });
+            } finally {
+              setBusy(false);
+            }
+          }}
+          onFailure={failure}
+        />
+      ) : null}
       <section aria-label="本人日历执行历史">
         <h3>本人 AI 日历执行</h3>
         {runHistory.length ? (
@@ -790,7 +846,9 @@ export function CalendarPanel({
                 <strong>
                   {r.operation === "read"
                     ? "核对日历窗口"
-                    : "执行确认的日历操作"}{" "}
+                    : r.operation === "availability"
+                      ? "核对忙闲与候选时段"
+                      : "执行确认的日历操作"}{" "}
                   · {r.engine === "dsh" ? "DSH" : "Hermes"}
                 </strong>
                 <span>

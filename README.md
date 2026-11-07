@@ -1,17 +1,19 @@
 # Hyper Workspace
 
 
-> **扩展阶段开发仓库：hyper-workspace-next。** 由首阶段 `61082e0` 派生，按日历排期 → 复杂审批 → 图片 OCR → 复杂表格与 Office 协作推进。日历现有来源读写、周视图、人工建改删除和持久回执，已接人工与双执行器操作，仍在补邀请/排期/重复编辑/项目关联；不声称日历或完整扩展已交付。规则见 [扩展基线 v2.0](docs/PHASE2-BASELINE.md)，实际状态及失败修复见 [日历进展](docs/CALENDAR.md)。旧仓库 CI 只证明对应历史版本。
+> **扩展阶段开发仓库 hyper-workspace-next** 由首阶段 `61082e0` 派生，按日历排期 → 复杂审批 → 图片 OCR → 复杂表格与 Office 协作推进。 [扩展基线 v2.0](docs/PHASE2-BASELINE.md)
 
 ## 日历开发进展
 
-当前人工界面可选择获准日历、浏览 7 天、创建单次/全天日程、改标题/说明/地点、调整单次时间及删除整个系列；保留版本条件、停止请求、未知结果核对和本人历史。Nextcloud 连接完成后设置 `NEXTCLOUD_CALENDAR_ENABLED=true` 并重启 API；默认关闭。日历界面可选择人工 / DSH / Hermes 与个人或工作区 chat 连接；AI 使用同一业务服务，支持核对选定窗口和执行已确认的建改删计划，私人 Run 不进入项目讨论。原始重复规则/例外保留，新建重复、邀请、完整时区编辑、忙闲排期及自然语言排期草案仍在开发。
+员工可以查看有权访问的来源日历和七天周视图，创建单次或全天日程，修改文字和单次时间，删除日程并核对操作回执。Nextcloud 连接完成后，设置 `NEXTCLOUD_CALENDAR_ENABLED=true` 并重启 API。人工、DSH 和 Hermes 共用后端权限、版本与回执检查。AI 可以查询选定窗口、执行员工已确认的修改计划，或核对忙闲和候选时段。私人执行记录可刷新找回。
 
-本批本地 267 项数据库/HTTP、87 单元、3 项日历 UI（桌面/手机、未知回执、双执行器入口）、类型及构建通过。原生 DSH/Hermes 各完成写入、读取与拒绝模型篡改目标，共6次协议模型请求；只有2次有效来源写入。协议模型不代表真实供应商质量验收。`3a36c16` 的 [CI 41727288615](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/41727288615) 常规/容器通过，真实来源18过/1日历UI选择器失败，正在实际来源复现；数字XML实体修复后的来源展开已通过，失败未覆盖为成功。当前新增代码须以自己的CI为准。
+忙闲查询支持在多个获准日历中，按指定时区、工作日、工作时间和会议时长合并占用、识别冲突并列出候选时段。来源时间无法确定时，结果会指出疑点并暂缓推荐。候选是查询时的观察，选中时段后仍需另行确认安排。邀请、重复规则和单次例外编辑、项目与任务关联、真实模型验收仍待完成。 [日历能力与验证记录](docs/CALENDAR.md)
 
-![日历桌面界面，合成协议资料](docs/images/calendar-desktop.png)
+最近一次已完成的 CI 对应 `4fa2a07`，常规、真实 Nextcloud 和部署三项通过，其中真实来源 19 项。此前 `3a36c16` 的来源 UI 精确标签匹配失败，修复后在该轮通过。新增忙闲查询的 CI 结果以本次提交的运行记录为准。 [4fa2a07 Actions](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/41833138371)
 
-[手机界面截图](docs/images/calendar-mobile.png) · [AI 入口桌面](docs/images/calendar-ai-desktop.png) · [AI 入口手机](docs/images/calendar-ai-mobile.png) · [行为、API、迁移与尚未完成项](docs/CALENDAR.md)
+![忙闲与候选时段，合成测试资料](docs/images/calendar-availability-desktop.png)
+
+[手机上的 AI 排期回执](docs/images/calendar-availability-mobile.png) · [日历周视图](docs/images/calendar-desktop.png) · [日历手机界面](docs/images/calendar-mobile.png)
 
 [![CI](https://github.com/MkaliezZ/hyper-workspace-next/actions/workflows/ci.yml/badge.svg)](https://github.com/MkaliezZ/hyper-workspace-next/actions/workflows/ci.yml)
 

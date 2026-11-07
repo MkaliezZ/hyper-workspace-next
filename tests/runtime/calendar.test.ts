@@ -10,6 +10,7 @@ import { RunProcessor } from "../../apps/api/src/core/processor.js";
 import { engineRegistry } from "../../apps/api/src/engines/adapters.js";
 import { createCalendarScope } from "../fixtures/calendar-scope.js";
 import { modelFixture } from "./business-contract.js";
+import { CalendarAvailabilityQuery } from "@hyper/contracts/calendar";
 
 test(
   "Native DSH and Hermes execute the same private calendar service with observed source receipts and cleaned runtime",
@@ -118,6 +119,33 @@ test(
           observed.result.receipts[0].count,
           engine === "dsh" ? 1 : 2,
         );
+        const availability = await work.startCalendarRun(f.actor, {
+          ...input,
+          idempotencyKey: randomUUID(),
+          plan: {
+            operation: "availability",
+            query: CalendarAvailabilityQuery.parse({
+              calendarIds: ["personal"],
+              start: "2026-11-04T00:00:00Z",
+              end: "2026-11-05T00:00:00Z",
+              timeZone: "Asia/Shanghai",
+            }),
+          },
+        });
+        await processor.process(availability.id);
+        const availabilityRun = await work.getRun(f.actor, availability.id);
+        assert.equal(availabilityRun.state, "succeeded", availabilityRun.error);
+        assert.equal(
+          availabilityRun.result.receipts[0].availability.reservation,
+          false,
+        );
+        assert.equal(
+          availabilityRun.result.receipts[0].availability.state,
+          "evaluated",
+        );
+        assert.ok(
+          availabilityRun.result.receipts[0].availability.candidates.length > 0,
+        );
         const rejectedCommand = await f.service.prepare(f.actor, f.create());
         const rejected = await work.startCalendarRun(f.actor, {
           ...input,
@@ -144,7 +172,7 @@ test(
         );
       }
       assert.equal(f.source.writes, 2);
-      assert.equal(model.calls(), 6);
+      assert.equal(model.calls(), 8);
       assert.equal(
         (
           await db.pool.query(

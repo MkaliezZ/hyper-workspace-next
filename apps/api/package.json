@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@hyper/contracts": "0.1.0",
+    "@js-temporal/polyfill": "0.5.1",
     "@nestjs/common": "11.2.8",
     "@nestjs/core": "11.2.8",
     "@nestjs/platform-express": "11.2.8",

@@ -2770,3 +2770,17 @@ p {
 .calendar-history time { display: block; margin-top: 5px; font-size: 11px; color: #64748b; }
 .calendar-preview { font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
 .calendar-preview details { margin-top: 12px; color: #64748b; }
+
+.calendar-availability { margin-top: 24px; padding: 18px; border: 1px solid #dbe3ee; border-radius: 12px; background: white; }
+.calendar-availability h3 { margin: 0 0 12px; }
+.calendar-availability fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.calendar-availability legend { padding: 0; font-size: 13px; color: #334155; margin-bottom: 8px; }
+.calendar-availability-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 12px 0; }
+.calendar-availability-fields label { display: grid; gap: 6px; font-size: 13px; }
+.calendar-availability-fields input { width: 100%; box-sizing: border-box; border: 1px solid #dbe3ee; border-radius: 8px; padding: 9px; font: inherit; color: #111827; background: white; min-width: 0; }
+.calendar-choices, .calendar-availability-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.calendar-choices label { display: flex; gap: 6px; align-items: center; font-size: 13px; overflow-wrap: anywhere; }
+.calendar-availability-results { line-height: 1.7; overflow-wrap: anywhere; }
+.calendar-availability-results details { margin-top: 12px; color: #475569; }
+.calendar-slots { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px,1fr)); gap: 8px; padding-left: 24px; }
+.calendar-slots li { padding: 6px; background: #eff6ff; border-radius: 6px; color: #1d4ed8; font-size: 13px; }

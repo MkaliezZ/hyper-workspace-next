@@ -132,8 +132,92 @@ export interface CalendarCommandReceipt {
   createdAt: string;
 }
 
+const clock = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/u);
+export const CalendarAvailabilityQuery = z
+  .object({
+    calendarIds: z
+      .array(CalendarId)
+      .min(1)
+      .max(10)
+      .refine((v) => new Set(v).size === v.length),
+    start: instant,
+    end: instant,
+    timeZone: z
+      .string()
+      .min(1)
+      .max(100)
+      .refine((v) => {
+        try {
+          new Intl.DateTimeFormat("en", { timeZone: v });
+          return true;
+        } catch {
+          return false;
+        }
+      }),
+    durationMinutes: z.number().int().min(5).max(480).default(60),
+    stepMinutes: z.number().int().min(5).max(120).default(30),
+    weekdays: z
+      .array(z.number().int().min(1).max(7))
+      .min(1)
+      .max(7)
+      .refine((v) => new Set(v).size === v.length)
+      .default([1, 2, 3, 4, 5]),
+    dailyStart: clock.default("09:00"),
+    dailyEnd: clock.default("18:00"),
+  })
+  .strict()
+  .refine(
+    (v) =>
+      Date.parse(v.end) > Date.parse(v.start) &&
+      Date.parse(v.end) - Date.parse(v.start) <= 31 * 86400000,
+    "排期窗口须大于0且不超过31天。",
+  );
+export type CalendarAvailabilityQuery = z.infer<
+  typeof CalendarAvailabilityQuery
+>;
+export interface CalendarEventRef {
+  calendarId: string;
+  objectId: string;
+  recurrenceId: string | null;
+  etag: string;
+}
+export interface CalendarAvailabilityResult {
+  state: "evaluated" | "blocked";
+  timeZone: string;
+  window: { start: string; end: string };
+  checkedAt: string;
+  busy: {
+    start: string;
+    end: string;
+    event: CalendarEventRef;
+    tentative: boolean;
+  }[];
+  conflicts: {
+    left: CalendarEventRef;
+    right: CalendarEventRef;
+    start: string;
+    end: string;
+  }[];
+  conflictsTruncated: boolean;
+  unknown: { event: CalendarEventRef; reason: string }[];
+  candidates: { start: string; end: string }[];
+  candidateLimit: number;
+  skippedWindows: { date: string; reason: string }[];
+  reservation: false;
+  observations: {
+    calendarId: string;
+    timeZoneId: string | null;
+    objects: { objectId: string; etag: string }[];
+  }[];
+}
 export const CalendarRunPlan = z.discriminatedUnion("operation", [
   z.object({ operation: z.literal("read"), query: CalendarQuery }).strict(),
+  z
+    .object({
+      operation: z.literal("availability"),
+      query: CalendarAvailabilityQuery,
+    })
+    .strict(),
   z
     .object({
       operation: z.literal("apply"),
@@ -156,7 +240,7 @@ export interface CalendarRunSummary {
   id: string;
   state: string;
   engine: "dsh" | "hermes";
-  operation: "read" | "apply";
+  operation: "read" | "apply" | "availability";
   calendarId: string;
   createdAt: string;
 }

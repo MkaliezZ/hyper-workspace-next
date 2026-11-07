@@ -92,7 +92,7 @@ export async function createCalendarScope(db: Database) {
             end: "2026-11-04T02:00:00Z",
           },
         },
-      }),
+      }) as Extract<CalendarCommandInput, { operation: "create" }>,
     async close() {
       server.closeAllConnections();
       await new Promise<void>((r) => server.close(() => r()));

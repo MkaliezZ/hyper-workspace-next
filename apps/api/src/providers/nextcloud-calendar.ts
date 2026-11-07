@@ -5,6 +5,7 @@ import {
 } from "@nestjs/common";
 import { XMLParser } from "fast-xml-parser";
 import ICAL from "ical.js";
+import { createHash } from "node:crypto";
 import type { NextcloudConfig, SourceCredentials } from "./nextcloud.js";
 import type {
   CalendarObject,
@@ -22,7 +23,7 @@ const MAX_OBJECTS = 500;
 const HEADER = '<?xml version="1.0" encoding="utf-8"?>';
 const DISCOVER =
   HEADER +
-  `<d:propfind xmlns:d="DAV:" xmlns:c="${CALDAV}"><d:prop><d:resourcetype/><d:displayname/><d:current-user-privilege-set/><c:supported-calendar-component-set/></d:prop></d:propfind>`;
+  `<d:propfind xmlns:d="DAV:" xmlns:c="${CALDAV}"><d:prop><d:resourcetype/><d:displayname/><d:current-user-privilege-set/><c:supported-calendar-component-set/><c:calendar-timezone/></d:prop></d:propfind>`;
 
 export class CalendarSourceRejected extends HttpException {
   constructor(status: number) {
@@ -380,8 +381,54 @@ export class NextcloudCalendarProvider implements CalendarProvider {
           write = all || has("write");
         const canRead = all || has("read");
         if (!canRead) return [];
+        const zoneText = scalar(row.property(CALDAV, "calendar-timezone"));
+        let timeZone: SourceCalendar["timeZone"];
+        if (zoneText) {
+          if (Buffer.byteLength(zoneText) > 65536)
+            throw new Error("Source timezone too large");
+          let zoneId: string | null = null;
+          try {
+            const zones = new ICAL.Component(
+              ICAL.parse(zoneText),
+            ).getAllSubcomponents("vtimezone");
+            const id = zones[0]?.getFirstPropertyValue("tzid");
+            const observances =
+              zones[0]
+                ?.getAllSubcomponents()
+                .filter((c) => ["standard", "daylight"].includes(c.name)) ?? [];
+            const valid =
+              observances.length > 0 &&
+              observances.every((c) => {
+                const start = c.getFirstPropertyValue("dtstart"),
+                  from = c.getFirstPropertyValue("tzoffsetfrom"),
+                  to = c.getFirstPropertyValue("tzoffsetto");
+                return (
+                  start instanceof ICAL.Time &&
+                  !start.isDate &&
+                  from instanceof ICAL.UtcOffset &&
+                  to instanceof ICAL.UtcOffset &&
+                  Math.abs(from.toSeconds()) < 86400 &&
+                  Math.abs(to.toSeconds()) < 86400
+                );
+              });
+            if (
+              zones.length === 1 &&
+              typeof id === "string" &&
+              id.length <= 255 &&
+              valid
+            )
+              zoneId = id;
+          } catch {
+            /* Invalid timezone definitions remain explicit uncertainty. */
+          }
+          timeZone = {
+            id: zoneId,
+            revision: createHash("sha256").update(zoneText).digest("hex"),
+          };
+        }
         return [
           {
+            ...(timeZone ? { timeZone } : {}),
             id,
             name: scalar(row.property(DAV, "displayname")) || id,
             canRead,

@@ -5,6 +5,7 @@ import {
   CalendarCommandInput,
   CalendarQuery,
   CalendarRunInput,
+  CalendarAvailabilityQuery,
 } from "@hyper/contracts/calendar";
 import { NotificationInput } from "@hyper/contracts/notifications";
 import { RoomManagementService } from "./core/room-management.js";
@@ -165,6 +166,15 @@ class ApiErrors implements ExceptionFilter {
 @Controller("api")
 @UseFilters(ApiErrors)
 class ApiController {
+  @Post("calendar/availability") async calendarAvailability(
+    @Req() req: Request,
+    @Body() body: unknown,
+  ) {
+    return new CalendarService(db).availability(
+      await subject(req),
+      CalendarAvailabilityQuery.parse(body),
+    );
+  }
   @Get("calendar/runs") async calendarRunHistory(@Req() req: Request) {
     return new CalendarRunService(db).history(await subject(req));
   }

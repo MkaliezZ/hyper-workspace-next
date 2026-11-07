@@ -7,6 +7,8 @@ import {
 } from "@hyper/contracts";
 import { api } from "../api";
 import { Dialog } from "./Dialog";
+import { CalendarAvailabilityResults } from "./CalendarAvailabilityPanel";
+import type { CalendarAvailabilityResult } from "@hyper/contracts/calendar";
 
 export const runStateLabels: Record<RunState, string> = {
   queued: "等待处理",
@@ -260,6 +262,17 @@ export function RunDetails({
                         ? " · " + receipt.title
                         : ""}
                     </strong>
+                    {receipt.tool === "calendar.manage" &&
+                    receipt.operation === "availability" &&
+                    typeof receipt.availability === "object" &&
+                    receipt.availability !== null &&
+                    "candidates" in receipt.availability ? (
+                      <CalendarAvailabilityResults
+                        result={
+                          receipt.availability as CalendarAvailabilityResult
+                        }
+                      />
+                    ) : null}
                     {typeof receipt.version === "number" ? (
                       <span>保存版本：{receipt.version}</span>
                     ) : null}

@@ -17,7 +17,8 @@ export class CalendarRunService {
     const rows = (
       await this.db.pool.query(
         `SELECT r.id,r.state,r.engine,r.calendar_binding,r.calendar_plan->>'operation' AS operation,
-       CASE WHEN r.calendar_plan->>'operation'='read' THEN r.calendar_plan->'query'->>'calendarId' ELSE cc.calendar_id END AS calendar_id,r.created_at
+       CASE WHEN r.calendar_plan->>'operation'='availability' THEN r.calendar_plan->'query'->'calendarIds'
+       ELSE jsonb_build_array(CASE WHEN r.calendar_plan->>'operation'='read' THEN r.calendar_plan->'query'->>'calendarId' ELSE cc.calendar_id END) END AS calendar_ids,r.created_at
        FROM cw_runs r LEFT JOIN cw_calendar_commands cc ON cc.id::text=r.calendar_plan->>'commandId' AND cc.workspace_id=r.workspace_id AND cc.actor_id=r.actor_id
        WHERE r.workspace_id=$1 AND r.actor_id=$2 AND r.conversation_id IS NULL AND r.workflow='manage_calendar' ORDER BY r.created_at DESC,r.id DESC LIMIT 20`,
         [s.workspaceId, s.id],
@@ -37,14 +38,18 @@ export class CalendarRunService {
       .filter(
         (r) =>
           r.calendar_binding === binding.bindingKey &&
-          allowed.has(r.calendar_id),
+          Array.isArray(r.calendar_ids) &&
+          r.calendar_ids.length > 0 &&
+          r.calendar_ids.every(
+            (id: unknown) => typeof id === "string" && allowed.has(id),
+          ),
       )
       .map((r) => ({
         id: r.id,
         state: r.state,
         engine: r.engine,
         operation: r.operation,
-        calendarId: r.calendar_id,
+        calendarId: r.calendar_ids[0],
         createdAt: r.created_at.toISOString(),
       }));
   }
@@ -60,10 +65,20 @@ export class CalendarRunService {
       ["failed", "cancelled"].includes(command.state)
     )
       throw new ConflictException("原日历操作已结束，请重新核对目标和版本。");
-    const scope = await this.calendars.scope(
-      s,
-      plan.operation === "read" ? plan.query.calendarId : command!.calendarId,
-    );
+    const ids =
+      plan.operation === "availability"
+        ? plan.query.calendarIds
+        : [
+            plan.operation === "read"
+              ? plan.query.calendarId
+              : command!.calendarId,
+          ];
+    if (ids.length > 1) {
+      const allowed = await this.calendars.calendars(s);
+      if (ids.some((id) => !allowed.some((c) => c.id === id && c.canRead)))
+        throw new ForbiddenException("所选日历存在不可访问的来源。");
+    }
+    const scope = await this.calendars.scope(s, ids[0]!);
     return { plan, command, ...scope };
   }
   async assertRunScope(s: Subject, run: any) {
@@ -94,12 +109,16 @@ export class CalendarRunService {
             ? { command: prepared.command.plan }
             : {
                 query:
-                  prepared.plan.operation === "read"
+                  prepared.plan.operation !== "apply"
                     ? prepared.plan.query
                     : null,
-                events: preview,
-                partial: entries.length > preview.length,
-                count: entries.length,
+                ...(prepared.plan.operation === "read"
+                  ? {
+                      events: preview,
+                      partial: entries.length > preview.length,
+                      count: entries.length,
+                    }
+                  : {}),
               }),
         }),
       sourceIds: [] as string[],
@@ -142,6 +161,20 @@ export class CalendarRunService {
       await this.assertRunScope(s, run);
     };
     await check();
+    if (prepared.plan.operation === "availability") {
+      const availability = await this.calendars.availability(
+        s,
+        prepared.plan.query,
+        execution.signal,
+      );
+      await check();
+      return {
+        tool: "calendar.manage" as const,
+        state: "succeeded",
+        operation: "availability",
+        availability,
+      };
+    }
     if (prepared.plan.operation === "read") {
       const entries = await this.calendars.occurrences(s, prepared.plan.query);
       await check();

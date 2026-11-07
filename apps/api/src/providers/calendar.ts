@@ -1,5 +1,7 @@
 /** Backend-only CalDAV boundary. Source data never grants a product/project permission. */
 export interface SourceCalendar {
+  /** Explicit source calendar timezone only. No server-default inference. */
+  timeZone?: { id: string | null; revision: string };
   id: string;
   name: string;
   canRead: boolean;

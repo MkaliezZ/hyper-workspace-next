@@ -1,5 +1,5 @@
 # npm license declarations, including dev/optional and duplicate installations
-# package-lock.json sha256:b6dc36c1e4f63f65e351c619d8ec9b9b1d2660217223c964aa9af360baf178ec
+# package-lock.json sha256:0b85ffc1451637dede05f4262494e720bc15bd53cba057340c3a731366fa6eb6
 # runtime/dsh/package-lock.json sha256:370c04d71f74c09ab7861ea19862c2de3a0ee5ba97143ae9cadc2c3b33e0766c
 # runtime/evaluations/package-lock.json sha256:b167070d05463984150d3650799495cf32b2d84c3c09199d1e0252061e8c02bc
 lockfile	package_path	version	declared_license	declaration_source	dev_only	optional
@@ -54,6 +54,7 @@ package-lock.json	node_modules/@jridgewell/remapping	2.3.5	MIT	lock	yes	no
 package-lock.json	node_modules/@jridgewell/resolve-uri	3.1.2	MIT	lock	yes	no
 package-lock.json	node_modules/@jridgewell/sourcemap-codec	1.6.0	MIT	lock	yes	no
 package-lock.json	node_modules/@jridgewell/trace-mapping	0.3.31	MIT	lock	yes	no
+package-lock.json	node_modules/@js-temporal/polyfill	0.5.1	ISC	lock	no	no
 package-lock.json	node_modules/@lukeed/csprng	1.1.0	MIT	lock	no	no
 package-lock.json	node_modules/@napi-rs/lzma-linux-x64-gnu	1.5.1	MIT	lock	yes	yes
 package-lock.json	node_modules/@nestjs/common	11.2.8	MIT	lock	no	no
@@ -182,6 +183,7 @@ package-lock.json	node_modules/is-promise	4.0.0	MIT	lock	no	no
 package-lock.json	node_modules/is-unsafe	2.0.2	MIT	lock	no	no
 package-lock.json	node_modules/iterare	1.2.1	ISC	lock	no	no
 package-lock.json	node_modules/js-tokens	4.0.0	MIT	lock	yes	no
+package-lock.json	node_modules/jsbi	4.3.2	Apache-2.0	lock	no	no
 package-lock.json	node_modules/jsesc	3.1.0	MIT	lock	yes	no
 package-lock.json	node_modules/json5	2.2.3	MIT	lock	yes	no
 package-lock.json	node_modules/load-esm	1.0.3	MIT	lock	no	no

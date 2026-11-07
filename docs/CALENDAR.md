@@ -6,7 +6,7 @@
 
 `apps/api/src/providers/calendar.ts` 定义 CalendarProvider；`nextcloud-calendar.ts` 使用员工来源凭据和后端解析的 remote UID。日历路径限制在本人 CalDAV calendar-home，支持来源挂载到本人根下的共享日历；实际共享路径兼容性待真实 Nextcloud 验证。不使用模型指定身份、服务器或任意 URL。
 
-PROPFIND 按 XML namespace 识别日历及当前读取/新增/修改/删除权限。REPORT 查询采用半开 UTC 时间窗口，单次最多 93 天、500 对象、2 MiB；单对象最多 256 KiB。不静默截断结果。返回完整 VCALENDAR，保留 VTIMEZONE、重复主事件/例外/EXDATE；REPORT 的 XML 换行规范化回 CRLF，GET 保留来源文本。原始查询不展开重复实例。新增 occurrences 查询将相同有界窗口交给来源 CalDAV expand，返回标记为 expanded 的只读表示；编辑前必须重新读取原始主事件。calendar-projection 将已展开事件转成日期/UTC 实例，缺失时区或浮动时间保持明确状态，不能偷偷采用服务器本地时区；来源未展开、反向时间、重复实例或超过1000实例则整体失败。忙闲计算仍未接入。
+PROPFIND 按 XML namespace 识别日历及当前读取/新增/修改/删除权限。REPORT 查询采用半开 UTC 时间窗口，单次最多 93 天、500 对象、2 MiB；单对象最多 256 KiB。不静默截断结果。返回完整 VCALENDAR，保留 VTIMEZONE、重复主事件/例外/EXDATE；REPORT 的 XML 换行规范化回 CRLF，GET 保留来源文本。原始查询不展开重复实例。新增 occurrences 查询将相同有界窗口交给来源 CalDAV expand，返回标记为 expanded 的只读表示；编辑前必须重新读取原始主事件。calendar-projection 将已展开事件转成日期/UTC 实例，缺失时区或浮动时间保持明确状态，不能偷偷采用服务器本地时区；来源未展开、反向时间、重复实例或超过1000实例则整体失败。忙闲查询同时核对原始日程与来源展开结果。详见下文。
 
 GET 要求 ETag。创建使用 If-None-Match:*，替换/删除要求确切强 ETag；412 不覆盖他人更新。所有请求禁止重定向，来源 href 限定当前员工根与所选日历；XML DTD、重复关键属性、外部 URL、路径穿越及部分响应拒绝返回。
 
@@ -18,7 +18,7 @@ GET 要求 ETag。创建使用 If-None-Match:*，替换/删除要求确切强 ET
 
 协议用例 `tests/calendar-provider.test.ts` 覆盖权限、UID 与登录名不同、命名空间、多 propstat、限定时间范围、完整重复/时区内容、路径/DTD/大响应、条件写入、撤权/版本冲突、不明结果与不自动重放。首次用例发现 XML 换行规范化与 iCalendar CRLF 的差异，已在 REPORT 读取时恢复规范换行，保持主事件和例外内容；实际命令结果随提交更新。
 
-尚未完成：项目/任务关系、完整时区及重复规则/单次例外编辑、忙闲/候选排期、邀请与回复/取消、双执行器日历工具和真实模型验收。新增 044 迁移只应用于独立测试数据库；原交付/公司环境未升级。
+尚未完成：项目/任务关系、完整时区及重复规则/单次例外编辑、候选时段提交前复核、邀请与回复/取消、真实模型验收。新增迁移在隔离环境和 CI 验证。
 
 技术依据：[RFC4791 CalDAV](https://www.rfc-editor.org/rfc/rfc4791.html)、[ICAL.js](https://github.com/kewisch/ical.js)。依赖锁定 ical.js 2.2.1，MPL-2.0，许可证清单随 lock 更新。
 
@@ -75,3 +75,13 @@ GET `/api/calendar/runs` 返回本人当前授权来源下最近20次日历Run�
 
 
 限制解除后接续核对：未提交代码和本地通过记录完整保留。上一轮冻结复测在企业登录后工作区导航就绪门槛失败，未据此声称真实来源产品流程通过；新增就绪失败诊断只记录静态标题/状态/错误，不记录cookies、表单值、一次性URL或请求正文。恢复时原8090私有SSH隧道已不存在，首个实测因ECONNREFUSED终止；核实远端来源仍running后重建仅限本机回环的隧道，再按同一场景复验。失败与环境准备分别保留。
+
+
+## 忙闲、冲突与候选时段
+
+- 人工使用 POST `/api/calendar/availability`，AI 通过私人 Run 的 `availability` 计划调用同一服务。员工选择 1 至 10 个当前可读日历、最长 31 天的查询窗口、排期时区、工作日、工作时段、会议时长与建议步长。AI 参数由宿主绑定，模型不能替换日历、成员或时间范围。
+- 时间计算使用锁定的 `@js-temporal/polyfill@0.5.1`（ISC）。区间为左闭右开，全天事件按指定排期时区计算，支持跨午夜工作时段。暂定事件计入占用，已取消或透明事件跳过。夏令时导致工作时段边界缺失或重复时跳过相应工作窗口。 [CalDAV 时间范围与日历时区](https://www.rfc-editor.org/rfc/rfc4791.html)
+- 返回占用区间、重叠冲突、最多 20 个候选，以及来源核对时间、对象版本和时间疑点。用原始事件核对浮动时间及命名时区，再核对展开结果、来源身份、权限、日历时区定义和事件版本。遇到无法确定的时间，保留疑点并暂缓推荐。读取过程中来源变化时请刷新查询。候选观察不锁定时段，提交预约前还需要再次核对。
+- 本批复用 045 的计划与回执存储，无新增迁移。原生 DSH/Hermes 各调用一次创建、日历窗口读取、忙闲查询，以及一次被拒绝的目标注入。合计 8 次本机协议模型请求，2 次合成来源写入来自创建测试。真实供应商输出质量另行验收。
+- `4fa2a07` 的 verify、nextcloud-identity、deployment 均通过，真实来源 19 项包括修复后的日历入口。新增真实来源用例会核对实际重复日程和单次日程的占用，以及手动查询显示。 [上一提交 Actions](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/41833138371)
+- 本地通过 97 项单元、273 项 PostgreSQL/HTTP、6 项日历 Chromium 界面，以及类型检查、构建、依赖清单和首阶段快照校验。重新启动测试环境时，首轮整库回归遇到测试 PostgreSQL 未运行。新建仅监听回环的独立测试库后整库通过。 [桌面忙闲查询](images/calendar-availability-desktop.png) · [手机 AI 回执](images/calendar-availability-mobile.png)

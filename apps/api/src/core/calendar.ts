@@ -10,6 +10,7 @@ import type { Subject } from "@hyper/contracts";
 import {
   CalendarCommandInput,
   CalendarQuery,
+  CalendarAvailabilityQuery,
   type CalendarCommandReceipt,
 } from "@hyper/contracts/calendar";
 import type { Database } from "../db/database.js";
@@ -139,7 +140,10 @@ export class CalendarService {
     const current = await this.connection(s);
     if (
       source.config.providerKey !== current.config.providerKey ||
-      source.remoteUid !== current.remoteUid
+      source.remoteUid !== current.remoteUid ||
+      source.config.transportUrl !== current.config.transportUrl ||
+      source.config.memberGroup !== current.config.memberGroup ||
+      source.config.workspaceId !== current.config.workspaceId
     )
       throw new ForbiddenException("日历来源身份已变化。");
     if (calendarId) await this.calendar(current, calendarId);
@@ -165,6 +169,22 @@ export class CalendarService {
     );
     await this.recheck(s, source, input.calendarId);
     return result;
+  }
+  async availability(s: Subject, raw: unknown, signal?: AbortSignal) {
+    const input = CalendarAvailabilityQuery.parse(raw),
+      source = await this.connection(s);
+    const { readCalendarAvailability } = await import(
+      "./calendar-source-availability.js"
+    );
+    return readCalendarAvailability(
+      source.provider,
+      input,
+      async () => {
+        const live = await this.recheck(s, source);
+        return live.provider.calendars();
+      },
+      signal,
+    );
   }
   async prepare(s: Subject, raw: unknown) {
     const input = CalendarCommandInput.parse(raw),

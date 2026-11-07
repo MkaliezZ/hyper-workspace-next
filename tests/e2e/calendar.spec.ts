@@ -444,3 +444,273 @@ test("Calendar unknown outcome can only reconcile after refresh, without resendi
   expect(reconciliations).toBe(1);
   expect(applyCalls).toBe(0);
 });
+
+test("Calendar discovery and editing remain available while private history is slow", async ({
+  page,
+}) => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/api/calendar/calendars", (r) =>
+    r.fulfill({
+      json: [
+        {
+          id: "personal",
+          name: "合成日历",
+          canRead: true,
+          canCreate: true,
+          canUpdate: true,
+          canDelete: true,
+        },
+      ],
+    }),
+  );
+  await page.route("**/api/calendar/query", (r) => r.fulfill({ json: [] }));
+  await page.route("**/api/calendar/commands", async (r) => {
+    await pending;
+    await r.fulfill({ json: [] }).catch(() => {});
+  });
+  try {
+    const panel = await start(page);
+    await expect(panel.getByLabel("日历", { exact: true })).toHaveValue(
+      "personal",
+    );
+    await panel.getByRole("button", { name: "新建日程", exact: true }).click();
+    await expect(
+      page.getByRole("dialog", { name: "新建日程", exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "关闭", exact: true })
+      .last()
+      .click();
+  } finally {
+    release();
+  }
+});
+
+test("Availability results stay private, show source-based candidates and are reopened from AI receipts on mobile", async ({
+  page,
+}) => {
+  const modelId = "76000000-0000-4000-8000-000000000001",
+    runId = "76000000-0000-4000-8000-000000000002";
+  let writes = 0,
+    plan: any,
+    result: any;
+  const fullRun = () => ({
+    id: runId,
+    engine: "hermes",
+    workflow: "manage_calendar",
+    state: "succeeded",
+    contextRefs: [],
+    instruction: "核对选择的排期条件",
+    result: {
+      text: "已核对来源快照",
+      evidence: "runtime",
+      receipts: [
+        {
+          tool: "calendar.manage",
+          state: "succeeded",
+          operation: "availability",
+          availability: result,
+        },
+      ],
+    },
+  });
+  const response = (body: any) => ({
+    state: "evaluated",
+    timeZone: body.timeZone,
+    window: { start: body.start, end: body.end },
+    checkedAt: "2026-11-04T00:00:00Z",
+    busy: [
+      {
+        start: "2026-11-04T01:00:00Z",
+        end: "2026-11-04T02:00:00Z",
+        event: {
+          calendarId: "personal",
+          objectId: "synthetic.ics",
+          recurrenceId: null,
+          etag: '"v1"',
+        },
+        tentative: false,
+      },
+    ],
+    conflicts: [],
+    conflictsTruncated: false,
+    unknown: [],
+    candidates: [
+      { start: "2026-11-04T02:00:00Z", end: "2026-11-04T03:00:00Z" },
+      { start: "2026-11-04T03:00:00Z", end: "2026-11-04T04:00:00Z" },
+    ],
+    candidateLimit: 20,
+    skippedWindows: [],
+    reservation: false,
+    observations: [
+      {
+        calendarId: "personal",
+        timeZoneId: null,
+        objects: [{ objectId: "synthetic.ics", etag: '"v1"' }],
+      },
+    ],
+  });
+  await page.route("**/api/models", (r) =>
+    r.fulfill({
+      json: [
+        {
+          id: modelId,
+          name: "排期协议连接",
+          model: "protocol-model",
+          purpose: "chat",
+          provider: "openai-compatible",
+          scope: "personal",
+        },
+      ],
+    }),
+  );
+  await page.route("**/api/calendar/calendars", (r) =>
+    r.fulfill({
+      json: [
+        {
+          id: "personal",
+          name: "合成日历",
+          canRead: true,
+          canCreate: true,
+          canUpdate: true,
+          canDelete: true,
+        },
+      ],
+    }),
+  );
+  await page.route("**/api/calendar/query", (r) => r.fulfill({ json: [] }));
+  await page.route("**/api/calendar/commands", (r) => {
+    if (r.request().method() !== "GET") writes++;
+    return r.fulfill({ json: [] });
+  });
+  await page.route("**/api/calendar/availability", (r) => {
+    result = response(r.request().postDataJSON());
+    return r.fulfill({ json: result });
+  });
+  await page.route("**/api/calendar/runs", (r) => {
+    plan = r.request().postDataJSON();
+    result = response(plan.plan.query);
+    return r.fulfill({ json: fullRun() });
+  });
+  await page.route("**/api/runs/" + runId, (r) =>
+    r.fulfill({ json: fullRun() }),
+  );
+  await page.route("**/api/runs/" + runId + "/history*", (r) =>
+    r.fulfill({ json: { events: [], after: 0, hasMore: false } }),
+  );
+  const panel = await start(page, (view) => {
+    view.engines.hermes = {
+      configured: true,
+      operations: ["manage_calendar"],
+      modelProviders: ["openai-compatible"],
+    };
+  });
+  await panel.getByLabel("起始日期", { exact: true }).fill("2026-11-04");
+  const planner = panel.getByRole("region", {
+    name: "忙闲与候选时段",
+    exact: true,
+  });
+  await planner.getByLabel("排期时区", { exact: true }).fill("Asia/Shanghai");
+  await planner
+    .getByRole("button", { name: "查询忙闲与候选", exact: true })
+    .click();
+  await expect(planner.getByText(/1 段占用/)).toBeVisible();
+  await expect(planner.locator(".calendar-slots li")).toHaveCount(2);
+  await planner.screenshot({
+    path: "/tmp/hyper-next-calendar-availability-desktop.png",
+  });
+  await panel
+    .getByLabel("日历操作方式", { exact: true })
+    .selectOption("hermes");
+  await panel.getByLabel("日历模型连接", { exact: true }).selectOption(modelId);
+  await planner
+    .getByRole("button", { name: "由 AI 核对排期", exact: true })
+    .click();
+  const details = page.getByRole("dialog");
+  await expect(details.locator(".calendar-slots li")).toHaveCount(2);
+  expect(plan).toMatchObject({
+    engine: "hermes",
+    modelProfileId: modelId,
+    plan: {
+      operation: "availability",
+      query: { calendarIds: ["personal"], timeZone: "Asia/Shanghai" },
+    },
+  });
+  expect(writes).toBe(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(details.getByText(/尚未预订或发送邀请/)).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: "/tmp/hyper-next-calendar-availability-mobile.png",
+  });
+});
+
+test("A permission denial aborts delayed history so stale private commands cannot reappear", async ({
+  page,
+}) => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/api/calendar/calendars", (r) =>
+    r.fulfill({
+      json: [
+        {
+          id: "personal",
+          name: "合成日历",
+          canRead: true,
+          canCreate: true,
+          canUpdate: true,
+          canDelete: true,
+        },
+      ],
+    }),
+  );
+  await page.route("**/api/calendar/query", (r) => r.fulfill({ json: [] }));
+  await page.route("**/api/calendar/availability", (r) =>
+    r.fulfill({ status: 403, json: { message: "日历权限已撤销。" } }),
+  );
+  await page.route("**/api/calendar/commands", async (r) => {
+    await pending;
+    await r
+      .fulfill({
+        json: [
+          {
+            title: "不应恢复的私有操作",
+            state: "prepared",
+            createdAt: "2026-11-04T00:00:00Z",
+          },
+        ],
+      })
+      .catch(() => {});
+  });
+  try {
+    const panel = await start(page);
+    await panel
+      .getByRole("region", { name: "忙闲与候选时段", exact: true })
+      .getByRole("button", { name: "查询忙闲与候选", exact: true })
+      .click();
+    await expect(
+      panel.getByRole("region", { name: "忙闲与候选时段", exact: true }),
+    ).not.toBeVisible();
+    release();
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
+    await expect(
+      panel.getByText("不应恢复的私有操作", { exact: true }),
+    ).not.toBeVisible();
+    await expect(
+      panel.getByLabel("日历", { exact: true }).locator("option"),
+    ).toHaveCount(1);
+  } finally {
+    release();
+  }
+});

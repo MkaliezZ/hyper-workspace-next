@@ -179,6 +179,39 @@ test("Real CalDAV and product UI preserve source permissions, versions, recurrin
       expect(receipt.observedResult).toBe("matched");
       const original = await alice.read(calendarId, receipt.objectId);
       expect(original.uid).toBe(receipt.id + "@hyper-workspace");
+      const availability = await actor.context.request.post(
+        origin + "/api/calendar/availability",
+        {
+          headers: { Origin: origin },
+          data: {
+            calendarIds: [calendarId],
+            start: "2026-11-04T00:00:00Z",
+            end: "2026-11-05T00:00:00Z",
+            timeZone: "Asia/Shanghai",
+          },
+        },
+      );
+      expect(availability.ok()).toBe(true);
+      const available = await availability.json();
+      expect(available).toMatchObject({
+        state: "evaluated",
+        reservation: false,
+      });
+      expect(available.busy).toHaveLength(2);
+      expect(available.candidates[0].start).toBe("2026-11-04T02:00:00Z");
+      const planner = panel.getByRole("region", {
+        name: "忙闲与候选时段",
+        exact: true,
+      });
+      await planner
+        .getByLabel("排期时区", { exact: true })
+        .fill("Asia/Shanghai");
+      await planner
+        .getByRole("button", { name: "查询忙闲与候选", exact: true })
+        .click();
+      await expect(planner.getByText(/2 段占用/)).toBeVisible({
+        timeout: 60000,
+      });
       const prepared = await actor.context.request.post(
         origin + "/api/calendar/commands",
         {

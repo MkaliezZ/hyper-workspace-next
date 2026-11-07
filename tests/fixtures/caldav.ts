@@ -9,6 +9,10 @@ export class CalDavFixture {
   >();
   objects = new Map<string, { ical: string; version: number }>();
   writes = 0;
+  calendarIds = new Set(["personal"]);
+  timeZones = new Map<string, string>();
+  afterReport?: () => Promise<void>;
+  expand?: (ical: string) => string;
   mode: "ok" | "drop-before" | "drop-after" | "tamper" | "reject" = "ok";
   afterWrite?: () => Promise<void>;
   afterRead?: () => Promise<void>;
@@ -35,7 +39,9 @@ export class CalDavFixture {
     if (url.pathname.endsWith("/groups"))
       return json({ groups: person.member ? ["members"] : [] });
     const home = "/remote.php/dav/calendars/" + encodeURIComponent(uid) + "/";
-    const calendar = home + "personal/";
+    const calendarId =
+      url.pathname.slice(home.length).split("/")[0] || "personal";
+    const calendar = home + encodeURIComponent(calendarId) + "/";
     if (!url.pathname.startsWith(home) || !person.read) {
       res.writeHead(404);
       res.end();
@@ -52,31 +58,55 @@ export class CalDavFixture {
     if (req.method === "PROPFIND" && url.pathname === home) {
       return sendXml(
         multi(
-          row(
-            calendar,
-            "<d:displayname>个人日历</d:displayname><d:resourcetype><c:calendar/></d:resourcetype><d:current-user-privilege-set><d:privilege><d:read/></d:privilege>" +
-              (person.write ? "<d:privilege><d:write/></d:privilege>" : "") +
-              '</d:current-user-privilege-set><c:supported-calendar-component-set><c:comp name="VEVENT"/></c:supported-calendar-component-set>',
-          ),
-        ),
-      );
-    }
-    if (req.method === "REPORT" && url.pathname === calendar) {
-      const resources = [...this.objects].filter(([key]) =>
-        key.startsWith(uid + "/personal/"),
-      );
-      return sendXml(
-        multi(
-          resources
-            .map(([key, obj]) =>
+          [...this.calendarIds]
+            .map((id) =>
               row(
-                calendar + key.split("/").at(-1),
-                `<d:getetag>&quot;v${obj.version}&quot;</d:getetag><c:calendar-data>${xml(obj.ical)}</c:calendar-data>`,
+                home + encodeURIComponent(id) + "/",
+                "<d:displayname>" +
+                  xml(id === "personal" ? "个人日历" : id) +
+                  "</d:displayname><d:resourcetype><c:calendar/></d:resourcetype><d:current-user-privilege-set><d:privilege><d:read/></d:privilege>" +
+                  (person.write
+                    ? "<d:privilege><d:write/></d:privilege>"
+                    : "") +
+                  '</d:current-user-privilege-set><c:supported-calendar-component-set><c:comp name="VEVENT"/></c:supported-calendar-component-set>' +
+                  (this.timeZones.has(uid + "/" + id)
+                    ? "<c:calendar-timezone>" +
+                      xml(this.timeZones.get(uid + "/" + id)!) +
+                      "</c:calendar-timezone>"
+                    : ""),
               ),
             )
             .join(""),
         ),
       );
+    }
+    if (
+      req.method === "REPORT" &&
+      this.calendarIds.has(calendarId) &&
+      url.pathname === calendar
+    ) {
+      let request = "";
+      for await (const chunk of req) request += chunk;
+      const expanded = request.includes("<c:expand");
+      const resources = [...this.objects].filter(([key]) =>
+        key.startsWith(uid + "/" + calendarId + "/"),
+      );
+      const body = multi(
+        resources
+          .map(([key, obj]) =>
+            row(
+              calendar + key.split("/").at(-1),
+              `<d:getetag>&quot;v${obj.version}&quot;</d:getetag><c:calendar-data>${xml(expanded && this.expand ? this.expand(obj.ical) : obj.ical)}</c:calendar-data>`,
+            ),
+          )
+          .join(""),
+      );
+      if (this.afterReport) {
+        const hook = this.afterReport;
+        this.afterReport = undefined;
+        await hook();
+      }
+      return sendXml(body);
     }
     const objectId = decodeURIComponent(url.pathname.slice(calendar.length));
     if (
@@ -88,7 +118,7 @@ export class CalDavFixture {
       res.end();
       return;
     }
-    const key = uid + "/personal/" + objectId,
+    const key = uid + "/" + calendarId + "/" + objectId,
       current = this.objects.get(key);
     if (req.method === "GET") {
       if (!current) {
