@@ -11,6 +11,7 @@ export class CalDavFixture {
   writes = 0;
   calendarIds = new Set(["personal"]);
   timeZones = new Map<string, string>();
+  addresses = new Map<string, string>();
   afterReport?: () => Promise<void>;
   expand?: (ical: string) => string;
   mode: "ok" | "drop-before" | "drop-after" | "tamper" | "reject" = "ok";
@@ -36,17 +37,16 @@ export class CalDavFixture {
     const url = new URL(req.url!, "http://127.0.0.1");
     if (url.pathname === "/ocs/v2.php/cloud/user")
       return json({ id: uid, displayname: uid });
+    if (url.pathname === "/ocs/v2.php/cloud/groups/members/users")
+      return json({
+        users: [...this.people].filter(([, p]) => p.member).map(([id]) => id),
+      });
     if (url.pathname.endsWith("/groups"))
       return json({ groups: person.member ? ["members"] : [] });
     const home = "/remote.php/dav/calendars/" + encodeURIComponent(uid) + "/";
     const calendarId =
       url.pathname.slice(home.length).split("/")[0] || "personal";
     const calendar = home + encodeURIComponent(calendarId) + "/";
-    if (!url.pathname.startsWith(home) || !person.read) {
-      res.writeHead(404);
-      res.end();
-      return;
-    }
     const multi = (rows: string) =>
       `<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">${rows}</d:multistatus>`;
     const row = (href: string, prop: string) =>
@@ -55,6 +55,31 @@ export class CalDavFixture {
       res.writeHead(207, { "Content-Type": "application/xml" });
       res.end(body);
     };
+    const principalHome = "/remote.php/dav/principals/users/";
+    if (req.method === "PROPFIND" && url.pathname.startsWith(principalHome)) {
+      const target = decodeURIComponent(
+        url.pathname.slice(principalHome.length),
+      );
+      const email = this.addresses.get(target);
+      if (!email || !this.people.get(target)?.member) {
+        res.writeHead(404);
+        return res.end();
+      }
+      const href = principalHome + encodeURIComponent(target) + "/";
+      return sendXml(
+        multi(
+          row(
+            href,
+            `<d:principal-URL><d:href>${href}</d:href></d:principal-URL><s:email-address xmlns:s="http://sabredav.org/ns">${xml(email)}</s:email-address><c:calendar-user-type>INDIVIDUAL</c:calendar-user-type><c:calendar-user-address-set><d:href>mailto:${xml(email)}</d:href></c:calendar-user-address-set>`,
+          ),
+        ),
+      );
+    }
+    if (!url.pathname.startsWith(home) || !person.read) {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
     if (req.method === "PROPFIND" && url.pathname === home) {
       return sendXml(
         multi(
@@ -64,7 +89,10 @@ export class CalDavFixture {
                 home + encodeURIComponent(id) + "/",
                 "<d:displayname>" +
                   xml(id === "personal" ? "个人日历" : id) +
-                  "</d:displayname><d:resourcetype><c:calendar/></d:resourcetype><d:current-user-privilege-set><d:privilege><d:read/></d:privilege>" +
+                  "</d:displayname><d:owner><d:href>" +
+                  principalHome +
+                  encodeURIComponent(uid) +
+                  "/</d:href></d:owner><d:resourcetype><c:calendar/></d:resourcetype><d:current-user-privilege-set><d:privilege><d:read/></d:privilege>" +
                   (person.write
                     ? "<d:privilege><d:write/></d:privilege>"
                     : "") +

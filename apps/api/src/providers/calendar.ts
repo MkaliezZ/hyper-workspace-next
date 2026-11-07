@@ -2,6 +2,7 @@
 export interface SourceCalendar {
   /** Explicit source calendar timezone only. No server-default inference. */
   timeZone?: { id: string | null; revision: string };
+  ownerUid?: string;
   id: string;
   name: string;
   canRead: boolean;

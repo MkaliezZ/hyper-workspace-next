@@ -8,7 +8,15 @@ import {
 import { api } from "../api";
 import { Dialog } from "./Dialog";
 import { CalendarAvailabilityResults } from "./CalendarAvailabilityPanel";
-import type { CalendarAvailabilityResult } from "@hyper/contracts/calendar";
+import {
+  CalendarInvitationFacts,
+  CalendarMeetingFacts,
+} from "./CalendarInvitees";
+import type {
+  CalendarAvailabilityResult,
+  CalendarInvitationStatus,
+  CalendarMeeting,
+} from "@hyper/contracts/calendar";
 
 export const runStateLabels: Record<RunState, string> = {
   queued: "等待处理",
@@ -64,6 +72,8 @@ const actionLabels: Record<PlannedAction["tool"], string> = {
 };
 function receiptLabel(receipt: Record<string, unknown>) {
   if (receipt.tool === "calendar.manage") {
+    if (receipt.meetingChange === "reply") return "提交参会回复";
+    if (receipt.meetingChange === "cancel") return "取消会议";
     if (receipt.occurrenceChange === "edit") return "修改本次重复日程";
     if (receipt.occurrenceChange === "cancel") return "取消本次重复日程";
   }
@@ -275,6 +285,21 @@ export function RunDetails({
                         result={
                           receipt.availability as CalendarAvailabilityResult
                         }
+                      />
+                    ) : null}
+                    {receipt.tool === "calendar.manage" &&
+                    Array.isArray(receipt.invitations) ? (
+                      <CalendarInvitationFacts
+                        invitations={
+                          receipt.invitations as CalendarInvitationStatus[]
+                        }
+                      />
+                    ) : null}
+                    {receipt.tool === "calendar.manage" &&
+                    receipt.meeting &&
+                    typeof receipt.meeting === "object" ? (
+                      <CalendarMeetingFacts
+                        meeting={receipt.meeting as CalendarMeeting}
                       />
                     ) : null}
                     {typeof receipt.version === "number" ? (

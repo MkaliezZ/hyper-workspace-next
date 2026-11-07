@@ -2784,3 +2784,13 @@ p {
 .calendar-availability-results details { margin-top: 12px; color: #475569; }
 .calendar-slots { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px,1fr)); gap: 8px; padding-left: 24px; }
 .calendar-slots li { padding: 6px; background: #eff6ff; border-radius: 6px; color: #1d4ed8; font-size: 13px; }
+
+.calendar-invitations ul,
+.calendar-invitation-facts {
+  padding-inline-start: 1.1rem;
+  overflow-wrap: anywhere;
+}
+.calendar-invitations [aria-label="参会员工目录"] > ul {
+  max-block-size: 12rem;
+  overflow-y: auto;
+}

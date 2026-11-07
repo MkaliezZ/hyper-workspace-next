@@ -101,6 +101,10 @@ export function calendarOccurrences(
           etag: object.etag,
           uid: object.uid,
           recurrenceId,
+          ...(component.hasProperty("organizer") &&
+          component.hasProperty("attendee")
+            ? { meeting: true as const }
+            : {}),
           title: text("summary", 500),
           description: text("description", 10000),
           location: text("location", 1000),

@@ -827,3 +827,106 @@ test("A permission denial aborts delayed history so stale private commands canno
     release();
   }
 });
+
+test("A mobile employee selects exact invitees and sees separately reported delivery and response", async ({
+  page,
+}) => {
+  await page.route("**/api/organization?**", (route) =>
+    route.fulfill({
+      json: { rows: [{ uid: "bob", name: "鲍明" }], nextOffset: null },
+    }),
+  );
+  await page.route("**/api/calendar/calendars", (route) =>
+    route.fulfill({
+      json: [
+        {
+          id: "personal",
+          name: "个人日历",
+          canRead: true,
+          canCreate: true,
+          canInvite: true,
+          canUpdate: true,
+          canDelete: true,
+        },
+      ],
+    }),
+  );
+  await page.route("**/api/calendar/query", (route) =>
+    route.fulfill({ json: [] }),
+  );
+  const id = "76000000-0000-4000-8000-000000000001";
+  let receipt: CalendarCommandReceipt | undefined;
+  let applied = 0;
+  await page.route("**/api/calendar/commands", (route) => {
+    if (route.request().method() === "GET")
+      return route.fulfill({ json: receipt ? [receipt] : [] });
+    const plan = route.request().postDataJSON() as CalendarCommandInput;
+    expect(plan).toMatchObject({
+      operation: "create",
+      invitees: ["bob"],
+      draft: { title: "合成会议排期" },
+    });
+    receipt = {
+      id,
+      calendarId: "personal",
+      objectId: "meeting.ics",
+      title: "合成会议排期",
+      operation: "create",
+      plan,
+      state: "prepared",
+      error: null,
+      stopRequested: false,
+      sourceEtag: null,
+      observedResult: null,
+      acknowledgedAt: null,
+      createdAt: new Date().toISOString(),
+    };
+    return route.fulfill({ json: receipt });
+  });
+  await page.route("**/api/calendar/commands/" + id + "/apply", (route) => {
+    expect(route.request().postDataJSON()).toEqual({ confirmed: true });
+    applied++;
+    receipt = {
+      ...receipt!,
+      state: "succeeded",
+      observedResult: "matched",
+      sourceEtag: '"v2"',
+      invitations: [
+        {
+          employeeUid: "bob",
+          delivery: "unreported",
+          response: "needs_action",
+        },
+      ],
+    };
+    return route.fulfill({ json: receipt });
+  });
+  const panel = await start(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await panel.getByRole("button", { name: "新建日程", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "新建日程", exact: true });
+  await dialog.getByLabel("日程标题", { exact: true }).fill("合成会议排期");
+  await dialog
+    .getByRole("button", { name: "选择参会员工", exact: true })
+    .click();
+  await dialog.getByLabel("搜索员工", { exact: true }).fill("bob");
+  await dialog.getByRole("button", { name: "鲍明 · bob", exact: true }).click();
+  await expect(
+    dialog.getByRole("list", { name: "已选参会员工" }),
+  ).toContainText("鲍明 · bob");
+  await dialog
+    .getByRole("button", { name: "收起员工目录", exact: true })
+    .click();
+  expect(applied).toBe(0);
+  await dialog
+    .getByRole("button", { name: "创建会议并邀请", exact: true })
+    .click();
+  await expect(dialog).not.toBeVisible();
+  const facts = panel.getByRole("list", { name: "参会邀请状态" });
+  await expect(facts).toContainText("bob · 来源未报告送达 · 待回复");
+  expect(applied).toBe(1);
+  await facts.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: "/tmp/hyper-next-calendar-invitation-mobile.png",
+  });
+});

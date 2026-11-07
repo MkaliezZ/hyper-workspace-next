@@ -10,6 +10,7 @@ import type {
   CalendarCommandInput,
   CalendarCommandReceipt,
   CalendarOccurrence,
+  CalendarMeeting,
   CalendarPoint,
   CalendarRepeat,
   CalendarSummary,
@@ -21,6 +22,11 @@ import type { WorkspaceView } from "@hyper/contracts";
 import type { ModelSummary } from "./ModelSettings";
 import { runStateLabels } from "./RunDetails";
 import type { RunState } from "@hyper/contracts";
+import {
+  CalendarInvitationFacts,
+  CalendarInvitees,
+  CalendarMeetingFacts,
+} from "./CalendarInvitees";
 import { CalendarAvailabilityPanel } from "./CalendarAvailabilityPanel";
 import { api, mutation, ApiError } from "../api";
 import { Dialog } from "./Dialog";
@@ -94,10 +100,21 @@ function instantInput(value: string) {
     throw new Error("所选本机时间无效或处于夏令时跳过区间，请重新选择。");
   return utc(date);
 }
+const meetingReplies = {
+  ACCEPTED: "接受",
+  TENTATIVE: "暂定",
+  DECLINED: "拒绝",
+};
+type MeetingAction = keyof typeof meetingReplies | "cancel";
 function commandLabel(plan: CalendarCommandInput) {
-  if (plan.operation === "create") return "新建日程";
+  if (plan.operation === "create")
+    return plan.invitees?.length ? "新建会议并邀请员工" : "新建日程";
   if (plan.operation === "delete") return "删除整个日程系列";
   if (plan.scope === "series") return "修改整个日程系列";
+  if (plan.scope === "meeting")
+    return plan.change.operation === "reply"
+      ? "提交参会回复"
+      : "取消会议并通知参会人";
   return plan.change.operation === "edit"
     ? "修改本次重复日程"
     : "取消本次重复日程";
@@ -110,7 +127,7 @@ function CalendarPreview({ receipt }: { receipt: CalendarCommandReceipt }) {
       : plan.operation === "update"
         ? plan.scope === "series"
           ? plan.patch
-          : plan.change.operation === "edit"
+          : plan.scope === "occurrence" && plan.change.operation === "edit"
             ? plan.change.patch
             : null
         : null;
@@ -138,6 +155,12 @@ function CalendarPreview({ receipt }: { receipt: CalendarCommandReceipt }) {
             </p>
           ) : null}
         </>
+      ) : plan.operation === "update" && plan.scope === "meeting" ? (
+        plan.change.operation === "reply" ? (
+          <p>回复：{meetingReplies[plan.change.response]}</p>
+        ) : (
+          <p>向来源提交取消会议。</p>
+        )
       ) : (
         <p>{single ? "其他重复实例保持原样。" : "重复实例也会一并删除。"}</p>
       )}
@@ -147,6 +170,15 @@ function CalendarPreview({ receipt }: { receipt: CalendarCommandReceipt }) {
           {frequencyLabel[plan.draft.repeat.frequency]}重复，共{" "}
           {plan.draft.repeat.count} 次。
         </p>
+      ) : null}
+      {plan.operation === "create" && plan.invitees ? (
+        <p>已选参会员工：{plan.invitees.join("、")}</p>
+      ) : null}
+      {receipt.invitations ? (
+        <CalendarInvitationFacts invitations={receipt.invitations} />
+      ) : null}
+      {receipt.meeting ? (
+        <CalendarMeetingFacts meeting={receipt.meeting} />
       ) : null}
       <details>
         <summary>核对目标引用</summary>
@@ -197,7 +229,12 @@ export function CalendarPanel({
     [revision, setRevision] = useState(0);
   const [mode, setMode] = useState<"create" | "update" | "delete" | null>(null),
     [selected, setSelected] = useState<CalendarOccurrence | null>(null);
-  const [scope, setScope] = useState<"series" | "occurrence">("series");
+  const [scope, setScope] = useState<"series" | "occurrence" | "meeting">(
+    "series",
+  );
+  const [meeting, setMeeting] = useState<CalendarMeeting | null>(null);
+  const [meetingAction, setMeetingAction] = useState<MeetingAction | "">("");
+  const meetingLoad = useRef<AbortController | null>(null);
   const [title, setTitle] = useState(""),
     [description, setDescription] = useState(""),
     [location, setLocation] = useState("");
@@ -206,6 +243,7 @@ export function CalendarPanel({
     [end, setEnd] = useState(""),
     [reschedule, setReschedule] = useState(false);
   const [eventZone, setEventZone] = useState("");
+  const [invitees, setInvitees] = useState<{ uid: string; name: string }[]>([]);
   const [frequency, setFrequency] = useState<CalendarRepeat["frequency"] | "">(
     "",
   );
@@ -233,6 +271,9 @@ export function CalendarPanel({
     setMode(null);
     setSelected(null);
     setIntent(null);
+    setMeeting(null);
+    setMeetingAction("");
+    setInvitees([]);
     pending.current = null;
     aiPending.current = null;
     setModels([]);
@@ -421,8 +462,11 @@ export function CalendarPanel({
   function open(
     operation: "create" | "update" | "delete",
     event?: CalendarOccurrence,
-    actionScope: "series" | "occurrence" = "series",
+    actionScope: "series" | "occurrence" | "meeting" = "series",
   ) {
+    meetingLoad.current?.abort();
+    setMeeting(null);
+    setMeetingAction("");
     setScope(actionScope);
     setSelected(event ?? null);
     setMode(operation);
@@ -435,14 +479,45 @@ export function CalendarPanel({
     setAllDay(event?.start.kind === "date");
     setReschedule(false);
     setEventZone("");
+    setInvitees([]);
     setFrequency("");
     setRepeatInterval(1);
     setRepeatCount(4);
     setStart(event ? inputTime(event.start) : initialTime(day, "09:00"));
     setEnd(event ? inputTime(event.end) : initialTime(day, "10:00"));
   }
+  useEffect(() => () => meetingLoad.current?.abort(), []);
+  function openMeeting(event: CalendarOccurrence) {
+    open("update", event, "meeting");
+    const controller = new AbortController();
+    meetingLoad.current = controller;
+    loaders.current.add(controller);
+    void api<CalendarMeeting>("/calendar/meeting", {
+      method: "POST",
+      body: JSON.stringify({
+        calendarId: event.calendarId,
+        objectId: event.objectId,
+        etag: event.etag,
+      }),
+      signal: controller.signal,
+    })
+      .then((value) => {
+        if (!controller.signal.aborted) setMeeting(value);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        if (error instanceof ApiError && [401, 403, 404].includes(error.status))
+          failure(error);
+        else
+          setModalError(
+            error instanceof Error ? error.message : "读取会议失败。",
+          );
+      })
+      .finally(() => loaders.current.delete(controller));
+  }
   function close() {
     if (!busy) {
+      meetingLoad.current?.abort();
       setMode(null);
       setSelected(null);
       setIntent(null);
@@ -507,6 +582,9 @@ export function CalendarPanel({
           operation: "create",
           calendarId,
           idempotencyKey: "",
+          ...(invitees.length
+            ? { invitees: invitees.map((person) => person.uid) }
+            : {}),
           draft: {
             title,
             description,
@@ -542,9 +620,21 @@ export function CalendarPanel({
                 ...(reschedule ? { interval: interval() } : {}),
               }
             : null;
-        if (patch && !Object.keys(patch).length)
+        if (scope !== "meeting" && patch && !Object.keys(patch).length)
           throw new Error("请先修改日程内容。");
-        if (scope === "occurrence") {
+        if (scope === "meeting") {
+          if (!meeting?.canUpdate || !meetingAction)
+            throw new Error("请选择要确认的会议操作。");
+          input = {
+            ...base,
+            operation: "update",
+            scope,
+            change:
+              meetingAction === "cancel"
+                ? { operation: "cancel" }
+                : { operation: "reply", response: meetingAction },
+          };
+        } else if (scope === "occurrence") {
           if (!selected.recurrenceId) throw new Error("请重新选择重复实例。");
           input = {
             ...base,
@@ -803,38 +893,51 @@ export function CalendarPanel({
                         <span>已取消</span>
                       ) : null}
                       <div className="calendar-event-actions">
-                        <button
-                          disabled={!currentCalendar?.canUpdate || busy}
-                          onClick={() => open("update", event)}
-                        >
-                          {event.recurrenceId ? "修改系列" : "修改"}
-                        </button>
-                        <button
-                          disabled={!currentCalendar?.canDelete || busy}
-                          onClick={() => open("delete", event)}
-                        >
-                          {event.recurrenceId ? "删除系列" : "删除"}
-                        </button>
-                        {event.recurrenceId && event.status !== "cancelled" ? (
+                        {event.meeting ? (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => openMeeting(event)}
+                          >
+                            查看会议与回复
+                          </button>
+                        ) : (
                           <>
                             <button
                               disabled={!currentCalendar?.canUpdate || busy}
-                              onClick={() =>
-                                open("update", event, "occurrence")
-                              }
+                              onClick={() => open("update", event)}
                             >
-                              修改本次
+                              {event.recurrenceId ? "修改系列" : "修改"}
                             </button>
                             <button
-                              disabled={!currentCalendar?.canUpdate || busy}
-                              onClick={() =>
-                                open("delete", event, "occurrence")
-                              }
+                              disabled={!currentCalendar?.canDelete || busy}
+                              onClick={() => open("delete", event)}
                             >
-                              取消本次
+                              {event.recurrenceId ? "删除系列" : "删除"}
                             </button>
+                            {event.recurrenceId &&
+                            event.status !== "cancelled" ? (
+                              <>
+                                <button
+                                  disabled={!currentCalendar?.canUpdate || busy}
+                                  onClick={() =>
+                                    open("update", event, "occurrence")
+                                  }
+                                >
+                                  修改本次
+                                </button>
+                                <button
+                                  disabled={!currentCalendar?.canUpdate || busy}
+                                  onClick={() =>
+                                    open("delete", event, "occurrence")
+                                  }
+                                >
+                                  取消本次
+                                </button>
+                              </>
+                            ) : null}
                           </>
-                        ) : null}
+                        )}
                       </div>
                     </article>
                   ))
@@ -861,7 +964,9 @@ export function CalendarPanel({
                       const one =
                         plan.operation === "update" &&
                         plan.scope === "occurrence";
-                      setScope(one ? "occurrence" : "series");
+                      setScope(
+                        plan.operation === "update" ? plan.scope : "series",
+                      );
                       setMode(
                         one && plan.change.operation === "cancel"
                           ? "delete"
@@ -875,6 +980,12 @@ export function CalendarPanel({
                 ) : null}
                 <strong>{receipt.title}</strong>
                 <span>{commandLabel(receipt.plan)}</span>
+                {receipt.invitations ? (
+                  <CalendarInvitationFacts invitations={receipt.invitations} />
+                ) : null}
+                {receipt.meeting ? (
+                  <CalendarMeetingFacts meeting={receipt.meeting} />
+                ) : null}
                 {receipt.sourceRunId ? (
                   <button
                     disabled={busy}
@@ -991,13 +1102,15 @@ export function CalendarPanel({
           title={
             mode === "create"
               ? "新建日程"
-              : scope === "occurrence"
-                ? mode === "update"
-                  ? "修改本次重复日程"
-                  : "取消本次重复日程"
-                : mode === "update"
-                  ? "修改日程"
-                  : "删除日程"
+              : scope === "meeting"
+                ? "会议与参会回复"
+                : scope === "occurrence"
+                  ? mode === "update"
+                    ? "修改本次重复日程"
+                    : "取消本次重复日程"
+                  : mode === "update"
+                    ? "修改日程"
+                    : "删除日程"
           }
           onClose={close}
           error={modalError}
@@ -1012,6 +1125,40 @@ export function CalendarPanel({
           >
             {intent ? (
               <CalendarPreview receipt={intent} />
+            ) : scope === "meeting" ? (
+              meeting ? (
+                <fieldset disabled={busy}>
+                  <strong>{meeting.title}</strong>
+                  <CalendarMeetingFacts meeting={meeting} />
+                  {meeting.canUpdate && !meeting.cancelled ? (
+                    <label>
+                      会议操作
+                      <select
+                        aria-label="会议操作"
+                        value={meetingAction}
+                        onChange={(e) =>
+                          setMeetingAction(e.target.value as MeetingAction | "")
+                        }
+                      >
+                        <option value="">请选择</option>
+                        {meeting.role === "organizer" ? (
+                          <option value="cancel">取消会议并通知参会人</option>
+                        ) : (
+                          Object.entries(meetingReplies).map(
+                            ([value, label]) => (
+                              <option key={value} value={value}>
+                                {label}
+                              </option>
+                            ),
+                          )
+                        )}
+                      </select>
+                    </label>
+                  ) : null}
+                </fieldset>
+              ) : !modalError ? (
+                <p role="status">正在核对来源会议…</p>
+              ) : null
             ) : mode === "delete" ? (
               <p>
                 {scope === "occurrence"
@@ -1071,6 +1218,12 @@ export function CalendarPanel({
                       </label>
                     ) : null}
                   </>
+                ) : null}
+                {mode === "create" && currentCalendar?.canInvite ? (
+                  <CalendarInvitees
+                    selected={invitees}
+                    onChange={setInvitees}
+                  />
                 ) : null}
                 {mode === "create" ? (
                   <>
@@ -1230,6 +1383,11 @@ export function CalendarPanel({
                 className="primary"
                 disabled={
                   busy ||
+                  (scope === "meeting" &&
+                    !intent &&
+                    (!meeting?.canUpdate ||
+                      !meetingAction ||
+                      meeting.cancelled)) ||
                   (executor !== "manual" && !aiReady) ||
                   (!!intent &&
                     ["failed", "cancelled", "succeeded"].includes(intent.state))
@@ -1240,13 +1398,27 @@ export function CalendarPanel({
                   : intent &&
                       ["applying", "recovery_required"].includes(intent.state)
                     ? "核对原操作"
-                    : mode === "delete"
-                      ? scope === "occurrence"
-                        ? "确认取消本次"
-                        : "确认删除系列"
-                      : executor === "manual"
-                        ? "保存日程"
-                        : "确认并交给 AI"}
+                    : scope === "meeting"
+                      ? executor === "manual"
+                        ? "确认提交会议操作"
+                        : "确认会议操作并交给 AI"
+                      : mode === "delete"
+                        ? scope === "occurrence"
+                          ? "确认取消本次"
+                          : "确认删除系列"
+                        : executor === "manual"
+                          ? mode === "create" &&
+                            (invitees.length ||
+                              (intent?.plan.operation === "create" &&
+                                intent.plan.invitees?.length))
+                            ? "创建会议并邀请"
+                            : "保存日程"
+                          : mode === "create" &&
+                              (invitees.length ||
+                                (intent?.plan.operation === "create" &&
+                                  intent.plan.invitees?.length))
+                            ? "确认邀请并交给 AI"
+                            : "确认并交给 AI"}
               </button>
             </div>
           </form>

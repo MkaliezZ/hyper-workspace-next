@@ -265,6 +265,166 @@ test("One occurrence binds the current expanded source version and updates the o
   }
 });
 
+test("Calendar invitations bind current company identities and reconcile one lost write without resending", async () => {
+  fixture.addresses.set("alice", "alice@example.invalid");
+  fixture.addresses.set("bob", "bob@example.invalid");
+  assert.ok(
+    (await service.calendars(actor())).find((c) => c.id === "personal")
+      ?.canInvite,
+  );
+  const invitation = { ...create(), invitees: ["bob"] };
+  const before = fixture.writes;
+  await assert.rejects(
+    service.prepare(actor(), { ...invitation, invitees: ["outsider"] }),
+    /当前企业成员/,
+  );
+  const stale = await service.prepare(actor(), invitation);
+  fixture.people.get("bob")!.member = false;
+  const rejected = await service.apply(actor(), stale.id);
+  assert.equal(rejected.state, "failed");
+  assert.equal(fixture.writes, before);
+  fixture.people.get("bob")!.member = true;
+  const prepared = await service.prepare(actor(), {
+    ...invitation,
+    idempotencyKey: randomUUID(),
+  });
+  assert.equal(fixture.writes, before);
+  const key = "alice/personal/" + prepared.objectId;
+  fixture.afterWrite = async () => {
+    const saved = fixture.objects.get(key)!;
+    saved.ical = saved.ical.replace(
+      "ATTENDEE;",
+      "ATTENDEE;SCHEDULE-STATUS=1.2;",
+    );
+  };
+  fixture.mode = "drop-after";
+  try {
+    const applied = await service.apply(actor(), prepared.id);
+    assert.equal(applied.state, "succeeded");
+    assert.equal(applied.observedResult, "matched");
+    assert.deepEqual(applied.invitations, [
+      { employeeUid: "bob", delivery: "delivered", response: "needs_action" },
+    ]);
+    assert.ok(!JSON.stringify(applied).includes("@example.invalid"));
+    assert.equal(
+      (await service.reconcile(actor(), prepared.id)).state,
+      "succeeded",
+    );
+    assert.equal(
+      (await service.apply(actor(), prepared.id)).state,
+      "succeeded",
+    );
+    assert.equal(fixture.writes, before + 1);
+    assert.match(
+      fixture.objects.get(key)!.ical,
+      /ORGANIZER:mailto:alice@example.invalid/,
+    );
+    assert.match(
+      fixture.objects.get(key)!.ical.replace(/\r\n[ \t]/g, ""),
+      /ATTENDEE;[^\r\n]*:mailto:bob@example.invalid/,
+    );
+    await assert.rejects(
+      service.prepare(actor(), {
+        operation: "delete",
+        scope: "series",
+        calendarId: "personal",
+        objectId: prepared.objectId,
+        etag: applied.sourceEtag,
+        idempotencyKey: randomUUID(),
+      }),
+      /专用排期服务/,
+    );
+  } finally {
+    fixture.mode = "ok";
+    fixture.objects.delete(key);
+    fixture.addresses.clear();
+  }
+});
+
+test("Only the attendee can reply and only the organizer can cancel a current meeting", async () => {
+  fixture.addresses.set("alice", "alice@example.invalid");
+  fixture.addresses.set("bob", "bob@example.invalid");
+  const prepared = await service.prepare(actor(), {
+    ...create(),
+    invitees: ["bob"],
+  });
+  const saved = await service.apply(actor(), prepared.id);
+  assert.equal(saved.state, "succeeded");
+  const key = "alice/personal/" + prepared.objectId;
+  const copy = "bob/personal/" + prepared.objectId;
+  fixture.objects.set(copy, { ...fixture.objects.get(key)! });
+  const target = {
+    calendarId: "personal",
+    objectId: prepared.objectId,
+    etag: saved.sourceEtag!,
+  };
+  const command = {
+    ...target,
+    operation: "update",
+    scope: "meeting",
+    idempotencyKey: randomUUID(),
+  };
+  try {
+    assert.equal((await service.meeting(actor(), target)).role, "organizer");
+    assert.equal(
+      (await service.meeting(actor("bob"), target)).ownResponse,
+      "needs_action",
+    );
+    await assert.rejects(
+      service.prepare(actor("bob"), {
+        ...command,
+        change: { operation: "cancel" },
+      }),
+      /只有来源会议组织者/,
+    );
+    await assert.rejects(
+      service.prepare(actor(), {
+        ...command,
+        change: { operation: "reply", response: "ACCEPTED" },
+      }),
+      /仅可回复本人/,
+    );
+    const reply = await service.prepare(actor("bob"), {
+      ...command,
+      change: { operation: "reply", response: "ACCEPTED" },
+    });
+    const replied = await service.apply(actor("bob"), reply.id);
+    assert.equal(replied.state, "succeeded");
+    assert.equal(replied.meeting?.ownResponse, "accepted");
+    assert.equal(
+      (
+        await service.meeting(actor("bob"), {
+          ...target,
+          etag: replied.sourceEtag,
+        })
+      ).ownResponse,
+      "accepted",
+    );
+    await assert.rejects(service.meeting(actor("bob"), target), /会议已更新/);
+    const cancel = await service.prepare(actor(), {
+      ...command,
+      change: { operation: "cancel" },
+    });
+    const cancelled = await service.apply(actor(), cancel.id);
+    assert.equal(cancelled.state, "succeeded");
+    assert.equal(cancelled.meeting?.cancelled, true);
+    assert.match(fixture.objects.get(key)!.ical, /STATUS:CANCELLED/);
+    await assert.rejects(
+      service.prepare(actor(), {
+        ...command,
+        etag: cancelled.sourceEtag,
+        idempotencyKey: randomUUID(),
+        change: { operation: "cancel" },
+      }),
+      /已经取消/,
+    );
+  } finally {
+    fixture.objects.delete(key);
+    fixture.objects.delete(copy);
+    fixture.addresses.clear();
+  }
+});
+
 test("Calendar response loss reconciles a completed source write, while an unobserved write is never replayed", async () => {
   const sent = await service.prepare(actor(), create());
   fixture.mode = "drop-after";

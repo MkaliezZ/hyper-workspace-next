@@ -99,9 +99,19 @@ const occurrenceTarget = z
   .strict();
 const seriesTarget = { objectId: CalendarId, etag: CalendarEtag };
 const base = { calendarId: CalendarId, idempotencyKey: z.uuid() };
+const invitees = z
+  .array(CalendarId)
+  .min(1)
+  .max(12)
+  .refine((uids) => new Set(uids).size === uids.length, "邀请员工不能重复。");
 export const CalendarCommandInput = z.discriminatedUnion("operation", [
   z
-    .object({ ...base, operation: z.literal("create"), draft: CalendarDraft })
+    .object({
+      ...base,
+      operation: z.literal("create"),
+      draft: CalendarDraft,
+      invitees: invitees.optional(),
+    })
     .strict(),
   z.discriminatedUnion("scope", [
     z
@@ -128,6 +138,23 @@ export const CalendarCommandInput = z.discriminatedUnion("operation", [
         ]),
       })
       .strict(),
+    z
+      .object({
+        ...base,
+        ...seriesTarget,
+        operation: z.literal("update"),
+        scope: z.literal("meeting"),
+        change: z.discriminatedUnion("operation", [
+          z
+            .object({
+              operation: z.literal("reply"),
+              response: z.enum(["ACCEPTED", "TENTATIVE", "DECLINED"]),
+            })
+            .strict(),
+          z.object({ operation: z.literal("cancel") }).strict(),
+        ]),
+      })
+      .strict(),
   ]),
   z
     .object({
@@ -140,11 +167,27 @@ export const CalendarCommandInput = z.discriminatedUnion("operation", [
 ]);
 export type CalendarCommandInput = z.infer<typeof CalendarCommandInput>;
 
+export const CalendarMeetingQuery = z
+  .object({
+    calendarId: CalendarId,
+    objectId: CalendarId,
+    etag: CalendarEtag,
+  })
+  .strict();
+export interface CalendarMeeting {
+  role: "organizer" | "attendee";
+  cancelled: boolean;
+  canUpdate?: boolean;
+  title: string;
+  ownResponse?: CalendarInvitationStatus["response"];
+  invitations?: CalendarInvitationStatus[];
+}
 export interface CalendarSummary {
   id: string;
   name: string;
   canRead: boolean;
   canCreate: boolean;
+  canInvite?: boolean;
   canUpdate: boolean;
   canDelete: boolean;
 }
@@ -166,10 +209,23 @@ export interface CalendarOccurrence {
   end: CalendarPoint;
   status: "tentative" | "confirmed" | "cancelled" | "unspecified";
   transparency: "opaque" | "transparent";
+  meeting?: true;
   truncatedFields: string[];
+}
+export interface CalendarInvitationStatus {
+  employeeUid: string;
+  delivery: "delivered" | "pending" | "rejected" | "unreported";
+  response:
+    | "needs_action"
+    | "accepted"
+    | "tentative"
+    | "declined"
+    | "unreported";
 }
 export interface CalendarCommandReceipt {
   sourceRunId?: string | null;
+  invitations?: CalendarInvitationStatus[];
+  meeting?: CalendarMeeting;
   plan: CalendarCommandInput;
   id: string;
   operation: "create" | "update" | "delete";

@@ -203,6 +203,12 @@ export class CalendarRunService {
       state: receipt.state,
       operation: "apply",
       commandId: receipt.id,
+      ...(receipt.invitations ? { invitations: receipt.invitations } : {}),
+      ...(receipt.meeting ? { meeting: receipt.meeting } : {}),
+      ...(receipt.plan.operation === "update" &&
+      receipt.plan.scope === "meeting"
+        ? { meetingChange: receipt.plan.change.operation }
+        : {}),
       ...(receipt.plan.operation === "update" &&
       receipt.plan.scope === "occurrence"
         ? {

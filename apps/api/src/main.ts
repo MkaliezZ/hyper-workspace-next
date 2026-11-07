@@ -201,6 +201,12 @@ class ApiController {
       CalendarQuery.parse(body),
     );
   }
+  @Post("calendar/meeting") async calendarMeeting(
+    @Req() req: Request,
+    @Body() body: unknown,
+  ) {
+    return new CalendarService(db).meeting(await subject(req), body);
+  }
   @Get("calendar/commands") async calendarCommands(@Req() req: Request) {
     return new CalendarService(db).history(await subject(req));
   }

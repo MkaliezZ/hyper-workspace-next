@@ -31,6 +31,7 @@ test(
         assert.match(context, /Host-bound private calendar operation/);
         assert.ok(!context.includes("synthetic-calendar-password"));
         assert.ok(!context.includes(key));
+        assert.ok(!context.includes("@example.invalid"));
       },
       () => ({
         text: "Model text is not a source receipt",
@@ -47,6 +48,8 @@ test(
     try {
       await db.migrate();
       source = await createCalendarScope(db);
+      source.source.addresses.set("alice", "alice@example.invalid");
+      source.source.addresses.set("bob", "bob@example.invalid");
       const f = source,
         work = new WorkspaceService(db, engineRegistry()),
         processor = new RunProcessor(work);
@@ -149,6 +152,7 @@ test(
         const recurring = f.create();
         const rejectedCommand = await f.service.prepare(f.actor, {
           ...recurring,
+          invitees: ["bob"],
           draft: {
             ...recurring.draft,
             repeat: { frequency: "WEEKLY", interval: 1, count: 3 },
@@ -193,6 +197,13 @@ test(
           repeatReceipt.result.receipts[0].observedResult,
           "matched",
         );
+        assert.deepEqual(repeatReceipt.result.receipts[0].invitations, [
+          {
+            employeeUid: "bob",
+            delivery: "unreported",
+            response: "needs_action",
+          },
+        ]);
         const fixtureKey = "alice/personal/" + rejectedCommand.objectId;
         assert.match(
           f.source.objects.get(fixtureKey)!.ical,

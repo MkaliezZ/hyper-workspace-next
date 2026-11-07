@@ -7,6 +7,8 @@ import {
   type CalendarCommandInput,
   type CalendarOccurrence,
   type CalendarRepeat,
+  type CalendarInvitationStatus,
+  type CalendarMeeting,
 } from "@hyper/contracts/calendar";
 import { calendarUid } from "../providers/nextcloud-calendar.js";
 import { stableDigest } from "./credentials.js";
@@ -77,6 +79,7 @@ export function createCalendarObject(
   raw: CalendarDraft,
   uid: string,
   commandId: string,
+  participants?: { organizer: string; attendees: string[] },
 ) {
   const draft = CalendarDraft.parse(raw);
   const root = new ICAL.Component("vcalendar");
@@ -90,9 +93,20 @@ export function createCalendarObject(
   event.updatePropertyWithValue("location", draft.location);
   event.updatePropertyWithValue("sequence", 0);
   interval(root, event, draft.interval, draft.repeat);
+  if (participants) {
+    event.updatePropertyWithValue("organizer", participants.organizer);
+    for (const address of participants.attendees) {
+      const attendee = new ICAL.Property("attendee");
+      attendee.setValue(address);
+      attendee.setParameter("role", "REQ-PARTICIPANT");
+      attendee.setParameter("partstat", "NEEDS-ACTION");
+      attendee.setParameter("rsvp", "TRUE");
+      event.addProperty(attendee);
+    }
+  }
   stamp(root, event, commandId);
   const ical = root.toString() + "\r\n";
-  calendarUid(ical, true);
+  calendarUid(ical, participants ? "scheduling" : true);
   return ical;
 }
 export function patchCalendarObject(
@@ -260,7 +274,7 @@ export function patchCalendarOccurrence(
 
 /** Exact semantic comparison, allowing property order/folding and known source timestamps.
  * Any other source change leaves an unknown outcome rather than fabricating success. */
-export function calendarObjectDigest(ical: string) {
+export function calendarObjectDigest(ical: string, scheduling = false) {
   calendarUid(ical);
   const normalize = (value: any): any => {
     if (Array.isArray(value)) return value.map(normalize);
@@ -279,7 +293,18 @@ export function calendarObjectDigest(ical: string) {
         (p: any) =>
           !["dtstamp", "last-modified", "created", "prodid"].includes(p[0]),
       )
-      .map(normalize)
+      .map((property: any) => {
+        const normalized = normalize(property);
+        if (scheduling && ["attendee", "organizer"].includes(normalized[0])) {
+          delete normalized[1]["schedule-status"];
+          if (normalized[0] === "attendee") {
+            delete normalized[1].partstat;
+            // The scheduling source can clear the request flag after a reply.
+            delete normalized[1].rsvp;
+          }
+        }
+        return normalized;
+      })
       .sort((a: any, b: any) =>
         JSON.stringify(a).localeCompare(JSON.stringify(b)),
       ),
@@ -296,4 +321,136 @@ export function calendarCommandMarker(ical: string) {
   return new ICAL.Component(ICAL.parse(ical)).getFirstPropertyValue(
     "x-hyper-command-id",
   );
+}
+
+function meetingMaster(ical: string) {
+  calendarUid(ical);
+  const events = new ICAL.Component(ICAL.parse(ical)).getAllSubcomponents(
+    "vevent",
+  );
+  const masters = events.filter((event) => !event.hasProperty("recurrence-id"));
+  if (masters.length !== 1)
+    throw new BadRequestException("来源会议缺少唯一主日程。");
+  return masters[0]!;
+}
+
+export function meetingParticipants(ical: string) {
+  const master = meetingMaster(ical);
+  return {
+    organizer: master.getFirstPropertyValue("organizer"),
+    attendees: master
+      .getAllProperties("attendee")
+      .map((p) => p.getFirstValue()),
+  };
+}
+
+export function invitationStatuses(
+  expectedIcal: string,
+  actualIcal: string,
+  uids: string[],
+): CalendarInvitationStatus[] {
+  const expected = meetingParticipants(expectedIcal).attendees;
+  const actual = meetingMaster(actualIcal).getAllProperties("attendee");
+  if (expected.length !== uids.length)
+    throw new Error("Invitation employee binding mismatch");
+  return uids.map((employeeUid, index) => {
+    const participant = actual.find(
+      (p) => p.getFirstValue() === expected[index],
+    );
+    const code = String(
+      participant?.getParameter("schedule-status") ?? "",
+    ).match(/^([1-5]\.\d+)(?:;|$)/u)?.[1];
+    const status = participant?.getParameter("partstat");
+    return {
+      employeeUid,
+      delivery:
+        code === "1.2"
+          ? "delivered"
+          : code === "1.1" || code === "1.0"
+            ? "pending"
+            : code?.startsWith("3.") || code?.startsWith("5.")
+              ? "rejected"
+              : "unreported",
+      response: participantResponse(status),
+    };
+  });
+}
+
+function participantResponse(
+  value: unknown,
+): CalendarInvitationStatus["response"] {
+  if (value === "ACCEPTED") return "accepted";
+  if (value === "TENTATIVE") return "tentative";
+  if (value === "DECLINED") return "declined";
+  return value === "NEEDS-ACTION" ? "needs_action" : "unreported";
+}
+
+export function calendarMeeting(
+  ical: string,
+  address: string,
+): CalendarMeeting {
+  const master = meetingMaster(ical);
+  const organizers = master.getAllProperties("organizer");
+  const participants = master.getAllProperties("attendee");
+  if (organizers.length !== 1 || !participants.length)
+    throw new BadRequestException("来源日程没有完整的会议身份。");
+  const role =
+    organizers[0]!.getFirstValue() === address ? "organizer" : "attendee";
+  const own = participants.filter((p) => p.getFirstValue() === address);
+  if (role === "attendee" && own.length !== 1)
+    throw new BadRequestException("当前员工不是可核实的会议参会人。");
+  return {
+    role,
+    cancelled: master.getFirstPropertyValue("status") === "CANCELLED",
+    title: String(master.getFirstPropertyValue("summary") ?? "会议").slice(
+      0,
+      500,
+    ),
+    ...(role === "attendee"
+      ? { ownResponse: participantResponse(own[0]!.getParameter("partstat")) }
+      : {}),
+  };
+}
+
+type MeetingCommand = Extract<
+  CalendarCommandInput,
+  { operation: "update"; scope: "meeting" }
+>;
+export function patchCalendarMeeting(
+  ical: string,
+  address: string,
+  change: MeetingCommand["change"],
+  commandId: string,
+) {
+  const meeting = calendarMeeting(ical, address);
+  if (meeting.cancelled) throw new BadRequestException("会议已经取消。");
+  const root = new ICAL.Component(ICAL.parse(ical));
+  const events = root.getAllSubcomponents("vevent");
+  for (const event of events) {
+    if (change.operation === "cancel") {
+      if (
+        meeting.role !== "organizer" ||
+        event.getFirstPropertyValue("organizer") !== address
+      )
+        throw new BadRequestException("只有来源会议组织者可以取消会议。");
+      event.updatePropertyWithValue("status", "CANCELLED");
+      bumpSequence(event);
+    } else {
+      if (meeting.role !== "attendee" || events.length !== 1)
+        throw new BadRequestException(
+          "仅可回复本人收到、没有单次例外的会议邀请。",
+        );
+      const own = event
+        .getAllProperties("attendee")
+        .find((p) => p.getFirstValue() === address)!;
+      if (own.getParameter("partstat") === change.response)
+        throw new BadRequestException("已保存相同参会回复。");
+      own.setParameter("partstat", change.response);
+      own.setParameter("rsvp", "FALSE");
+    }
+    stamp(root, event, commandId);
+  }
+  const changed = root.toString() + "\r\n";
+  calendarUid(changed, "scheduling");
+  return changed;
 }

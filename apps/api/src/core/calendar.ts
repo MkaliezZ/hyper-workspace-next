@@ -11,7 +11,10 @@ import {
   CalendarCommandInput,
   CalendarQuery,
   CalendarAvailabilityQuery,
+  CalendarMeetingQuery,
+  type CalendarMeeting,
   type CalendarCommandReceipt,
+  type CalendarInvitationStatus,
 } from "@hyper/contracts/calendar";
 import type { Database } from "../db/database.js";
 import { sourceConnection } from "./source-connection.js";
@@ -19,6 +22,7 @@ import {
   NextcloudCalendarProvider,
   CalendarSourceRejected,
 } from "../providers/nextcloud-calendar.js";
+import { NextcloudOrganizationProvider } from "../providers/nextcloud-organization.js";
 import { stableDigest } from "./credentials.js";
 import {
   createCalendarObject,
@@ -26,11 +30,17 @@ import {
   patchCalendarOccurrence,
   calendarObjectDigest,
   calendarCommandMarker,
+  invitationStatuses,
+  meetingParticipants,
+  calendarMeeting,
+  patchCalendarMeeting,
 } from "./calendar-codec.js";
 import { calendarOccurrences } from "./calendar-projection.js";
 
 const publicReceipt = (row: any): CalendarCommandReceipt => ({
   sourceRunId: row.source_run_id ?? null,
+  ...(row.invitation_status ? { invitations: row.invitation_status } : {}),
+  ...(row.meeting_result ? { meeting: row.meeting_result } : {}),
   plan: row.plan,
   id: row.id,
   operation: row.operation,
@@ -93,6 +103,67 @@ export class CalendarService {
     )
       throw new ForbiddenException("当前日历没有此操作权限。");
     return calendar;
+  }
+  private async meetingAddresses(
+    source: Source,
+    calendarId: string,
+    invitees: string[],
+  ) {
+    const calendar = await this.calendar(source, calendarId, "create");
+    if (calendar.ownerUid !== source.remoteUid)
+      throw new ForbiddenException("邀请只能从当前员工拥有的日历发出。");
+    const people = new NextcloudOrganizationProvider(
+      source.config,
+      source.credentials,
+    );
+    const assertRoster = async () => {
+      const members = new Set(await people.members());
+      if (
+        !members.has(source.remoteUid) ||
+        invitees.some((uid) => uid === source.remoteUid || !members.has(uid))
+      )
+        throw new ForbiddenException(
+          "参会人必须是当前企业成员，不能重复邀请组织者。",
+        );
+    };
+    await assertRoster();
+    const organizer = await source.provider.schedulingAddress(source.remoteUid);
+    const attendees: string[] = [];
+    for (let index = 0; index < invitees.length; index += 4)
+      attendees.push(
+        ...(await Promise.all(
+          invitees
+            .slice(index, index + 4)
+            .map((uid) => source.provider.schedulingAddress(uid)),
+        )),
+      );
+    if (
+      new Set([organizer, ...attendees].map((value) => value.toLowerCase()))
+        .size !==
+      attendees.length + 1
+    )
+      throw new ConflictException("来源日历地址重复，请重新核对参会员工。");
+    await assertRoster();
+    return { organizer, attendees };
+  }
+  private async ownMeetingAddress(
+    source: Source,
+    calendarId: string,
+    writing = false,
+  ) {
+    const calendar = await this.calendar(
+      source,
+      calendarId,
+      writing ? "update" : undefined,
+    );
+    if (calendar.ownerUid !== source.remoteUid)
+      throw new ForbiddenException(
+        "请在本人拥有的来源日历查看会议身份与回复。",
+      );
+    return {
+      address: await source.provider.schedulingAddress(source.remoteUid),
+      canUpdate: calendar.canUpdate,
+    };
   }
   private async guard(c: PoolClient, s: Subject, source: Source) {
     const member = await c.query(
@@ -159,7 +230,15 @@ export class CalendarService {
     );
     return calendars
       .filter((c) => live.get(c.id)?.canRead)
-      .map((c) => live.get(c.id)!);
+      .map((c) => {
+        const { ownerUid, ...calendar } = live.get(c.id)!;
+        return {
+          ...calendar,
+          ...(ownerUid === current.remoteUid && calendar.canCreate
+            ? { canInvite: true }
+            : {}),
+        };
+      });
   }
   async occurrences(s: Subject, raw: unknown) {
     const input = CalendarQuery.parse(raw),
@@ -170,6 +249,51 @@ export class CalendarService {
     );
     await this.recheck(s, source, input.calendarId);
     return result;
+  }
+  async meeting(s: Subject, raw: unknown) {
+    const input = CalendarMeetingQuery.parse(raw);
+    const source = await this.connection(s);
+    const { address, canUpdate } = await this.ownMeetingAddress(
+      source,
+      input.calendarId,
+    );
+    const actual = await source.provider.read(input.calendarId, input.objectId);
+    if (actual.etag !== input.etag)
+      throw new ConflictException("会议已更新，请刷新日历后再读取。");
+    const meeting = calendarMeeting(actual.ical, address);
+    if (meeting.role === "organizer") {
+      const saved = (
+        await this.db.pool.query(
+          `SELECT plan,desired_ical FROM cw_calendar_commands
+         WHERE workspace_id=$1 AND actor_id=$2 AND provider_key=$3 AND source_actor_id=$4
+           AND calendar_id=$5 AND object_id=$6 AND source_uid=$7 AND operation='create'
+           AND state='succeeded' LIMIT 1`,
+          [
+            s.workspaceId,
+            s.id,
+            source.config.providerKey,
+            source.remoteUid,
+            input.calendarId,
+            input.objectId,
+            actual.uid,
+          ],
+        )
+      ).rows[0];
+      if (saved) {
+        const plan = CalendarCommandInput.parse(saved.plan);
+        if (plan.operation === "create" && plan.invitees)
+          meeting.invitations = invitationStatuses(
+            saved.desired_ical,
+            actual.ical,
+            plan.invitees,
+          );
+      }
+    }
+    const live = await this.recheck(s, source);
+    const current = await this.ownMeetingAddress(live, input.calendarId);
+    if (address !== current.address)
+      throw new ConflictException("来源会议身份已变化，请刷新日历。");
+    return { ...meeting, canUpdate: canUpdate && current.canUpdate };
   }
   async availability(s: Subject, raw: unknown, signal?: AbortSignal) {
     const input = CalendarAvailabilityQuery.parse(raw),
@@ -211,12 +335,16 @@ export class CalendarService {
     let objectId: string,
       uid: string,
       desired: string | null = null,
+      meetingActor: string | null = null,
       title: string;
     if (input.operation === "create") {
       objectId = "hyper-" + id + ".ics";
       uid = id + "@hyper-workspace";
       title = input.draft.title;
-      desired = createCalendarObject(input.draft, uid, id);
+      const participants = input.invitees
+        ? await this.meetingAddresses(source, input.calendarId, input.invitees)
+        : undefined;
+      desired = createCalendarObject(input.draft, uid, id, participants);
     } else {
       const original = await source.provider.read(
         input.calendarId,
@@ -226,42 +354,57 @@ export class CalendarService {
         throw new ConflictException("日程已更新，请重新读取后再修改。");
       objectId = input.objectId;
       uid = original.uid;
-      // The current mutation path must not silently send invitations/cancellations.
-      const { calendarUid } = await import(
-        "../providers/nextcloud-calendar.js"
-      );
-      calendarUid(original.ical, true);
       title = "所选日程";
-      if (input.operation === "update") {
-        if (input.scope === "series")
-          desired = patchCalendarObject(original.ical, input.patch, id);
-        else {
-          const selected = (
-            await source.provider.occurrences(
-              input.calendarId,
-              input.target.window,
+      if (input.operation === "update" && input.scope === "meeting") {
+        const { address } = await this.ownMeetingAddress(
+          source,
+          input.calendarId,
+          true,
+        );
+        meetingActor = address;
+        title = calendarMeeting(original.ical, address).title;
+        desired = patchCalendarMeeting(
+          original.ical,
+          address,
+          input.change,
+          id,
+        );
+      } else {
+        const { calendarUid } = await import(
+          "../providers/nextcloud-calendar.js"
+        );
+        calendarUid(original.ical, true);
+        if (input.operation === "update") {
+          if (input.scope === "series")
+            desired = patchCalendarObject(original.ical, input.patch, id);
+          else if (input.scope === "occurrence") {
+            const selected = (
+              await source.provider.occurrences(
+                input.calendarId,
+                input.target.window,
+              )
+            ).find((object) => object.objectId === original.objectId);
+            if (
+              !selected ||
+              selected.etag !== original.etag ||
+              selected.uid !== original.uid
             )
-          ).find((object) => object.objectId === original.objectId);
-          if (
-            !selected ||
-            selected.etag !== original.etag ||
-            selected.uid !== original.uid
-          )
-            throw new ConflictException(
-              "本次日程已更新或不在所选窗口，请重新读取。",
+              throw new ConflictException(
+                "本次日程已更新或不在所选窗口，请重新读取。",
+              );
+            const occurrence = calendarOccurrences([selected]).find(
+              (event) => event.recurrenceId === input.target.recurrenceId,
             );
-          const occurrence = calendarOccurrences([selected]).find(
-            (event) => event.recurrenceId === input.target.recurrenceId,
-          );
-          if (!occurrence)
-            throw new ConflictException("当前来源窗口内未找到本次重复日程。");
-          title = occurrence.title || "所选日程";
-          desired = patchCalendarOccurrence(
-            original.ical,
-            occurrence,
-            input.change,
-            id,
-          );
+            if (!occurrence)
+              throw new ConflictException("当前来源窗口内未找到本次重复日程。");
+            title = occurrence.title || "所选日程";
+            desired = patchCalendarOccurrence(
+              original.ical,
+              occurrence,
+              input.change,
+              id,
+            );
+          }
         }
       }
     }
@@ -283,7 +426,7 @@ export class CalendarService {
         return prior.id as string;
       }
       await c.query(
-        "INSERT INTO cw_calendar_commands(id,workspace_id,actor_id,identity_credential_id,provider_key,source_actor_id,calendar_id,object_id,source_uid,operation,idempotency_key,params_hash,title,expected_etag,desired_ical,desired_digest,plan,state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'prepared')",
+        "INSERT INTO cw_calendar_commands(id,workspace_id,actor_id,identity_credential_id,provider_key,source_actor_id,calendar_id,object_id,source_uid,operation,idempotency_key,params_hash,title,expected_etag,desired_ical,desired_digest,plan,meeting_actor_address,state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,'prepared')",
         [
           id,
           s.workspaceId,
@@ -300,8 +443,15 @@ export class CalendarService {
           title,
           input.operation === "create" ? null : input.etag,
           desired,
-          desired ? calendarObjectDigest(desired) : null,
+          desired
+            ? calendarObjectDigest(
+                desired,
+                (input.operation === "create" && !!input.invitees) ||
+                  !!meetingActor,
+              )
+            : null,
           input,
+          meetingActor,
         ],
       );
       return id;
@@ -366,6 +516,10 @@ export class CalendarService {
   }
   private async observe(s: Subject, id: string) {
     const { source, row } = await this.authorized(s, id);
+    const plan = CalendarCommandInput.parse(row.plan);
+    const invitees = plan.operation === "create" ? plan.invitees : undefined;
+    let invitations: CalendarInvitationStatus[] | null = null;
+    let meetingResult: CalendarMeeting | null = null;
     let etag: string | null = null,
       outcome: "matched" | "absent" | null = null;
     try {
@@ -374,10 +528,33 @@ export class CalendarService {
         row.operation !== "delete" &&
         actual.uid === row.source_uid &&
         calendarCommandMarker(actual.ical) === row.id &&
-        calendarObjectDigest(actual.ical) === row.desired_digest
+        calendarObjectDigest(
+          actual.ical,
+          !!invitees || !!row.meeting_actor_address,
+        ) === row.desired_digest
       ) {
         etag = actual.etag;
         outcome = "matched";
+        if (plan.operation === "update" && plan.scope === "meeting") {
+          const address = row.meeting_actor_address;
+          const seen = calendarMeeting(actual.ical, address);
+          const expected = calendarMeeting(row.desired_ical, address);
+          if (
+            seen.role !== expected.role ||
+            seen.cancelled !== expected.cancelled ||
+            (plan.change.operation === "reply" &&
+              seen.ownResponse !== expected.ownResponse)
+          ) {
+            outcome = null;
+            etag = null;
+          } else meetingResult = seen;
+        }
+        if (invitees)
+          invitations = invitationStatuses(
+            row.desired_ical,
+            actual.ical,
+            invitees,
+          );
       }
     } catch (error) {
       if (error instanceof CalendarSourceRejected && error.getStatus() === 404)
@@ -388,13 +565,15 @@ export class CalendarService {
     await this.db.tx(async (c) => {
       await this.guard(c, s, source);
       await c.query(
-        "UPDATE cw_calendar_commands SET state=$2,source_etag=$3,observed_result=$4,error=$5,acknowledged_at=CASE WHEN $2='succeeded' THEN now() ELSE acknowledged_at END,updated_at=now() WHERE id=$1 AND state IN ('applying','recovery_required')",
+        "UPDATE cw_calendar_commands SET state=$2,source_etag=$3,observed_result=$4,error=$5,invitation_status=$6,meeting_result=$7,acknowledged_at=CASE WHEN $2='succeeded' THEN now() ELSE acknowledged_at END,updated_at=now() WHERE id=$1 AND state IN ('applying','recovery_required')",
         [
           id,
           outcome ? "succeeded" : "recovery_required",
           etag,
           outcome,
           outcome ? null : "calendar_result_unmatched",
+          invitations ? JSON.stringify(invitations) : null,
+          meetingResult ? JSON.stringify(meetingResult) : null,
         ],
       );
     });
@@ -454,6 +633,29 @@ export class CalendarService {
     try {
       const live = await this.recheck(s, source);
       await this.calendar(live, row.calendar_id, row.operation);
+      const plan = CalendarCommandInput.parse(row.plan);
+      const invitees = plan.operation === "create" ? plan.invitees : undefined;
+      if (invitees) {
+        const participants = await this.meetingAddresses(
+          live,
+          row.calendar_id,
+          invitees,
+        );
+        if (
+          stableDigest(participants) !==
+          stableDigest(meetingParticipants(row.desired_ical))
+        )
+          throw new ConflictException("来源参会身份已变化，请重新确认。");
+      }
+      if (plan.operation === "update" && plan.scope === "meeting") {
+        const current = await this.ownMeetingAddress(
+          live,
+          row.calendar_id,
+          true,
+        );
+        if (current.address !== row.meeting_actor_address)
+          throw new ConflictException("来源会议身份已变化，请重新确认。");
+      }
       const current = await this.owned(s, id);
       if (current.stop_requested_at) {
         await this.db.pool.query(
@@ -465,7 +667,20 @@ export class CalendarService {
       execution?.signal?.throwIfAborted();
       if (execution) await execution.beforeWrite();
       dispatched = true;
-      if (row.operation === "create")
+      if (invitees)
+        await live.provider.createMeeting(
+          row.calendar_id,
+          row.object_id,
+          row.desired_ical,
+        );
+      else if (plan.operation === "update" && plan.scope === "meeting")
+        await live.provider.replaceMeeting(
+          row.calendar_id,
+          row.object_id,
+          row.expected_etag,
+          row.desired_ical,
+        );
+      else if (row.operation === "create")
         await live.provider.create(
           row.calendar_id,
           row.object_id,

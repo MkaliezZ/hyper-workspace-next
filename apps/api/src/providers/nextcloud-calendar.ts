@@ -23,7 +23,13 @@ const MAX_OBJECTS = 500;
 const HEADER = '<?xml version="1.0" encoding="utf-8"?>';
 const DISCOVER =
   HEADER +
-  `<d:propfind xmlns:d="DAV:" xmlns:c="${CALDAV}"><d:prop><d:resourcetype/><d:displayname/><d:current-user-privilege-set/><c:supported-calendar-component-set/><c:calendar-timezone/></d:prop></d:propfind>`;
+  `<d:propfind xmlns:d="DAV:" xmlns:c="${CALDAV}"><d:prop><d:resourcetype/><d:displayname/><d:current-user-privilege-set/><d:owner/><c:supported-calendar-component-set/><c:calendar-timezone/></d:prop></d:propfind>`;
+
+const PRINCIPALS = "/remote.php/dav/principals/users/";
+const SABRE = "http://sabredav.org/ns";
+const FIND_ADDRESS =
+  HEADER +
+  `<d:propfind xmlns:d="DAV:" xmlns:c="${CALDAV}" xmlns:s="${SABRE}"><d:prop><d:principal-URL/><s:email-address/><c:calendar-user-address-set/><c:calendar-user-type/></d:prop></d:propfind>`;
 
 export class CalendarSourceRejected extends HttpException {
   constructor(status: number) {
@@ -84,7 +90,10 @@ function range(window: CalendarWindow) {
 }
 
 /** Validate the envelope without flattening recurring exceptions or timezone definitions. */
-export function calendarUid(ical: string, write = false) {
+export function calendarUid(
+  ical: string,
+  write: boolean | "scheduling" = false,
+) {
   if (Buffer.byteLength(ical) > MAX_ICAL_BYTES || /\u0000/u.test(ical))
     throw new BadRequestException("日历对象超过大小限制或包含无效内容。");
   try {
@@ -116,9 +125,10 @@ export function calendarUid(ical: string, write = false) {
     if (
       write &&
       (component.hasProperty("method") ||
-        events.some(
-          (e) => e.hasProperty("attendee") || e.hasProperty("organizer"),
-        ))
+        (write !== "scheduling" &&
+          events.some(
+            (e) => e.hasProperty("attendee") || e.hasProperty("organizer"),
+          )))
     )
       throw new Error(
         "Scheduling requires a separately authorized scheduling service",
@@ -343,6 +353,77 @@ export class NextcloudCalendarProvider implements CalendarProvider {
     }
     return response;
   }
+  private principalUid(href: string) {
+    if (!href || /[\\\u0000-\u0020\u007f]/u.test(href)) return undefined;
+    try {
+      if (
+        href
+          .split("/")
+          .some((part) => /^\.{1,2}$/u.test(decodeURIComponent(part)))
+      )
+        return undefined;
+      const target = new URL(href, this.config.publicUrl + PRINCIPALS);
+      if (target.username || target.password || target.search || target.hash)
+        return undefined;
+      for (const base of [this.config.publicUrl, this.config.transportUrl]) {
+        const expected = new URL(base + PRINCIPALS);
+        if (
+          target.origin !== expected.origin ||
+          !target.pathname.startsWith(expected.pathname)
+        )
+          continue;
+        const uid = decodeURIComponent(
+          target.pathname.slice(expected.pathname.length).replace(/\/$/u, ""),
+        );
+        return segment(uid);
+      }
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Resolve only an exact employee principal at the configured DAV origin. */
+  async schedulingAddress(uid: string) {
+    const url =
+      this.config.transportUrl + PRINCIPALS + encodeURIComponent(segment(uid));
+    const response = await this.request(url, {
+      method: "PROPFIND",
+      headers: { Depth: "0", "Content-Type": "application/xml; charset=utf-8" },
+      body: FIND_ADDRESS,
+    });
+    try {
+      if (response.status !== 207)
+        throw new Error("Expected principal multistatus");
+      const [row, extra] = multistatus(await bounded(response, 65536));
+      if (!row || extra || this.principalUid(row.href) !== uid)
+        throw new Error("Unexpected principal");
+      const principal = row.property(DAV, "principal-URL");
+      if (
+        !principal ||
+        this.principalUid(scalar(one(principal, DAV, "href"))) !== uid
+      )
+        throw new Error("Principal URL mismatch");
+      const type = scalar(row.property(CALDAV, "calendar-user-type"));
+      const email = scalar(row.property(SABRE, "email-address"));
+      const addresses = row.property(CALDAV, "calendar-user-address-set");
+      const address = "mailto:" + email;
+      if (
+        type !== "INDIVIDUAL" ||
+        !/^[a-zA-Z0-9._+-]+@[a-zA-Z0-9.-]+$/u.test(email) ||
+        email.length > 254 ||
+        !addresses ||
+        !children(addresses, DAV, "href").some((href) => {
+          const value = scalar(href);
+          return value === address || decodeURIComponent(value) === address;
+        })
+      )
+        throw new Error("No verified individual calendar address");
+      return address;
+    } catch {
+      await response.body?.cancel().catch(() => {});
+      throw new ServiceUnavailableException("无法核实员工的来源日历地址。");
+    }
+  }
   async calendars(): Promise<SourceCalendar[]> {
     const response = await this.request(this.url(), {
       method: "PROPFIND",
@@ -426,8 +507,13 @@ export class NextcloudCalendarProvider implements CalendarProvider {
             revision: createHash("sha256").update(zoneText).digest("hex"),
           };
         }
+        const owner = row.property(DAV, "owner");
+        const ownerUid = owner
+          ? this.principalUid(scalar(one(owner, DAV, "href")))
+          : undefined;
         return [
           {
+            ...(ownerUid ? { ownerUid } : {}),
             ...(timeZone ? { timeZone } : {}),
             id,
             name: scalar(row.property(DAV, "displayname")) || id,
@@ -529,8 +615,9 @@ export class NextcloudCalendarProvider implements CalendarProvider {
     objectId: string,
     ical: string,
     condition: Record<string, string>,
+    scheduling = false,
   ) {
-    calendarUid(ical, true);
+    calendarUid(ical, scheduling ? "scheduling" : true);
     const response = await this.request(
       this.url(calendarId, objectId),
       {
@@ -550,6 +637,23 @@ export class NextcloudCalendarProvider implements CalendarProvider {
   }
   create(calendarId: string, objectId: string, ical: string) {
     return this.put(calendarId, objectId, ical, { "If-None-Match": "*" });
+  }
+  createMeeting(calendarId: string, objectId: string, ical: string) {
+    return this.put(calendarId, objectId, ical, { "If-None-Match": "*" }, true);
+  }
+  replaceMeeting(
+    calendarId: string,
+    objectId: string,
+    version: string,
+    ical: string,
+  ) {
+    return this.put(
+      calendarId,
+      objectId,
+      ical,
+      { "If-Match": etag(version, true) },
+      true,
+    );
   }
   replace(calendarId: string, objectId: string, version: string, ical: string) {
     return this.put(calendarId, objectId, ical, {

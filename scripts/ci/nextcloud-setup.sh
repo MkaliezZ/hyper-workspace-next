@@ -24,6 +24,10 @@ for employee in employee-one employee-two org-reader talk-alice talk-bob talk-ou
   docker exec --user www-data --env OC_PASS="$NC_TEST_PASSWORD" hyper-nextcloud-test php occ user:add --password-from-env "$employee"
   occ group:adduser hyper-members "$employee"
 done
+# Synthetic addresses scoped to the disposable calendar source for scheduling tests.
+for employee in calendar-alice calendar-bob; do
+  occ user:setting "$employee" settings email "$employee@example.invalid"
+done
 occ group:adduser hyper-members nc-admin
 occ status --output=json
 
