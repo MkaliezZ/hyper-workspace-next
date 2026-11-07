@@ -13,6 +13,21 @@ export const CalendarEtag = z
   .regex(/^"[^"\x00-\x20\x7f]*"$/u);
 const date = z.iso.date();
 const instant = z.iso.datetime({ precision: 0 });
+const wallTime = z.iso
+  .datetime({ local: true, precision: 0 })
+  .refine((v) => !v.endsWith("Z"));
+const calendarTimeZone = z
+  .string()
+  .max(100)
+  .regex(/^[A-Za-z][A-Za-z0-9_+\-/]*$/u)
+  .refine((v) => {
+    try {
+      new Intl.DateTimeFormat("en", { timeZone: v });
+      return true;
+    } catch {
+      return false;
+    }
+  }, "请填写有效的 IANA 时区。");
 export const CalendarInterval = z.discriminatedUnion("kind", [
   z
     .object({ kind: z.literal("timed"), start: instant, end: instant })
@@ -22,17 +37,35 @@ export const CalendarInterval = z.discriminatedUnion("kind", [
       "结束时间须晚于开始时间。",
     ),
   z
+    .object({
+      kind: z.literal("zoned"),
+      start: wallTime,
+      end: wallTime,
+      timeZone: calendarTimeZone,
+    })
+    .strict()
+    .refine((v) => v.end > v.start, "结束时间须晚于开始时间。"),
+  z
     .object({ kind: z.literal("all_day"), start: date, end: date })
     .strict()
     .refine((v) => v.end > v.start, "全天事件结束日期为不含当天的边界。"),
 ]);
 export type CalendarInterval = z.infer<typeof CalendarInterval>;
+export const CalendarRepeat = z
+  .object({
+    frequency: z.enum(["DAILY", "WEEKLY", "MONTHLY", "YEARLY"]),
+    interval: z.number().int().min(1).max(12),
+    count: z.number().int().min(2).max(104),
+  })
+  .strict();
+export type CalendarRepeat = z.infer<typeof CalendarRepeat>;
 export const CalendarDraft = z
   .object({
     title: z.string().trim().min(1).max(500),
     description: z.string().max(10000).default(""),
     location: z.string().max(1000).default(""),
     interval: CalendarInterval,
+    repeat: CalendarRepeat.optional(),
   })
   .strict();
 export type CalendarDraft = z.infer<typeof CalendarDraft>;
@@ -45,41 +78,67 @@ export const CalendarPatch = z
   })
   .strict()
   .refine((v) => Object.keys(v).length > 0, "请填写要修改的内容。");
+const calendarWindow = { start: instant, end: instant };
+function boundedCalendarWindow(v: { start: string; end: string }) {
+  const duration = Date.parse(v.end) - Date.parse(v.start);
+  return duration > 0 && duration <= 93 * 86400000;
+}
+export const CalendarQuery = z
+  .object({ calendarId: CalendarId, ...calendarWindow })
+  .strict()
+  .refine(boundedCalendarWindow, "查询范围须大于零且不超过93天。");
+const occurrenceTarget = z
+  .object({
+    recurrenceId: z.union([
+      date,
+      instant,
+      z.iso.datetime({ local: true, precision: 0 }),
+    ]),
+    window: z.object(calendarWindow).strict().refine(boundedCalendarWindow),
+  })
+  .strict();
+const seriesTarget = { objectId: CalendarId, etag: CalendarEtag };
 const base = { calendarId: CalendarId, idempotencyKey: z.uuid() };
 export const CalendarCommandInput = z.discriminatedUnion("operation", [
   z
     .object({ ...base, operation: z.literal("create"), draft: CalendarDraft })
     .strict(),
-  z
-    .object({
-      ...base,
-      operation: z.literal("update"),
-      objectId: CalendarId,
-      etag: CalendarEtag,
-      scope: z.literal("series"),
-      patch: CalendarPatch,
-    })
-    .strict(),
+  z.discriminatedUnion("scope", [
+    z
+      .object({
+        ...base,
+        ...seriesTarget,
+        operation: z.literal("update"),
+        scope: z.literal("series"),
+        patch: CalendarPatch,
+      })
+      .strict(),
+    z
+      .object({
+        ...base,
+        ...seriesTarget,
+        operation: z.literal("update"),
+        scope: z.literal("occurrence"),
+        target: occurrenceTarget,
+        change: z.discriminatedUnion("operation", [
+          z
+            .object({ operation: z.literal("edit"), patch: CalendarPatch })
+            .strict(),
+          z.object({ operation: z.literal("cancel") }).strict(),
+        ]),
+      })
+      .strict(),
+  ]),
   z
     .object({
       ...base,
       operation: z.literal("delete"),
-      objectId: CalendarId,
-      etag: CalendarEtag,
+      ...seriesTarget,
       scope: z.literal("series"),
     })
     .strict(),
 ]);
 export type CalendarCommandInput = z.infer<typeof CalendarCommandInput>;
-export const CalendarQuery = z
-  .object({ calendarId: CalendarId, start: instant, end: instant })
-  .strict()
-  .refine(
-    (v) =>
-      Date.parse(v.end) > Date.parse(v.start) &&
-      Date.parse(v.end) - Date.parse(v.start) <= 93 * 86400000,
-    "查询范围须大于零且不超过93天。",
-  );
 
 export interface CalendarSummary {
   id: string;

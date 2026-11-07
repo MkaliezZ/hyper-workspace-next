@@ -99,6 +99,7 @@ test("Real CalDAV and product UI preserve source permissions, versions, recurrin
         (event) => event.uid === uid && event.etag === saved.etag,
       ),
     ).toBe(true);
+    let seriesEtag = saved.etag;
     const actor = await login(browser, aliceUid);
     try {
       // Separate source/API readiness from a missing rendered selector in failure evidence.
@@ -212,6 +213,76 @@ test("Real CalDAV and product UI preserve source permissions, versions, recurrin
       await expect(planner.getByText(/2 段占用/)).toBeVisible({
         timeout: 60000,
       });
+      const originalEvent = panel.locator(".calendar-event").filter({
+        has: actor.page.getByRole("heading", {
+          name: "Synthetic private calendar source test",
+          exact: true,
+        }),
+      });
+      await originalEvent
+        .getByRole("button", { name: "修改本次", exact: true })
+        .click();
+      const editOccurrence = actor.page.getByRole("dialog", {
+        name: "修改本次重复日程",
+        exact: true,
+      });
+      await editOccurrence
+        .getByLabel("日程标题", { exact: true })
+        .fill("Synthetic exception");
+      await editOccurrence.getByLabel("同时调整时间", { exact: true }).check();
+      const [newStart, newEnd] = await actor.page.evaluate(() =>
+        ["2026-11-04T03:00:00Z", "2026-11-04T04:00:00Z"].map((value) => {
+          const d = new Date(value);
+          const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+          return local.toISOString().slice(0, 16);
+        }),
+      );
+      await editOccurrence
+        .getByLabel("开始（本机时区）", { exact: true })
+        .fill(newStart!);
+      await editOccurrence
+        .getByLabel("结束（本机时区）", { exact: true })
+        .fill(newEnd!);
+      await editOccurrence
+        .getByRole("button", { name: "保存日程", exact: true })
+        .click();
+      await expect(editOccurrence).not.toBeVisible({ timeout: 60000 });
+      const exception = panel.locator(".calendar-event").filter({
+        has: actor.page.getByRole("heading", {
+          name: "Synthetic exception",
+          exact: true,
+        }),
+      });
+      await expect(exception).toBeVisible({ timeout: 60000 });
+      const moved = await alice.read(calendarId, objectId);
+      expect(moved.ical).toContain("RECURRENCE-ID:20261104T010000Z");
+      expect(moved.ical).toContain("DTSTART:20261104T030000Z");
+      await exception
+        .getByRole("button", { name: "取消本次", exact: true })
+        .click();
+      const cancelOccurrence = actor.page.getByRole("dialog", {
+        name: "取消本次重复日程",
+        exact: true,
+      });
+      await cancelOccurrence
+        .getByRole("button", { name: "确认取消本次", exact: true })
+        .click();
+      await expect(cancelOccurrence).not.toBeVisible({ timeout: 60000 });
+      await expect(exception).toHaveCount(0);
+      const series = await alice.read(calendarId, objectId);
+      seriesEtag = series.etag;
+      expect(series.ical).toContain("EXDATE:20261104T010000Z");
+      expect(series.ical).not.toContain("Synthetic exception");
+      const remaining = calendarOccurrences(
+        await alice.occurrences(calendarId, {
+          start: "2026-11-01T00:00:00Z",
+          end: "2026-12-01T00:00:00Z",
+        }),
+      ).filter((event) => event.uid === uid);
+      expect(remaining.map((event) => event.start.value)).toEqual([
+        "2026-11-11T01:00:00.000Z",
+        "2026-11-18T01:00:00.000Z",
+      ]);
       const prepared = await actor.context.request.post(
         origin + "/api/calendar/commands",
         {
@@ -264,6 +335,52 @@ test("Real CalDAV and product UI preserve source permissions, versions, recurrin
       await expect(
         alice.read(calendarId, receipt.objectId),
       ).rejects.toMatchObject({ status: 404 });
+      const repeatIntent = await actor.context.request.post(
+        origin + "/api/calendar/commands",
+        {
+          headers: { Origin: origin },
+          data: {
+            operation: "create",
+            calendarId,
+            idempotencyKey: randomUUID(),
+            draft: {
+              title: "Synthetic named-zone repeating event",
+              interval: {
+                kind: "zoned",
+                start: "2027-03-07T09:00:00",
+                end: "2027-03-07T10:00:00",
+                timeZone: "America/New_York",
+              },
+              repeat: { frequency: "WEEKLY", interval: 1, count: 3 },
+            },
+          },
+        },
+      );
+      await expect(repeatIntent).toBeOK();
+      const repeatCommand = await repeatIntent.json();
+      const repeatApply = await actor.context.request.post(
+        origin + "/api/calendar/commands/" + repeatCommand.id + "/apply",
+        { headers: { Origin: origin }, data: { confirmed: true } },
+      );
+      await expect(repeatApply).toBeOK();
+      const repeatReceipt = await repeatApply.json();
+      expect(repeatReceipt.observedResult).toBe("matched");
+      const expandedRepeat = calendarOccurrences(
+        await alice.occurrences(calendarId, {
+          start: "2027-03-01T00:00:00Z",
+          end: "2027-04-01T00:00:00Z",
+        }),
+      ).filter((event) => event.objectId === repeatCommand.objectId);
+      expect(expandedRepeat.map((event) => event.start.value)).toEqual([
+        "2027-03-07T14:00:00.000Z",
+        "2027-03-14T13:00:00.000Z",
+        "2027-03-21T13:00:00.000Z",
+      ]);
+      await alice.remove(
+        calendarId,
+        repeatCommand.objectId,
+        repeatReceipt.sourceEtag,
+      );
     } finally {
       await actor.context.close();
     }
@@ -279,7 +396,7 @@ test("Real CalDAV and product UI preserve source permissions, versions, recurrin
     await alice.replace(
       calendarId,
       objectId,
-      saved.etag,
+      seriesEtag,
       ical.replace(
         "Synthetic private calendar source test",
         "Synthetic updated source test",

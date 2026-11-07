@@ -146,7 +146,14 @@ test(
         assert.ok(
           availabilityRun.result.receipts[0].availability.candidates.length > 0,
         );
-        const rejectedCommand = await f.service.prepare(f.actor, f.create());
+        const recurring = f.create();
+        const rejectedCommand = await f.service.prepare(f.actor, {
+          ...recurring,
+          draft: {
+            ...recurring.draft,
+            repeat: { frequency: "WEEKLY", interval: 1, count: 3 },
+          },
+        });
         const rejected = await work.startCalendarRun(f.actor, {
           ...input,
           idempotencyKey: randomUUID(),
@@ -170,9 +177,33 @@ test(
           (await f.service.get(f.actor, rejectedCommand.id)).state,
           "prepared",
         );
+        const repeatRun = await work.startCalendarRun(f.actor, {
+          ...input,
+          idempotencyKey: randomUUID(),
+          plan: {
+            operation: "apply",
+            commandId: rejectedCommand.id,
+            confirmed: true,
+          },
+        });
+        await processor.process(repeatRun.id);
+        const repeatReceipt = await work.getRun(f.actor, repeatRun.id);
+        assert.equal(repeatReceipt.state, "succeeded", repeatReceipt.error);
+        assert.equal(
+          repeatReceipt.result.receipts[0].observedResult,
+          "matched",
+        );
+        const fixtureKey = "alice/personal/" + rejectedCommand.objectId;
+        assert.match(
+          f.source.objects.get(fixtureKey)!.ical,
+          /RRULE:FREQ=WEEKLY;COUNT=3/,
+        );
+        assert.equal(f.source.writes, before + 1);
+        // Isolate the next engine's unrelated window assertions from this fixture series.
+        f.source.objects.delete(fixtureKey);
       }
-      assert.equal(f.source.writes, 2);
-      assert.equal(model.calls(), 8);
+      assert.equal(f.source.writes, 4);
+      assert.equal(model.calls(), 10);
       assert.equal(
         (
           await db.pool.query(

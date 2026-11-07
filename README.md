@@ -5,15 +5,15 @@
 
 ## 日历开发进展
 
-员工可以查看有权访问的来源日历和七天周视图，创建单次或全天日程，修改文字和单次时间，删除日程并核对操作回执。Nextcloud 连接完成后，设置 `NEXTCLOUD_CALENDAR_ENABLED=true` 并重启 API。人工、DSH 和 Hermes 共用后端权限、版本与回执检查。AI 可以查询选定窗口、执行员工已确认的修改计划，或核对忙闲和候选时段。私人执行记录可刷新找回。
+员工可以查看有权访问的来源日历和七天周视图，创建单次、全天或重复日程，修改文字、调整时间、取消某次重复实例，并核对来源回执。新建支持按天、周、月、年重复，定时日程可以指定 IANA 时区。Nextcloud 连接完成后，设置 `NEXTCLOUD_CALENDAR_ENABLED=true` 并重启 API。人工、DSH 和 Hermes 共用后端权限、版本与回执检查。AI 可以查询选定窗口、执行员工已确认的修改计划，或核对忙闲和候选时段。私人执行记录可刷新找回。
 
-忙闲查询支持在多个获准日历中，按指定时区、工作日、工作时间和会议时长合并占用、识别冲突并列出候选时段。来源时间无法确定时，结果会指出疑点并暂缓推荐。候选是查询时的观察，选中时段后仍需另行确认安排。邀请、重复规则和单次例外编辑、项目与任务关联、真实模型验收仍待完成。 [日历能力与验证记录](docs/CALENDAR.md)
+忙闲查询支持在多个获准日历中，按指定时区、工作日、工作时间和会议时长合并占用、识别冲突并列出候选时段。来源时间无法确定时，结果会指出疑点并暂缓推荐。候选是查询时的观察，选中时段后仍需另行确认安排。邀请与回复、整组重复规则调整、候选预约前复核、项目与任务关联，以及真实模型验收仍待完成。 [日历能力与验证记录](docs/CALENDAR.md)
 
-最近一次已完成的 CI 对应 `4fa2a07`，常规、真实 Nextcloud 和部署三项通过，其中真实来源 19 项。此前 `3a36c16` 的来源 UI 精确标签匹配失败，修复后在该轮通过。新增忙闲查询的 CI 结果以本次提交的运行记录为准。 [4fa2a07 Actions](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/41833138371)
+忙闲查询提交 `db963fa` 的常规、真实 Nextcloud 和容器部署三项 CI 全部通过，其中 84 项浏览器用例、19 项真实来源用例和 7 项容器用例通过。重复日程批次已完成本地回归，真实来源的改期、取消和夏令时用例随该提交单独核验。 [忙闲查询 Actions](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42321513248)
 
 ![忙闲与候选时段，合成测试资料](docs/images/calendar-availability-desktop.png)
 
-[手机上的 AI 排期回执](docs/images/calendar-availability-mobile.png) · [日历周视图](docs/images/calendar-desktop.png) · [日历手机界面](docs/images/calendar-mobile.png)
+[手机上的 AI 排期回执](docs/images/calendar-availability-mobile.png) · [日历周视图](docs/images/calendar-desktop.png) · [日历手机界面](docs/images/calendar-mobile.png) · [手机重复规则与指定时区](docs/images/calendar-recurrence-mobile.png)
 
 [![CI](https://github.com/MkaliezZ/hyper-workspace-next/actions/workflows/ci.yml/badge.svg)](https://github.com/MkaliezZ/hyper-workspace-next/actions/workflows/ci.yml)
 

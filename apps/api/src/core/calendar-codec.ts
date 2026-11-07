@@ -4,21 +4,40 @@ import {
   CalendarDraft,
   CalendarPatch,
   type CalendarInterval,
+  type CalendarCommandInput,
+  type CalendarOccurrence,
+  type CalendarRepeat,
 } from "@hyper/contracts/calendar";
 import { calendarUid } from "../providers/nextcloud-calendar.js";
 import { stableDigest } from "./credentials.js";
+import { recurrenceHorizon, zonedCalendarTimes } from "./calendar-zones.js";
 type Component = InstanceType<typeof ICAL.Component>;
 
-function interval(component: Component, value: CalendarInterval) {
+function interval(
+  root: Component,
+  component: Component,
+  value: CalendarInterval,
+  repeat?: CalendarRepeat,
+) {
+  const bound =
+    value.kind === "zoned" || repeat ? recurrenceHorizon(value, repeat) : null;
+  const times =
+    value.kind === "zoned"
+      ? zonedCalendarTimes(root, value, bound!.horizon)
+      : [value.start, value.end].map((text) =>
+          ICAL.Time.fromString(text, undefined),
+        );
   for (const name of ["dtstart", "dtend", "duration"])
     component.removeAllProperties(name);
-  for (const [property, text] of [
-    ["dtstart", value.start],
-    ["dtend", value.end],
-  ] as const) {
-    const time = ICAL.Time.fromString(text, undefined);
-    component.updatePropertyWithValue(property, time);
+  for (const [index, name] of ["dtstart", "dtend"].entries()) {
+    const time = times[index]!;
+    const property = new ICAL.Property(name);
+    property.setValue(time);
+    if (value.kind === "zoned" && time.zone !== ICAL.Timezone.utcTimezone)
+      property.setParameter("tzid", time.zone.tzid);
+    component.addProperty(property);
   }
+  if (bound?.rule) component.updatePropertyWithValue("rrule", bound.rule);
 }
 function stamp(root: Component, event: Component, commandId: string) {
   root.updatePropertyWithValue("x-hyper-command-id", commandId);
@@ -27,6 +46,33 @@ function stamp(root: Component, event: Component, commandId: string) {
     ICAL.Time.fromJSDate(new Date(), true),
   );
 }
+function editFields(
+  root: Component,
+  event: Component,
+  patch: ReturnType<typeof CalendarPatch.parse>,
+) {
+  if (patch.title !== undefined)
+    event.updatePropertyWithValue("summary", patch.title);
+  if (patch.description !== undefined)
+    event.updatePropertyWithValue("description", patch.description);
+  if (patch.location !== undefined)
+    event.updatePropertyWithValue("location", patch.location);
+  if (patch.interval) interval(root, event, patch.interval);
+}
+
+function bumpSequence(event: Component) {
+  const previous = event.getFirstPropertyValue("sequence");
+  if (
+    previous !== null &&
+    (typeof previous !== "number" || previous < 0 || previous > 2147483646)
+  )
+    throw new BadRequestException("日程序号无效。");
+  event.updatePropertyWithValue(
+    "sequence",
+    (typeof previous === "number" ? previous : 0) + 1,
+  );
+}
+
 export function createCalendarObject(
   raw: CalendarDraft,
   uid: string,
@@ -43,7 +89,7 @@ export function createCalendarObject(
   event.updatePropertyWithValue("description", draft.description);
   event.updatePropertyWithValue("location", draft.location);
   event.updatePropertyWithValue("sequence", 0);
-  interval(event, draft.interval);
+  interval(root, event, draft.interval, draft.repeat);
   stamp(root, event, commandId);
   const ical = root.toString() + "\r\n";
   calendarUid(ical, true);
@@ -72,24 +118,140 @@ export function patchCalendarObject(
       "重复日程的时间调整须通过重复规则与例外编辑入口完成。",
     );
   for (const event of events) {
-    if (patch.title !== undefined)
-      event.updatePropertyWithValue("summary", patch.title);
-    if (patch.description !== undefined)
-      event.updatePropertyWithValue("description", patch.description);
-    if (patch.location !== undefined)
-      event.updatePropertyWithValue("location", patch.location);
-    const previous = event.getFirstPropertyValue("sequence");
-    if (
-      previous !== null &&
-      (typeof previous !== "number" || previous < 0 || previous > 2147483646)
-    )
-      throw new BadRequestException("日程序号无效。");
-    event.updatePropertyWithValue(
-      "sequence",
-      (typeof previous === "number" ? previous : 0) + 1,
-    );
-    if (patch.interval) interval(event, patch.interval);
+    editFields(root, event, patch);
+    bumpSequence(event);
     stamp(root, event, commandId);
+  }
+  const changed = root.toString() + "\r\n";
+  calendarUid(changed, true);
+  return changed;
+}
+
+type OccurrenceCommand = Extract<
+  CalendarCommandInput,
+  { operation: "update"; scope: "occurrence" }
+>;
+
+function recurrenceKey(time: InstanceType<typeof ICAL.Time>) {
+  if (time.isDate || time.zone.tzid === "floating") return time.toString();
+  return time.convertToZone(ICAL.Timezone.utcTimezone).toString();
+}
+
+/** Only use an occurrence verified against the same source object and ETag.
+ * Preserve the original recurrence key even after an occurrence has moved. */
+export function patchCalendarOccurrence(
+  ical: string,
+  occurrence: CalendarOccurrence,
+  change: OccurrenceCommand["change"],
+  commandId: string,
+) {
+  const uid = calendarUid(ical, true);
+  if (
+    uid !== occurrence.uid ||
+    !occurrence.recurrenceId ||
+    occurrence.status === "cancelled"
+  )
+    throw new BadRequestException("无法核实本次重复日程。");
+  const root = new ICAL.Component(ICAL.parse(ical));
+  const events = root.getAllSubcomponents("vevent");
+  const masters = events.filter((event) => !event.hasProperty("recurrence-id"));
+  const master = masters[0];
+  if (
+    masters.length !== 1 ||
+    !master ||
+    !(master.hasProperty("rrule") || master.hasProperty("rdate")) ||
+    events.some((event) =>
+      event.getFirstProperty("recurrence-id")?.getParameter("range"),
+    )
+  )
+    throw new BadRequestException("此重复规则需要在来源日历中处理。");
+  const originalStart = master.getFirstPropertyValue("dtstart");
+  const expandedKey = ICAL.Time.fromString(occurrence.recurrenceId, undefined);
+  if (
+    !(originalStart instanceof ICAL.Time) ||
+    expandedKey.isDate !== originalStart.isDate ||
+    (!expandedKey.isDate &&
+      (expandedKey.zone.tzid === "floating" ||
+        originalStart.zone.tzid === "floating"))
+  )
+    throw new BadRequestException("来源未给出可核实的重复日程时区。");
+  const key = expandedKey.isDate
+    ? expandedKey
+    : expandedKey.convertToZone(originalStart.zone);
+  const originalKey = recurrenceKey(expandedKey);
+  if (recurrenceKey(key) !== originalKey)
+    throw new BadRequestException(
+      "本次重复日程落在无法唯一标记的时区切换时间。",
+    );
+  const existing = events.filter((event) => {
+    if (event === master) return false;
+    const value = event.getFirstPropertyValue("recurrence-id");
+    if (
+      !(value instanceof ICAL.Time) ||
+      value.isDate !== key.isDate ||
+      (!value.isDate && value.zone.tzid === "floating")
+    )
+      throw new BadRequestException("来源例外的原始日期或时区无法核实。");
+    return recurrenceKey(value) === originalKey;
+  });
+  if (existing.length > 1)
+    throw new BadRequestException("来源存在多个相同日程例外。");
+  const current = existing[0];
+  const keyProperty = (name: "recurrence-id" | "exdate") => {
+    const property = new ICAL.Property(name);
+    property.setValue(key);
+    if (!key.isDate && key.zone !== ICAL.Timezone.utcTimezone)
+      property.setParameter("tzid", key.zone.tzid);
+    return property;
+  };
+
+  if (change.operation === "cancel") {
+    if (current) root.removeSubcomponent(current);
+    const excluded = master
+      .getAllProperties("exdate")
+      .some((property) =>
+        property
+          .getValues()
+          .some(
+            (value) =>
+              value instanceof ICAL.Time &&
+              recurrenceKey(value) === originalKey,
+          ),
+      );
+    if (!excluded) master.addProperty(keyProperty("exdate"));
+    bumpSequence(master);
+    stamp(root, master, commandId);
+  } else {
+    if (
+      change.patch.interval &&
+      (change.patch.interval.kind === "all_day") !== key.isDate
+    )
+      throw new BadRequestException("本次修改须保留日程的全天或定时类型。");
+    let exception = current;
+    if (!exception) {
+      exception = new ICAL.Component(structuredClone(master.toJSON()));
+      for (const field of ["rrule", "rdate", "exdate", "exrule"])
+        exception.removeAllProperties(field);
+      const { start, end } = occurrence;
+      if (start.kind === "date" && end.kind === "date")
+        interval(root, exception, {
+          kind: "all_day",
+          start: start.value,
+          end: end.value,
+        });
+      else if (start.kind === "instant" && end.kind === "instant")
+        interval(root, exception, {
+          kind: "timed",
+          start: start.value,
+          end: end.value,
+        });
+      else throw new BadRequestException("本次日程的开始或结束时间无法核实。");
+      exception.addProperty(keyProperty("recurrence-id"));
+      root.addSubcomponent(exception);
+    }
+    editFields(root, exception, change.patch);
+    bumpSequence(exception);
+    stamp(root, exception, commandId);
   }
   const changed = root.toString() + "\r\n";
   calendarUid(changed, true);

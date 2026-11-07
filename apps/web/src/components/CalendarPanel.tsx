@@ -11,6 +11,7 @@ import type {
   CalendarCommandReceipt,
   CalendarOccurrence,
   CalendarPoint,
+  CalendarRepeat,
   CalendarSummary,
   CalendarRunPlan,
   CalendarRunInput,
@@ -32,6 +33,12 @@ const labels: Record<CalendarCommandReceipt["state"], string> = {
   recovery_required: "结果待核对",
   cancelled: "已停止，未发送",
 };
+const frequencyLabel: Record<CalendarRepeat["frequency"], string> = {
+  DAILY: "天",
+  WEEKLY: "周",
+  MONTHLY: "个月",
+  YEARLY: "年",
+};
 const localDate = (date: Date) =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 const addDays = (day: string, count: number) => {
@@ -40,6 +47,10 @@ const addDays = (day: string, count: number) => {
   return localDate(date);
 };
 const utc = (date: Date) => date.toISOString().replace(".000Z", "Z");
+const weekWindow = (day: string) => ({
+  start: utc(new Date(day + "T00:00:00")),
+  end: utc(new Date(addDays(day, 7) + "T00:00:00")),
+});
 function pointLabel(point: CalendarPoint) {
   if (point.kind === "date") return point.value + " · 全天";
   if (point.kind === "instant")
@@ -83,23 +94,30 @@ function instantInput(value: string) {
     throw new Error("所选本机时间无效或处于夏令时跳过区间，请重新选择。");
   return utc(date);
 }
+function commandLabel(plan: CalendarCommandInput) {
+  if (plan.operation === "create") return "新建日程";
+  if (plan.operation === "delete") return "删除整个日程系列";
+  if (plan.scope === "series") return "修改整个日程系列";
+  return plan.change.operation === "edit"
+    ? "修改本次重复日程"
+    : "取消本次重复日程";
+}
 function CalendarPreview({ receipt }: { receipt: CalendarCommandReceipt }) {
   const plan = receipt.plan;
   const fields =
     plan.operation === "create"
       ? plan.draft
       : plan.operation === "update"
-        ? plan.patch
+        ? plan.scope === "series"
+          ? plan.patch
+          : plan.change.operation === "edit"
+            ? plan.change.patch
+            : null
         : null;
+  const single = plan.operation === "update" && plan.scope === "occurrence";
   return (
     <div className="calendar-preview">
-      <p>
-        {plan.operation === "create"
-          ? "新建日程"
-          : plan.operation === "update"
-            ? "修改整个日程系列"
-            : "删除整个日程系列"}
-      </p>
+      <p>{commandLabel(plan)}</p>
       {fields ? (
         <>
           <strong>{fields.title ?? "保留原标题"}</strong>
@@ -114,19 +132,34 @@ function CalendarPreview({ receipt }: { receipt: CalendarCommandReceipt }) {
               {fields.interval.start} 至 {fields.interval.end}
               {fields.interval.kind === "timed"
                 ? "（UTC）"
-                : "（结束日期不含当天）"}
+                : fields.interval.kind === "zoned"
+                  ? `（${fields.interval.timeZone}）`
+                  : "（结束日期不含当天）"}
             </p>
           ) : null}
         </>
       ) : (
-        <p>重复实例也会一并删除。</p>
+        <p>{single ? "其他重复实例保持原样。" : "重复实例也会一并删除。"}</p>
       )}
+      {plan.operation === "create" && plan.draft.repeat ? (
+        <p>
+          每 {plan.draft.repeat.interval}{" "}
+          {frequencyLabel[plan.draft.repeat.frequency]}重复，共{" "}
+          {plan.draft.repeat.count} 次。
+        </p>
+      ) : null}
       <details>
         <summary>核对目标引用</summary>
         <p>
           日历：{receipt.calendarId}
           <br />
           日程：{receipt.objectId}
+          {single ? (
+            <>
+              <br />
+              原重复实例：{plan.target.recurrenceId}
+            </>
+          ) : null}
         </p>
       </details>
     </div>
@@ -164,6 +197,7 @@ export function CalendarPanel({
     [revision, setRevision] = useState(0);
   const [mode, setMode] = useState<"create" | "update" | "delete" | null>(null),
     [selected, setSelected] = useState<CalendarOccurrence | null>(null);
+  const [scope, setScope] = useState<"series" | "occurrence">("series");
   const [title, setTitle] = useState(""),
     [description, setDescription] = useState(""),
     [location, setLocation] = useState("");
@@ -171,6 +205,12 @@ export function CalendarPanel({
     [start, setStart] = useState(""),
     [end, setEnd] = useState(""),
     [reschedule, setReschedule] = useState(false);
+  const [eventZone, setEventZone] = useState("");
+  const [frequency, setFrequency] = useState<CalendarRepeat["frequency"] | "">(
+    "",
+  );
+  const [repeatInterval, setRepeatInterval] = useState(1),
+    [repeatCount, setRepeatCount] = useState(4);
   const [intent, setIntent] = useState<CalendarCommandReceipt | null>(null),
     [modalError, setModalError] = useState("");
   const pending = useRef<{
@@ -269,8 +309,7 @@ export function CalendarPanel({
         operation: "read",
         query: {
           calendarId,
-          start: utc(new Date(day + "T00:00:00")),
-          end: utc(new Date(addDays(day, 7) + "T00:00:00")),
+          ...weekWindow(day),
         },
       });
     } catch (e) {
@@ -359,8 +398,7 @@ export function CalendarPanel({
       signal: controller.signal,
       body: JSON.stringify({
         calendarId,
-        start: utc(new Date(day + "T00:00:00")),
-        end: utc(new Date(addDays(day, 7) + "T00:00:00")),
+        ...weekWindow(day),
       }),
     })
       .then((rows) => {
@@ -383,7 +421,9 @@ export function CalendarPanel({
   function open(
     operation: "create" | "update" | "delete",
     event?: CalendarOccurrence,
+    actionScope: "series" | "occurrence" = "series",
   ) {
+    setScope(actionScope);
     setSelected(event ?? null);
     setMode(operation);
     setIntent(null);
@@ -394,6 +434,10 @@ export function CalendarPanel({
     setLocation(event?.location ?? "");
     setAllDay(event?.start.kind === "date");
     setReschedule(false);
+    setEventZone("");
+    setFrequency("");
+    setRepeatInterval(1);
+    setRepeatCount(4);
     setStart(event ? inputTime(event.start) : initialTime(day, "09:00"));
     setEnd(event ? inputTime(event.end) : initialTime(day, "10:00"));
   }
@@ -440,19 +484,44 @@ export function CalendarPanel({
         return;
       }
       let input: CalendarCommandInput;
-      const interval = allDay
-        ? { kind: "all_day" as const, start, end }
-        : {
-            kind: "timed" as const,
-            start: instantInput(start),
-            end: instantInput(end),
+      const interval = () => {
+        if (allDay) return { kind: "all_day" as const, start, end };
+        if (eventZone.trim()) {
+          const seconds = (value: string) =>
+            value.length === 16 ? value + ":00" : value;
+          return {
+            kind: "zoned" as const,
+            start: seconds(start),
+            end: seconds(end),
+            timeZone: eventZone.trim(),
           };
+        }
+        return {
+          kind: "timed" as const,
+          start: instantInput(start),
+          end: instantInput(end),
+        };
+      };
       if (mode === "create")
         input = {
           operation: "create",
           calendarId,
           idempotencyKey: "",
-          draft: { title, description, location, interval },
+          draft: {
+            title,
+            description,
+            location,
+            interval: interval(),
+            ...(frequency
+              ? {
+                  repeat: {
+                    frequency,
+                    interval: repeatInterval,
+                    count: repeatCount,
+                  },
+                }
+              : {}),
+          },
         };
       else {
         if (!selected) throw new Error("请重新选择日程。");
@@ -460,26 +529,40 @@ export function CalendarPanel({
           calendarId: selected.calendarId,
           objectId: selected.objectId,
           etag: selected.etag,
-          scope: "series" as const,
           idempotencyKey: "",
         };
-        input =
-          mode === "delete"
-            ? { ...base, operation: "delete" }
-            : {
-                ...base,
-                operation: "update",
-                patch: {
-                  ...(title !== selected.title ? { title } : {}),
-                  ...(description !== selected.description
-                    ? { description }
-                    : {}),
-                  ...(location !== selected.location ? { location } : {}),
-                  ...(reschedule ? { interval } : {}),
-                },
-              };
-        if (input.operation === "update" && !Object.keys(input.patch).length)
+        const patch =
+          mode === "update"
+            ? {
+                ...(title !== selected.title ? { title } : {}),
+                ...(description !== selected.description
+                  ? { description }
+                  : {}),
+                ...(location !== selected.location ? { location } : {}),
+                ...(reschedule ? { interval: interval() } : {}),
+              }
+            : null;
+        if (patch && !Object.keys(patch).length)
           throw new Error("请先修改日程内容。");
+        if (scope === "occurrence") {
+          if (!selected.recurrenceId) throw new Error("请重新选择重复实例。");
+          input = {
+            ...base,
+            operation: "update",
+            scope,
+            target: {
+              recurrenceId: selected.recurrenceId,
+              window: weekWindow(day),
+            },
+            change: patch
+              ? { operation: "edit", patch }
+              : { operation: "cancel" },
+          };
+        } else {
+          input = patch
+            ? { ...base, operation: "update", scope, patch }
+            : { ...base, operation: "delete", scope };
+        }
       }
       const fingerprint = JSON.stringify(input);
       if (!pending.current || pending.current.fingerprint !== fingerprint)
@@ -724,14 +807,34 @@ export function CalendarPanel({
                           disabled={!currentCalendar?.canUpdate || busy}
                           onClick={() => open("update", event)}
                         >
-                          修改
+                          {event.recurrenceId ? "修改系列" : "修改"}
                         </button>
                         <button
                           disabled={!currentCalendar?.canDelete || busy}
                           onClick={() => open("delete", event)}
                         >
-                          删除
+                          {event.recurrenceId ? "删除系列" : "删除"}
                         </button>
+                        {event.recurrenceId && event.status !== "cancelled" ? (
+                          <>
+                            <button
+                              disabled={!currentCalendar?.canUpdate || busy}
+                              onClick={() =>
+                                open("update", event, "occurrence")
+                              }
+                            >
+                              修改本次
+                            </button>
+                            <button
+                              disabled={!currentCalendar?.canUpdate || busy}
+                              onClick={() =>
+                                open("delete", event, "occurrence")
+                              }
+                            >
+                              取消本次
+                            </button>
+                          </>
+                        ) : null}
                       </div>
                     </article>
                   ))
@@ -754,7 +857,16 @@ export function CalendarPanel({
                     disabled={busy}
                     onClick={() => {
                       setIntent(receipt);
-                      setMode(receipt.operation);
+                      const plan = receipt.plan;
+                      const one =
+                        plan.operation === "update" &&
+                        plan.scope === "occurrence";
+                      setScope(one ? "occurrence" : "series");
+                      setMode(
+                        one && plan.change.operation === "cancel"
+                          ? "delete"
+                          : receipt.operation,
+                      );
                       setModalError("");
                     }}
                   >
@@ -762,6 +874,7 @@ export function CalendarPanel({
                   </button>
                 ) : null}
                 <strong>{receipt.title}</strong>
+                <span>{commandLabel(receipt.plan)}</span>
                 {receipt.sourceRunId ? (
                   <button
                     disabled={busy}
@@ -878,9 +991,13 @@ export function CalendarPanel({
           title={
             mode === "create"
               ? "新建日程"
-              : mode === "update"
-                ? "修改日程"
-                : "删除日程"
+              : scope === "occurrence"
+                ? mode === "update"
+                  ? "修改本次重复日程"
+                  : "取消本次重复日程"
+                : mode === "update"
+                  ? "修改日程"
+                  : "删除日程"
           }
           onClose={close}
           error={modalError}
@@ -897,8 +1014,9 @@ export function CalendarPanel({
               <CalendarPreview receipt={intent} />
             ) : mode === "delete" ? (
               <p>
-                删除「{selected?.title || "所选日程"}
-                」的整个系列，包含重复实例；已发生的其他操作不会随之撤销。
+                {scope === "occurrence"
+                  ? `仅取消「${selected?.title || "所选日程"}」的本次实例，其他日期保留。`
+                  : `删除「${selected?.title || "所选日程"}」的整个系列，包含重复实例。`}
               </p>
             ) : (
               <fieldset disabled={busy || !!intent}>
@@ -938,16 +1056,78 @@ export function CalendarPanel({
                 {mode === "update" ? (
                   <>
                     <p className="muted">
-                      修改作用于整个系列；保留来源中的重复规则与例外。
+                      {scope === "occurrence"
+                        ? "修改仅应用于这一次，保留原重复计划。"
+                        : "修改作用于整个系列，保留来源中的重复规则与例外。"}
                     </p>
-                    <label className="calendar-check">
-                      <input
-                        type="checkbox"
-                        checked={reschedule}
-                        onChange={(e) => setReschedule(e.target.checked)}
-                      />
-                      同时调整时间（当前仅单次日程）
+                    {scope === "occurrence" || !selected?.recurrenceId ? (
+                      <label className="calendar-check">
+                        <input
+                          type="checkbox"
+                          checked={reschedule}
+                          onChange={(e) => setReschedule(e.target.checked)}
+                        />
+                        同时调整时间
+                      </label>
+                    ) : null}
+                  </>
+                ) : null}
+                {mode === "create" ? (
+                  <>
+                    <label>
+                      重复
+                      <select
+                        aria-label="重复规则"
+                        value={frequency}
+                        onChange={(e) => {
+                          const next = e.target.value as typeof frequency;
+                          setFrequency(next);
+                          if (next && !eventZone)
+                            setEventZone(
+                              Intl.DateTimeFormat().resolvedOptions().timeZone,
+                            );
+                        }}
+                      >
+                        <option value="">不重复</option>
+                        <option value="DAILY">按天</option>
+                        <option value="WEEKLY">按周</option>
+                        <option value="MONTHLY">按月</option>
+                        <option value="YEARLY">按年</option>
+                      </select>
                     </label>
+                    {frequency ? (
+                      <>
+                        <label>
+                          重复间隔（{frequencyLabel[frequency]}）
+                          <input
+                            aria-label="重复间隔"
+                            type="number"
+                            min={1}
+                            max={12}
+                            step={1}
+                            required
+                            value={repeatInterval}
+                            onChange={(e) =>
+                              setRepeatInterval(e.target.valueAsNumber)
+                            }
+                          />
+                        </label>
+                        <label>
+                          重复总次数（含首次）
+                          <input
+                            type="number"
+                            min={2}
+                            max={104}
+                            step={1}
+                            required
+                            value={repeatCount}
+                            onChange={(e) =>
+                              setRepeatCount(e.target.valueAsNumber)
+                            }
+                          />
+                        </label>
+                      </>
+                    ) : null}
                   </>
                 ) : null}
                 {mode === "create" || reschedule ? (
@@ -956,6 +1136,7 @@ export function CalendarPanel({
                       <input
                         type="checkbox"
                         checked={allDay}
+                        disabled={scope === "occurrence"}
                         onChange={(e) => {
                           setAllDay(e.target.checked);
                           setStart(
@@ -972,8 +1153,23 @@ export function CalendarPanel({
                       />
                       全天
                     </label>
+                    {!allDay ? (
+                      <label>
+                        日程时区
+                        <input
+                          value={eventZone}
+                          maxLength={100}
+                          placeholder="留空使用本机时区"
+                          onChange={(e) => setEventZone(e.target.value)}
+                        />
+                      </label>
+                    ) : null}
                     <label>
-                      开始{!allDay ? "（本机时区）" : "日期"}
+                      {allDay
+                        ? "开始日期"
+                        : eventZone.trim()
+                          ? "开始（指定时区）"
+                          : "开始（本机时区）"}
                       <input
                         type={allDay ? "date" : "datetime-local"}
                         required
@@ -982,7 +1178,11 @@ export function CalendarPanel({
                       />
                     </label>
                     <label>
-                      {allDay ? "结束日期（不含当天）" : "结束（本机时区）"}
+                      {allDay
+                        ? "结束日期（不含当天）"
+                        : eventZone.trim()
+                          ? "结束（指定时区）"
+                          : "结束（本机时区）"}
                       <input
                         type={allDay ? "date" : "datetime-local"}
                         required
@@ -1041,7 +1241,9 @@ export function CalendarPanel({
                       ["applying", "recovery_required"].includes(intent.state)
                     ? "核对原操作"
                     : mode === "delete"
-                      ? "确认删除系列"
+                      ? scope === "occurrence"
+                        ? "确认取消本次"
+                        : "确认删除系列"
                       : executor === "manual"
                         ? "保存日程"
                         : "确认并交给 AI"}

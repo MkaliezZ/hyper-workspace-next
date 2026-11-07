@@ -182,6 +182,89 @@ test("Calendar update preserves unedited properties and rejects stale ETags; del
   );
 });
 
+test("One occurrence binds the current expanded source version and updates the original series without deleting it", async () => {
+  const objectId = "synthetic-occurrence.ics";
+  const key = "alice/personal/" + objectId;
+  const series = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Fixture//EN",
+    "BEGIN:VEVENT",
+    "UID:synthetic-occurrence",
+    "DTSTAMP:20261101T000000Z",
+    "DTSTART:20261104T010000Z",
+    "DTEND:20261104T020000Z",
+    "SUMMARY:Original series",
+    "RRULE:FREQ=WEEKLY;COUNT=4",
+    "EXDATE:20261125T010000Z",
+    "END:VEVENT",
+    "END:VCALENDAR",
+    "",
+  ].join("\r\n");
+  fixture.objects.set(key, { ical: series, version: 1 });
+  fixture.mode = "ok";
+  fixture.expand = (ical) => {
+    if (ical !== series && !ical.includes("UID:synthetic-occurrence"))
+      return ical;
+    return series
+      .replace("DTSTART:20261104T010000Z", "DTSTART:20261111T010000Z")
+      .replace("DTEND:20261104T020000Z", "DTEND:20261111T020000Z")
+      .replace("RRULE:FREQ=WEEKLY;COUNT=4", "RECURRENCE-ID:20261111T010000Z")
+      .replace("EXDATE:20261125T010000Z\r\n", "");
+  };
+  try {
+    const plan = {
+      operation: "update",
+      scope: "occurrence",
+      calendarId: "personal",
+      objectId,
+      etag: '"v1"',
+      idempotencyKey: randomUUID(),
+      target: {
+        recurrenceId: "2026-11-11T01:00:00Z",
+        window: { start: "2026-11-11T00:00:00Z", end: "2026-11-12T00:00:00Z" },
+      },
+      change: { operation: "edit", patch: { title: "One instance" } },
+    };
+    const before = fixture.writes;
+    await assert.rejects(
+      service.prepare(actor(), {
+        ...plan,
+        target: { ...plan.target, recurrenceId: "2026-11-12T01:00:00Z" },
+      }),
+      /未找到本次/,
+    );
+    await assert.rejects(service.prepare(actor("bob"), plan), { status: 404 });
+    const edit = await service.prepare(actor(), plan);
+    assert.equal(fixture.writes, before);
+    const updated = await service.apply(actor(), edit.id);
+    assert.equal(updated.state, "succeeded");
+    assert.match(fixture.objects.get(key)!.ical, /SUMMARY:Original series/);
+    assert.match(fixture.objects.get(key)!.ical, /SUMMARY:One instance/);
+    await assert.rejects(
+      service.prepare(actor(), { ...plan, idempotencyKey: randomUUID() }),
+      /日程已更新/,
+    );
+    const cancel = await service.prepare(actor(), {
+      ...plan,
+      idempotencyKey: randomUUID(),
+      etag: updated.sourceEtag,
+      change: { operation: "cancel" },
+    });
+    const cancelled = await service.apply(actor(), cancel.id);
+    assert.equal(cancelled.state, "succeeded");
+    assert.equal(fixture.writes, before + 2);
+    const remaining = fixture.objects.get(key)!.ical;
+    assert.match(remaining, /RRULE:FREQ=WEEKLY;COUNT=4/);
+    assert.match(remaining, /EXDATE:20261125T010000Z/);
+    assert.match(remaining, /EXDATE:20261111T010000Z/);
+    assert.doesNotMatch(remaining, /SUMMARY:One instance|RECURRENCE-ID/);
+  } finally {
+    fixture.expand = undefined;
+    fixture.objects.delete(key);
+  }
+});
+
 test("Calendar response loss reconciles a completed source write, while an unobserved write is never replayed", async () => {
   const sent = await service.prepare(actor(), create());
   fixture.mode = "drop-after";
@@ -293,22 +376,18 @@ test("Calendar HTTP endpoints authenticate actor scope, reject invented identiti
   const port = (reserve.address() as { port: number }).port;
   await new Promise<void>((resolve) => reserve.close(() => resolve()));
   const origin = "http://127.0.0.1:" + port;
-  const child = spawn(
-    process.execPath,
-    ["--import", "tsx", "src/main.ts"],
-    {
-      cwd: new URL("../../apps/api/",import.meta.url),
-      env: {
-        ...process.env,
-        DATABASE_URL: url,
-        APP_ORIGIN: origin,
-        API_PORT: String(port),
-        API_HOST: "127.0.0.1",
-        SERVE_WEB: "false",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
+  const child = spawn(process.execPath, ["--import", "tsx", "src/main.ts"], {
+    cwd: new URL("../../apps/api/", import.meta.url),
+    env: {
+      ...process.env,
+      DATABASE_URL: url,
+      APP_ORIGIN: origin,
+      API_PORT: String(port),
+      API_HOST: "127.0.0.1",
+      SERVE_WEB: "false",
     },
-  );
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   child.stdout.on("data", () => {});
   child.stderr.on("data", () => {});
   try {

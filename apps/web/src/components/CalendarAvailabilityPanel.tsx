@@ -24,8 +24,11 @@ export function CalendarAvailabilityResults({
   return (
     <div className="calendar-availability-results">
       <p>
-        核对时间：{new Date(result.checkedAt).toLocaleString("zh-CN")} ·{" "}
-        {result.timeZone}
+        核对时间：
+        {new Date(result.checkedAt).toLocaleString("zh-CN", {
+          timeZone: result.timeZone,
+        })}{" "}
+        · {result.timeZone}
       </p>
       <p>
         {result.busy.length} 段占用，{result.conflicts.length}

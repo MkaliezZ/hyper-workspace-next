@@ -18,7 +18,7 @@ GET 要求 ETag。创建使用 If-None-Match:*，替换/删除要求确切强 ET
 
 协议用例 `tests/calendar-provider.test.ts` 覆盖权限、UID 与登录名不同、命名空间、多 propstat、限定时间范围、完整重复/时区内容、路径/DTD/大响应、条件写入、撤权/版本冲突、不明结果与不自动重放。首次用例发现 XML 换行规范化与 iCalendar CRLF 的差异，已在 REPORT 读取时恢复规范换行，保持主事件和例外内容；实际命令结果随提交更新。
 
-尚未完成：项目/任务关系、完整时区及重复规则/单次例外编辑、候选时段提交前复核、邀请与回复/取消、真实模型验收。新增迁移在隔离环境和 CI 验证。
+尚未完成：项目/任务关系、整组重复规则调整、候选时段提交前复核、邀请与回复/取消、真实模型验收。新增迁移在隔离环境和 CI 验证。
 
 技术依据：[RFC4791 CalDAV](https://www.rfc-editor.org/rfc/rfc4791.html)、[ICAL.js](https://github.com/kewisch/ical.js)。依赖锁定 ical.js 2.2.1，MPL-2.0，许可证清单随 lock 更新。
 
@@ -83,5 +83,15 @@ GET `/api/calendar/runs` 返回本人当前授权来源下最近20次日历Run�
 - 时间计算使用锁定的 `@js-temporal/polyfill@0.5.1`（ISC）。区间为左闭右开，全天事件按指定排期时区计算，支持跨午夜工作时段。暂定事件计入占用，已取消或透明事件跳过。夏令时导致工作时段边界缺失或重复时跳过相应工作窗口。 [CalDAV 时间范围与日历时区](https://www.rfc-editor.org/rfc/rfc4791.html)
 - 返回占用区间、重叠冲突、最多 20 个候选，以及来源核对时间、对象版本和时间疑点。用原始事件核对浮动时间及命名时区，再核对展开结果、来源身份、权限、日历时区定义和事件版本。遇到无法确定的时间，保留疑点并暂缓推荐。读取过程中来源变化时请刷新查询。候选观察不锁定时段，提交预约前还需要再次核对。
 - 本批复用 045 的计划与回执存储，无新增迁移。原生 DSH/Hermes 各调用一次创建、日历窗口读取、忙闲查询，以及一次被拒绝的目标注入。合计 8 次本机协议模型请求，2 次合成来源写入来自创建测试。真实供应商输出质量另行验收。
-- `4fa2a07` 的 verify、nextcloud-identity、deployment 均通过，真实来源 19 项包括修复后的日历入口。新增真实来源用例会核对实际重复日程和单次日程的占用，以及手动查询显示。 [上一提交 Actions](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/41833138371)
+- `4fa2a07` 的 verify、nextcloud-identity、deployment 均通过，真实来源 19 项包括修复后的日历入口。新增真实来源用例随后核对了重复日程和单次日程的实际占用，以及手动查询结果。 [4fa2a07 Actions](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/41833138371)
 - 本地通过 97 项单元、273 项 PostgreSQL/HTTP、6 项日历 Chromium 界面，以及类型检查、构建、依赖清单和首阶段快照校验。重新启动测试环境时，首轮整库回归遇到测试 PostgreSQL 未运行。新建仅监听回环的独立测试库后整库通过。 [桌面忙闲查询](images/calendar-availability-desktop.png) · [手机 AI 回执](images/calendar-availability-mobile.png)
+
+- 忙闲查询提交 `db963fa` 的三个 Actions 任务均通过。常规任务含 97 单元、273 PostgreSQL/HTTP、10 原生运行和 84 Chromium。真实 Nextcloud 19 项和容器 7 项均通过。 [db963fa Actions](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42321513248)
+
+
+## 重复日程与单次例外
+
+- 新建可选按天、周、月或年重复，间隔 1 至 12，总次数 2 至 104，含第一次。重复日程在五年内结束。定时日程支持明确的 IANA 时区，保存来源所需的时区定义与过渡，跨夏令时保持所选时区的开始时刻。遇到不存在或重复出现的墙上时间，要求员工改选。全天仍使用日期及排他的结束边界。 [iCalendar 重复规则](https://www.rfc-editor.org/rfc/rfc5545.html#section-3.8.5.3)
+- 从周视图选择“修改本次”或“取消本次”。后端先用有界来源展开结果核对当前对象、版本和原始实例标识，然后只更新该次例外。改期保留原 `RECURRENCE-ID`；取消使用 `EXDATE`，并移除同一次已移动的例外。其他实例和例外继续保留。来源时区无法核实或遇到 `RANGE` 例外时要求在来源日历处理。 [iCalendar 实例标识](https://www.rfc-editor.org/rfc/rfc5545.html#section-3.8.4.4)
+- 人工与 DSH/Hermes 继续走同一意图、权限、条件写入及回执。单次变更在命令和 AI 回执中区分修改与取消。无新增迁移。整组重复规则重设、涉及参会人的日程和回复另行实现。
+- 本地通过 99 项单元、274 项 PostgreSQL/HTTP、6 项日历 Chromium 用例、类型检查和构建。原生 DSH/Hermes 使用协议模型共 10 次请求，4 次合成来源写入，其中 2 次新建重复日程，均由宿主读回。真实 Nextcloud 测试已加入单次改期再取消、保留其他实例、带夏令时的重复日程展开断言，其结果以本批对应 Actions 为准。 [手机重复规则设置](images/calendar-recurrence-mobile.png)

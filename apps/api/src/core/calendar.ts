@@ -23,6 +23,7 @@ import { stableDigest } from "./credentials.js";
 import {
   createCalendarObject,
   patchCalendarObject,
+  patchCalendarOccurrence,
   calendarObjectDigest,
   calendarCommandMarker,
 } from "./calendar-codec.js";
@@ -231,8 +232,38 @@ export class CalendarService {
       );
       calendarUid(original.ical, true);
       title = "所选日程";
-      if (input.operation === "update")
-        desired = patchCalendarObject(original.ical, input.patch, id);
+      if (input.operation === "update") {
+        if (input.scope === "series")
+          desired = patchCalendarObject(original.ical, input.patch, id);
+        else {
+          const selected = (
+            await source.provider.occurrences(
+              input.calendarId,
+              input.target.window,
+            )
+          ).find((object) => object.objectId === original.objectId);
+          if (
+            !selected ||
+            selected.etag !== original.etag ||
+            selected.uid !== original.uid
+          )
+            throw new ConflictException(
+              "本次日程已更新或不在所选窗口，请重新读取。",
+            );
+          const occurrence = calendarOccurrences([selected]).find(
+            (event) => event.recurrenceId === input.target.recurrenceId,
+          );
+          if (!occurrence)
+            throw new ConflictException("当前来源窗口内未找到本次重复日程。");
+          title = occurrence.title || "所选日程";
+          desired = patchCalendarOccurrence(
+            original.ical,
+            occurrence,
+            input.change,
+            id,
+          );
+        }
+      }
     }
     await this.recheck(s, source, input.calendarId);
     const commandId = await this.db.tx(async (c) => {

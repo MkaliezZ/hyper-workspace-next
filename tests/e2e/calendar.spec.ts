@@ -263,7 +263,7 @@ test("Calendar desktop/mobile manual create and update use durable intents and r
       plan,
       operation: plan.operation,
       calendarId: plan.calendarId,
-      objectId: plan.operation === "create" ? "new.ics" : plan.objectId,
+      objectId: plan.operation === "create" ? id + ".ics" : plan.objectId,
       state: "prepared",
       title: plan.operation === "create" ? plan.draft.title : "所选日程",
       error: null,
@@ -304,8 +304,24 @@ test("Calendar desktop/mobile manual create and update use durable intents and r
         transparency: "opaque",
         truncatedFields: [],
       });
-    if (receipt.plan.operation === "update")
-      events[0]!.title = receipt.plan.patch.title!;
+    const plan = receipt.plan;
+    if (plan.operation === "update") {
+      if (plan.scope === "series") events[0]!.title = plan.patch.title!;
+      else {
+        const index = events.findIndex(
+          (event) =>
+            event.objectId === plan.objectId &&
+            event.recurrenceId === plan.target.recurrenceId,
+        );
+        expect(index).toBeGreaterThanOrEqual(0);
+        if (plan.change.operation === "cancel") events.splice(index, 1);
+        else {
+          const event = events[index]!;
+          event.title = plan.change.patch.title!;
+          event.etag = '"v2"';
+        }
+      }
+    }
     receipt.state = "succeeded";
     receipt.observedResult = "matched";
     receipt.sourceEtag = '"v1"';
@@ -359,6 +375,103 @@ test("Calendar desktop/mobile manual create and update use durable intents and r
   await page.screenshot({
     path: "/tmp/hyper-next-calendar-mobile.png",
     fullPage: false,
+  });
+  events.push(
+    {
+      ...events[0]!,
+      objectId: "weekly.ics",
+      recurrenceId: "2026-11-04T01:00:00Z",
+      title: "重复日程第一场",
+    },
+    {
+      ...events[0]!,
+      objectId: "weekly.ics",
+      recurrenceId: "2026-11-05T01:00:00Z",
+      title: "重复日程第二场",
+      start: {
+        kind: "instant",
+        value: "2026-11-05T01:00:00.000Z",
+        timeZone: "UTC",
+      },
+      end: {
+        kind: "instant",
+        value: "2026-11-05T02:00:00.000Z",
+        timeZone: "UTC",
+      },
+    },
+  );
+  await panel.getByRole("button", { name: "刷新", exact: true }).click();
+  const recurring = (name: string) =>
+    panel
+      .locator(".calendar-event")
+      .filter({ has: page.getByRole("heading", { name, exact: true }) });
+  await recurring("重复日程第一场")
+    .getByRole("button", { name: "修改本次", exact: true })
+    .click();
+  const one = page.getByRole("dialog", {
+    name: "修改本次重复日程",
+    exact: true,
+  });
+  await one.getByLabel("日程标题", { exact: true }).fill("仅本次更新");
+  await one.getByRole("button", { name: "保存日程", exact: true }).click();
+  await expect(one).not.toBeVisible();
+  expect(receipts[0]?.plan).toMatchObject({
+    operation: "update",
+    scope: "occurrence",
+    etag: '"v1"',
+    target: { recurrenceId: "2026-11-04T01:00:00Z" },
+    change: { operation: "edit", patch: { title: "仅本次更新" } },
+  });
+  await recurring("仅本次更新")
+    .getByRole("button", { name: "取消本次", exact: true })
+    .click();
+  const cancelOne = page.getByRole("dialog", {
+    name: "取消本次重复日程",
+    exact: true,
+  });
+  await cancelOne
+    .getByRole("button", { name: "确认取消本次", exact: true })
+    .click();
+  await expect(cancelOne).not.toBeVisible();
+  expect(receipts[0]?.plan).toMatchObject({
+    operation: "update",
+    scope: "occurrence",
+    etag: '"v2"',
+    target: { recurrenceId: "2026-11-04T01:00:00Z" },
+    change: { operation: "cancel" },
+  });
+  await expect(recurring("仅本次更新")).toHaveCount(0);
+  await expect(recurring("重复日程第二场")).toBeVisible();
+  await panel.getByRole("button", { name: "新建日程", exact: true }).click();
+  await dialog
+    .getByLabel("日程标题", { exact: true })
+    .fill("指定时区的重复日程");
+  await dialog.getByLabel("重复规则", { exact: true }).selectOption("WEEKLY");
+  await dialog.getByLabel("日程时区", { exact: true }).fill("America/New_York");
+  await dialog.getByLabel("重复总次数（含首次）", { exact: true }).fill("3");
+  await dialog
+    .getByLabel("开始（指定时区）", { exact: true })
+    .fill("2027-03-07T09:00");
+  await dialog
+    .getByLabel("结束（指定时区）", { exact: true })
+    .fill("2027-03-07T10:00");
+  await page.screenshot({
+    path: "/tmp/hyper-next-calendar-recurrence-mobile.png",
+  });
+  await dialog.getByRole("button", { name: "保存日程", exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  expect(receipts[0]?.plan).toMatchObject({
+    operation: "create",
+    draft: {
+      title: "指定时区的重复日程",
+      repeat: { frequency: "WEEKLY", interval: 1, count: 3 },
+      interval: {
+        kind: "zoned",
+        timeZone: "America/New_York",
+        start: "2027-03-07T09:00:00",
+        end: "2027-03-07T10:00:00",
+      },
+    },
   });
   allowed = false;
   await panel.getByRole("button", { name: "刷新", exact: true }).click();

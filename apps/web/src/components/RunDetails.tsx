@@ -63,6 +63,10 @@ const actionLabels: Record<PlannedAction["tool"], string> = {
   "file.reading.save": "保存文档解读",
 };
 function receiptLabel(receipt: Record<string, unknown>) {
+  if (receipt.tool === "calendar.manage") {
+    if (receipt.occurrenceChange === "edit") return "修改本次重复日程";
+    if (receipt.occurrenceChange === "cancel") return "取消本次重复日程";
+  }
   if (
     receipt.tool === "method.manage" &&
     typeof receipt.operation === "string"
