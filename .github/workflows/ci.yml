@@ -140,7 +140,7 @@ jobs:
 
   office:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     services:
       postgres:
         image: pgvector/pgvector:pg17@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d
@@ -189,6 +189,8 @@ jobs:
           npm run test:nextcloud -- office.spec.ts office-collaboration.spec.ts
       - name: Verify the same Office core for editable copies
         run: bash scripts/ci/office-batch.sh
+      - name: Verify reviewed copies against real Nextcloud and the editor
+        run: bash scripts/ci/office-tools-source.sh
       - if: failure()
         run: |
           if docker inspect hyper-collabora-test >/dev/null 2>&1; then
