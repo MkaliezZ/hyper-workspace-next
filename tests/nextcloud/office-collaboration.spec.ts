@@ -175,9 +175,17 @@ test("Two real Office users preserve simultaneous edits and shared authored comm
       .locator(".modify-annotation .cool-annotation-textarea")
       .pressSequentially(markers.comment);
     await annotation.locator('[value="Save"]').click();
-    await expect(bob.frame.locator(".cool-annotation-content")).toContainText(
-      markers.comment,
-    );
+    await expect
+      .poll(
+        async () =>
+          (
+            await bob.frame
+              .locator(".cool-annotation-content")
+              .allTextContents()
+          ).some((text) => text.includes(markers.comment)),
+        { message: "The other editor must receive the author's comment" },
+      )
+      .toBe(true);
     await bob.frame.locator("#comment-annotation-menu-1").click();
     await bob.frame
       .locator(".ui-combobox-entry")
@@ -187,9 +195,19 @@ test("Two real Office users preserve simultaneous edits and shared authored comm
       .locator("#annotation-reply-textarea-1")
       .pressSequentially(markers.reply);
     await bob.frame.locator("#annotation-reply-1").click();
-    await expect(
-      alice.frame.locator(".cool-annotation-content").last(),
-    ).toContainText(markers.reply);
+    await expect
+      .poll(
+        async () =>
+          (
+            await alice.frame
+              .locator(".cool-annotation-content")
+              .allTextContents()
+          )
+            .at(-1)
+            ?.includes(markers.reply) === true,
+        { message: "The author must receive the collaborator's reply" },
+      )
+      .toBe(true);
     await bob.editor.keyboard.press("Control+s");
     await verify({
       text: [markers.alice, markers.bob],
