@@ -12,6 +12,11 @@ import { CalendarService } from "../../apps/api/src/core/calendar.js";
 import { Vault } from "../../apps/api/src/core/credentials.js";
 import { requireNextcloud } from "../../apps/api/src/providers/nextcloud.js";
 import { CalDavFixture } from "../fixtures/caldav.js";
+import ICAL from "ical.js";
+import {
+  expandMeetingFixture,
+  meetingOverride,
+} from "../fixtures/calendar-meetings.js";
 const url = process.env.TEST_DATABASE_URL;
 if (!url || !new URL(url).pathname.endsWith("_test"))
   throw Error("Isolated _test database required");
@@ -589,6 +594,187 @@ test("Only the attendee can reply and only the organizer can cancel a current me
       /已经取消/,
     );
   } finally {
+    fixture.objects.delete(key);
+    fixture.objects.delete(copy);
+    fixture.addresses.clear();
+  }
+});
+
+test("Recurring meeting replies verify every exception; whole-series reschedule and lost writes retain scoped facts", async () => {
+  fixture.addresses.set("alice", "alice@example.invalid");
+  fixture.addresses.set("bob", "bob@example.invalid");
+  const input = create();
+  assert.equal(input.operation, "create");
+  if (input.operation !== "create")
+    throw new Error("Fixture creation required");
+  const prepared = await service.prepare(actor(), {
+    ...input,
+    invitees: ["bob"],
+    draft: {
+      ...input.draft,
+      repeat: { frequency: "WEEKLY", interval: 1, count: 3 },
+    },
+  });
+  await service.apply(actor(), prepared.id);
+  const key = "alice/personal/" + prepared.objectId,
+    copy = "bob/personal/" + prepared.objectId;
+  const original = fixture.objects.get(key)!;
+  original.ical = meetingOverride(
+    original.ical,
+    "2026-11-11T01:00:00Z",
+    "2026-11-11T05:00:00Z",
+    "2026-11-11T06:00:00Z",
+  );
+  original.version++;
+  fixture.objects.set(copy, { ...original });
+  fixture.expand = expandMeetingFixture;
+  const base = {
+    calendarId: "personal",
+    objectId: prepared.objectId,
+    operation: "update",
+    scope: "meeting",
+  };
+  const version = (which: string) =>
+    '"v' + fixture.objects.get(which)!.version + '"';
+  const target = {
+    scope: "occurrence",
+    recurrenceId: "2026-11-11T01:00:00Z",
+    window: { start: "2026-11-11T00:00:00Z", end: "2026-11-12T00:00:00Z" },
+  };
+  try {
+    const before = fixture.writes;
+    await assert.rejects(
+      service.prepare(actor("bob"), {
+        ...base,
+        etag: version(copy),
+        idempotencyKey: randomUUID(),
+        change: {
+          operation: "reply",
+          response: "DECLINED",
+          target: { ...target, recurrenceId: "2026-11-12T01:00:00Z" },
+        },
+      }),
+      /未找到本次/,
+    );
+    const reply = await service.prepare(actor("bob"), {
+      ...base,
+      etag: version(copy),
+      idempotencyKey: randomUUID(),
+      change: { operation: "reply", response: "DECLINED", target },
+    });
+    assert.equal(fixture.writes, before);
+    await assert.rejects(service.get(actor(), reply.id), /不存在/);
+    const saved = await service.apply(actor("bob"), reply.id);
+    assert.equal(saved.state, "succeeded");
+    assert.deepEqual(saved.meeting?.responses, [
+      { recurrenceId: null, response: "needs_action" },
+      { recurrenceId: target.recurrenceId, response: "declined" },
+    ]);
+    const query = {
+      calendarId: base.calendarId,
+      objectId: base.objectId,
+      etag: version(copy),
+      target: { recurrenceId: target.recurrenceId, window: target.window },
+    };
+    assert.equal(
+      (await service.meeting(actor("bob"), query)).selectedResponse,
+      "declined",
+    );
+    const whole = await service.prepare(actor("bob"), {
+      ...base,
+      etag: version(copy),
+      idempotencyKey: randomUUID(),
+      change: {
+        operation: "reply",
+        response: "ACCEPTED",
+        target: { scope: "series" },
+      },
+    });
+    let expected: string | undefined;
+    fixture.afterWrite = async () => {
+      const stored = fixture.objects.get(copy)!;
+      expected = stored.ical;
+      const root = new ICAL.Component(ICAL.parse(stored.ical));
+      root
+        .getAllSubcomponents("vevent")[1]!
+        .getFirstProperty("attendee")!
+        .setParameter("partstat", "DECLINED");
+      stored.ical = root.toString() + "\r\n";
+    };
+    const uncertain = await service.apply(actor("bob"), whole.id);
+    assert.equal(
+      uncertain.state,
+      "recovery_required",
+      "Master accepted alone is not a verified series reply",
+    );
+    assert.equal(fixture.writes, before + 2);
+    await service.apply(actor("bob"), whole.id);
+    assert.equal(
+      fixture.writes,
+      before + 2,
+      "Unknown outcome cannot issue another PUT",
+    );
+    fixture.objects.get(copy)!.ical = expected!;
+    assert.equal(
+      (await service.reconcile(actor("bob"), whole.id)).state,
+      "succeeded",
+    );
+    assert.equal(fixture.writes, before + 2);
+    const move = await service.prepare(actor(), {
+      ...base,
+      etag: version(key),
+      idempotencyKey: randomUUID(),
+      change: {
+        operation: "reschedule_series",
+        exceptions: "preserve_overrides",
+        interval: {
+          kind: "timed",
+          start: "2026-11-05T02:00:00Z",
+          end: "2026-11-05T03:00:00Z",
+        },
+      },
+    });
+    fixture.mode = "drop-after";
+    const moved = await service.apply(actor(), move.id);
+    assert.equal(
+      moved.state,
+      "succeeded",
+      "Lost response is recovered from one conditional write",
+    );
+    assert.match(
+      fixture.objects.get(key)!.ical,
+      /RECURRENCE-ID:20261112T020000Z/,
+    );
+    assert.match(fixture.objects.get(key)!.ical, /DTSTART:20261111T050000Z/);
+    assert.equal(fixture.writes, before + 3);
+    await assert.rejects(
+      service.prepare(actor(), {
+        ...base,
+        etag: '"v1"',
+        idempotencyKey: randomUUID(),
+        change: { operation: "cancel" },
+      }),
+      /日程已更新/,
+    );
+    fixture.mode = "ok";
+    const blocked = await service.prepare(actor("bob"), {
+      ...base,
+      etag: version(copy),
+      idempotencyKey: randomUUID(),
+      change: {
+        operation: "reply",
+        response: "TENTATIVE",
+        target: { scope: "series" },
+      },
+    });
+    fixture.people.get("bob")!.write = false;
+    await assert.rejects(service.apply(actor("bob"), blocked.id), /权限/);
+    assert.equal(fixture.writes, before + 3);
+  } finally {
+    fixture.people.get("bob")!.write = true;
+    fixture.expand = undefined;
+    fixture.afterWrite = undefined;
+    fixture.mode = "ok";
     fixture.objects.delete(key);
     fixture.objects.delete(copy);
     fixture.addresses.clear();

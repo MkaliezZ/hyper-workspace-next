@@ -153,6 +153,15 @@ export function CalendarInvitationFacts({
         <li key={entry.employeeUid}>
           {entry.employeeUid} · {delivery[entry.delivery]} ·{" "}
           {response[entry.response]}
+          {entry.instances?.length ? (
+            <ul aria-label={`${entry.employeeUid} 单次回复`}>
+              {entry.instances.map((instance) => (
+                <li key={instance.recurrenceId}>
+                  {instance.recurrenceId} · {response[instance.response]}
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </li>
       ))}
     </ul>
@@ -174,7 +183,26 @@ export function CalendarMeetingFacts({
             : "您是参会人"}
       </p>
       {meeting.ownResponse ? (
-        <p>本人回复：{response[meeting.ownResponse]}</p>
+        <p>
+          本人回复：{response[meeting.ownResponse]}
+          {meeting.responses && meeting.responses.length > 1
+            ? "（系列默认）"
+            : ""}
+        </p>
+      ) : null}
+      {meeting.selectedResponse ? (
+        <p>所选本次回复：{response[meeting.selectedResponse]}</p>
+      ) : null}
+      {meeting.responses?.some((item) => item.recurrenceId !== null) ? (
+        <ul aria-label="本人单次参会回复">
+          {meeting.responses
+            .filter((item) => item.recurrenceId !== null)
+            .map((item) => (
+              <li key={item.recurrenceId}>
+                {item.recurrenceId} · {response[item.response]}
+              </li>
+            ))}
+        </ul>
       ) : null}
       {meeting.invitations ? (
         <CalendarInvitationFacts invitations={meeting.invitations} />

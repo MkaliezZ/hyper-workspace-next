@@ -4,6 +4,7 @@ import type {
   CalendarCommandReceipt,
   CalendarLinkChange,
   CalendarOccurrence,
+  CalendarMeeting,
 } from "@hyper/contracts/calendar";
 async function start(
   page: Page,
@@ -29,6 +30,242 @@ async function start(
     .click();
   return page.getByRole("region", { name: "企业日历", exact: true });
 }
+
+for (const role of ["organizer", "attendee"] as const)
+  test(`Recurring meeting ${role} uses the master anchor or an explicit occurrence reply scope`, async ({
+    page,
+  }, testInfo) => {
+    // Explicit HTTP fixtures: this UI scenario needs no live source or database.
+    await page.route("**/api/**", (route) => route.fulfill({ json: [] }));
+    const project = {
+      id: "85000000-0000-4000-8000-000000000010",
+      conversationId: "85000000-0000-4000-8000-000000000011",
+      name: "合成日历项目",
+      goal: "核对会议操作",
+    };
+    await page.route("**/api/workspace", (route) =>
+      route.fulfill({
+        json: {
+          user: {
+            id: "85000000-0000-4000-8000-000000000012",
+            workspaceId: "85000000-0000-4000-8000-000000000013",
+            name: "合成员工",
+            role: "member",
+            demo: false,
+          },
+          projects: [project],
+          project,
+          messages: [],
+          tasks: [],
+          artifacts: [],
+          engines: {},
+        },
+      }),
+    );
+    await page.route("**/api/auth/status", (route) =>
+      route.fulfill({
+        json: { demoEnabled: false, nextcloudConfigured: true },
+      }),
+    );
+    const event: CalendarOccurrence = {
+      calendarId: "personal",
+      objectId: "series-meeting.ics",
+      etag: '"v7"',
+      uid: "series-meeting",
+      recurrenceId: "2026-11-11T09:00:00Z",
+      title: "整组会议验收",
+      description: "特殊单次安排",
+      location: "会议室",
+      start: {
+        kind: "instant",
+        value: "2026-11-11T15:00:00.000Z",
+        timeZone: "UTC",
+      },
+      end: {
+        kind: "instant",
+        value: "2026-11-11T16:00:00.000Z",
+        timeZone: "UTC",
+      },
+      status: "confirmed",
+      transparency: "opaque",
+      meeting: true,
+      truncatedFields: [],
+    };
+    const meeting: CalendarMeeting = {
+      role,
+      canUpdate: true,
+      cancelled: false,
+      title: event.title,
+      ...(role === "attendee"
+        ? {
+            ownResponse: "accepted" as const,
+            selectedResponse: "tentative" as const,
+            selectedRecurrenceId: event.recurrenceId!,
+            responses: [
+              { recurrenceId: null, response: "accepted" as const },
+              {
+                recurrenceId: event.recurrenceId,
+                response: "tentative" as const,
+              },
+            ],
+          }
+        : {}),
+      series: {
+        interval: {
+          kind: "timed",
+          start: "2026-11-04T09:00:00Z",
+          end: "2026-11-04T10:00:00Z",
+        },
+        repeat: { frequency: "WEEKLY", interval: 1, count: 3 },
+        exceptionCount: 1,
+        canReschedule: true,
+      },
+    };
+    let receipt: CalendarCommandReceipt | undefined,
+      writes = 0;
+    await page.route("**/api/calendar/calendars", (route) =>
+      route.fulfill({
+        json: [
+          {
+            id: "personal",
+            name: "合成日历",
+            canRead: true,
+            canCreate: true,
+            canUpdate: true,
+            canDelete: true,
+          },
+        ],
+      }),
+    );
+    await page.route("**/api/calendar/query", (route) =>
+      route.fulfill({ json: [event] }),
+    );
+    await page.route("**/api/calendar/meeting", (route) => {
+      expect(route.request().postDataJSON()).toMatchObject({
+        calendarId: event.calendarId,
+        objectId: event.objectId,
+        etag: event.etag,
+        target: { recurrenceId: event.recurrenceId },
+      });
+      return route.fulfill({ json: meeting });
+    });
+    await page.route("**/api/calendar/commands", (route) => {
+      if (route.request().method() === "GET")
+        return route.fulfill({ json: receipt ? [receipt] : [] });
+      const plan = route.request().postDataJSON() as CalendarCommandInput;
+      expect(plan).toMatchObject({
+        operation: "update",
+        scope: "meeting",
+        objectId: event.objectId,
+        etag: event.etag,
+        change:
+          role === "organizer"
+            ? {
+                operation: "reschedule_series",
+                exceptions: "preserve_overrides",
+                interval: {
+                  kind: "timed",
+                  start: "2026-11-05T10:00:00Z",
+                  end: "2026-11-05T11:00:00Z",
+                },
+              }
+            : {
+                operation: "reply",
+                response: "DECLINED",
+                target: {
+                  scope: "occurrence",
+                  recurrenceId: event.recurrenceId,
+                },
+              },
+      });
+      receipt = {
+        id: "85000000-0000-4000-8000-000000000001",
+        operation: "update",
+        calendarId: event.calendarId,
+        objectId: event.objectId,
+        title: event.title,
+        plan,
+        state: "prepared",
+        error: null,
+        stopRequested: false,
+        sourceEtag: null,
+        observedResult: null,
+        acknowledgedAt: null,
+        createdAt: new Date().toISOString(),
+      };
+      return route.fulfill({ json: receipt });
+    });
+    await page.route("**/api/calendar/commands/*/apply", (route) => {
+      expect(route.request().postDataJSON()).toEqual({ confirmed: true });
+      writes++;
+      receipt = {
+        ...receipt!,
+        state: "succeeded",
+        sourceEtag: '"v8"',
+        observedResult: "matched",
+        meeting,
+      };
+      return route.fulfill({ json: receipt });
+    });
+    await page.goto("/");
+    await page
+      .getByRole("navigation", { name: "工作区导航" })
+      .getByRole("button", { name: "日历", exact: true })
+      .click();
+    const panel = page.getByRole("region", { name: "企业日历", exact: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await panel.getByLabel("起始日期", { exact: true }).fill("2026-11-11");
+    await panel
+      .getByRole("button", { name: "查看会议与回复", exact: true })
+      .click();
+    const dialog = page.getByRole("dialog", {
+      name: "会议与参会回复",
+      exact: true,
+    });
+    if (role === "organizer") {
+      await dialog
+        .getByLabel("会议操作", { exact: true })
+        .selectOption("reschedule_series");
+      await expect(
+        dialog.getByLabel("会议开始（指定时区）", { exact: true }),
+      ).toHaveValue("2026-11-04T09:00");
+      await expect(
+        dialog.getByLabel("会议时区", { exact: true }),
+      ).toBeDisabled();
+      await expect(dialog.getByText(/保留 1 个单次例外/)).toBeVisible();
+      await dialog
+        .getByLabel("会议开始（指定时区）", { exact: true })
+        .fill("2026-11-05T10:00");
+      await dialog
+        .getByLabel("会议结束（指定时区）", { exact: true })
+        .fill("2026-11-05T11:00");
+    } else {
+      await expect(
+        dialog.getByText("所选本次回复：暂定", { exact: true }),
+      ).toBeVisible();
+      await dialog
+        .getByLabel("会议操作", { exact: true })
+        .selectOption("DECLINED");
+      await dialog
+        .getByLabel("回复范围", { exact: true })
+        .selectOption("occurrence");
+      await expect(
+        dialog.getByRole("list", { name: "本人单次参会回复" }),
+      ).toContainText("2026-11-11T09:00:00Z");
+    }
+    expect(
+      await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth),
+    ).toBe(true);
+    await page.screenshot({
+      path: testInfo.outputPath(`calendar-series-${role}-mobile.png`),
+    });
+    expect(writes).toBe(0);
+    await dialog
+      .getByRole("button", { name: "确认提交会议操作", exact: true })
+      .click();
+    await expect(dialog).not.toBeVisible();
+    expect(writes).toBe(1);
+  });
 test("Calendar AI keeps one admission key after a lost receipt, uses the chosen engine and reopens its private run", async ({
   page,
 }) => {

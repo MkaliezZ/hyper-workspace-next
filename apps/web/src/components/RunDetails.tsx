@@ -91,6 +91,7 @@ function receiptLabel(receipt: Record<string, unknown>) {
     }
     if (receipt.seriesRuleAction === true) return "调整整组重复规则";
     if (receipt.meetingChange === "edit") return "调整会议";
+    if (receipt.meetingChange === "reschedule_series") return "整组会议改期";
     if (receipt.meetingChange === "reply") return "提交参会回复";
     if (receipt.meetingChange === "cancel") return "取消会议";
     if (receipt.occurrenceChange === "edit") return "修改本次重复日程";

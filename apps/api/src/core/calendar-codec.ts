@@ -143,8 +143,11 @@ export function patchCalendarObject(
   return changed;
 }
 
-export function readCalendarSeriesRule(ical: string): CalendarSeriesRule {
-  calendarUid(ical, true);
+export function readCalendarSeriesRule(
+  ical: string,
+  scheduling = false,
+): CalendarSeriesRule {
+  calendarUid(ical, scheduling ? "scheduling" : true);
   const master = meetingMaster(ical);
   const rules = master
     .getAllProperties("rrule")
@@ -502,6 +505,17 @@ export function invitationStatuses(
       participant?.getParameter("schedule-status") ?? "",
     ).match(/^([1-5]\.\d+)(?:;|$)/u)?.[1];
     const status = participant?.getParameter("partstat");
+    const instances = meetingResponses(
+      meetingMaster(actualIcal),
+      String(expected[index]),
+    ).filter(
+      (
+        entry,
+      ): entry is {
+        recurrenceId: string;
+        response: CalendarInvitationStatus["response"];
+      } => entry.recurrenceId !== null,
+    );
     return {
       employeeUid,
       delivery:
@@ -513,6 +527,7 @@ export function invitationStatuses(
               ? "rejected"
               : "unreported",
       response: participantResponse(status),
+      ...(instances.length ? { instances } : {}),
     };
   });
 }
@@ -529,6 +544,7 @@ function participantResponse(
 export function calendarMeeting(
   ical: string,
   address: string,
+  occurrence?: CalendarOccurrence,
 ): CalendarMeeting {
   const master = meetingMaster(ical);
   const organizers = master.getAllProperties("organizer");
@@ -540,6 +556,42 @@ export function calendarMeeting(
   const own = participants.filter((p) => p.getFirstValue() === address);
   if (role === "attendee" && own.length !== 1)
     throw new BadRequestException("当前员工不是可核实的会议参会人。");
+  const events = master.parent!.getAllSubcomponents("vevent");
+  const responses =
+    role === "attendee" ? meetingResponses(master, address) : undefined;
+  let selectedResponse: CalendarInvitationStatus["response"] | undefined;
+  if (occurrence && role === "attendee") {
+    const { current } = meetingOccurrence(master, occurrence, true);
+    const selected = (current ?? master)
+      .getAllProperties("attendee")
+      .filter((p) => p.getFirstValue() === address);
+    if (selected.length !== 1)
+      throw new BadRequestException("当前员工未被邀请参加本次会议。");
+    selectedResponse = participantResponse(
+      selected[0]!.getParameter("partstat"),
+    );
+  }
+  let series: CalendarMeeting["series"];
+  if (master.hasProperty("rrule")) {
+    try {
+      const rule = readCalendarSeriesRule(ical, true);
+      if (rule.simple) {
+        const value = sourceInterval(master);
+        series = {
+          interval: value,
+          repeat: rule.simple,
+          exceptionCount: rule.exceptionCount,
+          canReschedule:
+            !master.hasProperty("exrule") &&
+            !events.some((event) =>
+              event.getFirstProperty("recurrence-id")?.getParameter("range"),
+            ),
+        };
+      }
+    } catch {
+      /* Unresolved source rules remain readable, with no reschedule capability. */
+    }
+  }
   return {
     role,
     cancelled: master.getFirstPropertyValue("status") === "CANCELLED",
@@ -550,7 +602,296 @@ export function calendarMeeting(
     ...(role === "attendee"
       ? { ownResponse: participantResponse(own[0]!.getParameter("partstat")) }
       : {}),
+    ...(responses ? { responses } : {}),
+    ...(selectedResponse
+      ? { selectedResponse, selectedRecurrenceId: occurrence!.recurrenceId! }
+      : {}),
+    ...(series ? { series } : {}),
   };
+}
+
+function sourceInterval(component: Component): CalendarInterval {
+  const event = new ICAL.Event(component),
+    start = event.startDate,
+    end = event.endDate;
+  if (
+    !start ||
+    !end ||
+    start.isDate !== end.isDate ||
+    (!start.isDate &&
+      (start.zone.tzid === "floating" || end.zone.tzid === "floating"))
+  )
+    throw new BadRequestException("无法核实系列的起止时间与来源时区。");
+  return CalendarInterval.parse(
+    start.isDate
+      ? { kind: "all_day", start: start.toString(), end: end.toString() }
+      : start.zone === ICAL.Timezone.utcTimezone
+        ? {
+            kind: "timed",
+            start: start.toString(),
+            end: end.convertToZone(start.zone).toString(),
+          }
+        : {
+            kind: "zoned",
+            start: start.toString(),
+            end: end.convertToZone(start.zone).toString(),
+            timeZone: start.zone.tzid,
+          },
+  );
+}
+
+function meetingResponses(master: Component, address: string) {
+  const responses: NonNullable<CalendarMeeting["responses"]> = [];
+  const keys = new Set<string>();
+  for (const event of master.parent!.getAllSubcomponents("vevent")) {
+    const value = event.getFirstPropertyValue("recurrence-id");
+    if (
+      event !== master &&
+      (!(value instanceof ICAL.Time) ||
+        (!value.isDate && value.zone.tzid === "floating"))
+    )
+      throw new BadRequestException("来源例外的原始日期或时区无法核实。");
+    const key = value instanceof ICAL.Time ? recurrenceKey(value) : null;
+    if (keys.has(key ?? "master"))
+      throw new BadRequestException("来源存在多个相同日程例外。");
+    keys.add(key ?? "master");
+    const own = event
+      .getAllProperties("attendee")
+      .filter((p) => p.getFirstValue() === address);
+    if (own.length > 1)
+      throw new BadRequestException("来源参会身份重复，无法核实回复。");
+    if (own.length === 1)
+      responses.push({
+        recurrenceId: key,
+        response: participantResponse(own[0]!.getParameter("partstat")),
+      });
+  }
+  return responses.sort((a, b) =>
+    (a.recurrenceId ?? "").localeCompare(b.recurrenceId ?? ""),
+  );
+}
+
+/** The scheduling digest intentionally ignores PARTSTAT. Compare every own response separately. */
+export function calendarMeetingRepliesMatch(
+  expected: string,
+  actual: string,
+  address: string,
+) {
+  return (
+    JSON.stringify(meetingResponses(meetingMaster(expected), address)) ===
+    JSON.stringify(meetingResponses(meetingMaster(actual), address))
+  );
+}
+
+/** occurrence must come from a bounded expansion of this exact UID and ETag. */
+function meetingOccurrence(
+  master: Component,
+  occurrence: CalendarOccurrence,
+  allowCancelled = false,
+) {
+  if (
+    occurrence.uid !== master.getFirstPropertyValue("uid") ||
+    !occurrence.recurrenceId ||
+    (occurrence.status === "cancelled" && !allowCancelled) ||
+    !(master.hasProperty("rrule") || master.hasProperty("rdate"))
+  )
+    throw new BadRequestException("无法核实本次会议实例。");
+  const events = master.parent!.getAllSubcomponents("vevent");
+  if (
+    events.some((event) =>
+      event.getFirstProperty("recurrence-id")?.getParameter("range"),
+    )
+  )
+    throw new BadRequestException("含范围例外的会议须在来源日历中回复。");
+  const start = master.getFirstPropertyValue("dtstart");
+  const expanded = ICAL.Time.fromString(occurrence.recurrenceId, undefined);
+  if (
+    !(start instanceof ICAL.Time) ||
+    start.isDate !== expanded.isDate ||
+    (!start.isDate &&
+      (start.zone.tzid === "floating" || expanded.zone.tzid === "floating"))
+  )
+    throw new BadRequestException("本次会议的来源时区无法核实。");
+  const key = expanded.isDate ? expanded : expanded.convertToZone(start.zone);
+  if (recurrenceKey(key) !== recurrenceKey(expanded))
+    throw new BadRequestException("本次会议时区不能唯一定位。");
+  const matches = events.filter((event) => {
+    if (event === master) return false;
+    const value = event.getFirstPropertyValue("recurrence-id");
+    if (
+      !(value instanceof ICAL.Time) ||
+      value.isDate !== key.isDate ||
+      (!value.isDate && value.zone.tzid === "floating")
+    )
+      throw new BadRequestException("来源例外的原始日期或时区无法核实。");
+    return recurrenceKey(value) === recurrenceKey(key);
+  });
+  if (matches.length > 1)
+    throw new BadRequestException("来源存在多个相同会议例外。");
+  if (
+    !allowCancelled &&
+    matches[0]?.getFirstPropertyValue("status") === "CANCELLED"
+  )
+    throw new BadRequestException("本次会议已经取消。");
+  return { key, current: matches[0] };
+}
+
+function setTimeProperty(
+  component: Component,
+  name: string,
+  time: InstanceType<typeof ICAL.Time>,
+) {
+  const property = new ICAL.Property(name);
+  property.setValue(time);
+  if (!time.isDate && time.zone !== ICAL.Timezone.utcTimezone)
+    property.setParameter("tzid", time.zone.tzid);
+  component.addProperty(property);
+}
+
+function rescheduleMeeting(
+  master: Component,
+  value: CalendarInterval,
+  commandId: string,
+) {
+  const root = master.parent!,
+    raw = root.toString(),
+    rule = readCalendarSeriesRule(raw, true),
+    previous = sourceInterval(master);
+  if (!rule.simple || master.hasProperty("exrule"))
+    throw new BadRequestException("此来源重复规则须在来源日历中改期。");
+  if (
+    value.kind !== previous.kind ||
+    (value.kind === "zoned" &&
+      previous.kind === "zoned" &&
+      value.timeZone !== previous.timeZone)
+  )
+    throw new BadRequestException("整组改期须保留全天类型与原系列时区。");
+  if (value.start === previous.start && value.end === previous.end)
+    throw new BadRequestException("请修改系列首次时间后再确认改期。");
+  const events = root.getAllSubcomponents("vevent");
+  if (
+    events.some((event) =>
+      event.getFirstProperty("recurrence-id")?.getParameter("range"),
+    )
+  )
+    throw new BadRequestException("含范围例外的会议须在来源日历中改期。");
+  const enumerate = (component: Component, range: CalendarInterval) => {
+    const bound = recurrenceHorizon(range, rule.simple!),
+      start = new ICAL.Event(component).startDate;
+    const iterator = bound.rule!.iterator(start),
+      times: InstanceType<typeof ICAL.Time>[] = [];
+    for (let i = 0; i < rule.simple!.count; i++) {
+      const time = iterator.next();
+      if (!time) throw new BadRequestException("来源重复规则无法完整展开。");
+      if (
+        range.kind === "zoned" &&
+        Temporal.PlainDateTime.from(time.toString()).toZonedDateTime(
+          range.timeZone,
+          { disambiguation: "reject" },
+        ).epochMilliseconds !==
+          time.toUnixTime() * 1000
+      )
+        throw new ConflictException(
+          "来源时区定义未覆盖整组改期，请先在来源日历更新时区。",
+        );
+      times.push(time.clone());
+    }
+    return times;
+  };
+  const oldTimes = enumerate(master, previous);
+  const oldDuration = new ICAL.Event(master).duration;
+  interval(root, master, value, rule.simple);
+  const newTimes = enumerate(master, value);
+  const newDuration = new ICAL.Event(master).duration;
+  const oldByKey = new Map(oldTimes.map((time) => [recurrenceKey(time), time]));
+  const mapping = new Map(
+    oldTimes.map((time, index) => [recurrenceKey(time), newTimes[index]!]),
+  );
+  const destinationKeys = new Set(newTimes.map(recurrenceKey));
+  if (
+    mapping.size !== oldTimes.length ||
+    destinationKeys.size !== newTimes.length
+  )
+    throw new ConflictException("整组改期不能合并不同实例。");
+  // Explicit additional dates stay literal; reject overlap instead of silently merging instances.
+  for (const property of master.getAllProperties("rdate"))
+    for (const entry of property.getValues()) {
+      const time = entry instanceof ICAL.Period ? entry.start : entry;
+      if (
+        !(time instanceof ICAL.Time) ||
+        time.isDate !== newTimes[0]!.isDate ||
+        (!time.isDate && time.zone.tzid === "floating") ||
+        mapping.has(recurrenceKey(time)) ||
+        destinationKeys.has(recurrenceKey(time))
+      )
+        throw new ConflictException(
+          "附加日期与整组改期冲突，请先在来源日历处理。",
+        );
+      mapping.set(recurrenceKey(time), time);
+      destinationKeys.add(recurrenceKey(time));
+    }
+  const mapped = (value: unknown) => {
+    const time =
+      value instanceof ICAL.Time && mapping.get(recurrenceKey(value));
+    if (!time) throw new ConflictException("整组改期会丢失已有单次例外。");
+    return time;
+  };
+  const excluded = master
+    .getAllProperties("exdate")
+    .flatMap((p) => p.getValues())
+    .map(mapped);
+  master.removeAllProperties("exdate");
+  for (const time of excluded) setTimeProperty(master, "exdate", time);
+  const overrideKeys = new Set<string>();
+  const resetParticipants = (event: Component) => {
+    for (const attendee of event.getAllProperties("attendee"))
+      if (attendee.getFirstValue() !== organizerAddress) {
+        attendee.setParameter("partstat", "NEEDS-ACTION");
+        attendee.setParameter("rsvp", "TRUE");
+      }
+  };
+  const organizerAddress = master.getFirstPropertyValue("organizer");
+  for (const event of events)
+    if (event !== master) {
+      const oldKey = event.getFirstPropertyValue("recurrence-id");
+      const time = mapped(oldKey),
+        key = recurrenceKey(time);
+      if (overrideKeys.has(key))
+        throw new ConflictException("来源存在重复的单次例外。");
+      overrideKeys.add(key);
+      // A reply/text-only override is still on the ordinary series interval. Move it
+      // with the series; only an independently arranged interval stays literal.
+      const oldTime =
+        oldKey instanceof ICAL.Time
+          ? oldByKey.get(recurrenceKey(oldKey))
+          : undefined;
+      const oldEnd = oldTime?.clone();
+      oldEnd?.addDuration(oldDuration);
+      const actual = new ICAL.Event(event);
+      if (
+        oldTime &&
+        oldEnd &&
+        recurrenceKey(actual.startDate) === recurrenceKey(oldTime) &&
+        recurrenceKey(actual.endDate) === recurrenceKey(oldEnd)
+      ) {
+        const end = time.clone();
+        end.addDuration(newDuration);
+        for (const name of ["dtstart", "dtend", "duration"])
+          event.removeAllProperties(name);
+        setTimeProperty(event, "dtstart", time);
+        setTimeProperty(event, "dtend", end);
+        if (event.getFirstPropertyValue("status") !== "CANCELLED")
+          resetParticipants(event);
+      }
+      event.removeAllProperties("recurrence-id");
+      setTimeProperty(event, "recurrence-id", time);
+      // Preserve the explicitly arranged exception interval and its actual participant state.
+    }
+  resetParticipants(master);
+  for (const event of events) {
+    bumpSequence(event);
+    stamp(root, event, commandId);
+  }
 }
 
 type MeetingCommand = Extract<
@@ -562,12 +903,100 @@ export function patchCalendarMeeting(
   address: string,
   change: MeetingCommand["change"],
   commandId: string,
+  occurrence?: CalendarOccurrence,
 ) {
   const meeting = calendarMeeting(ical, address);
   if (meeting.cancelled) throw new BadRequestException("会议已经取消。");
   const root = new ICAL.Component(ICAL.parse(ical));
   const events = root.getAllSubcomponents("vevent");
-  for (const event of events) {
+  const master = events.find((event) => !event.hasProperty("recurrence-id"))!;
+  const organizer = master.getFirstPropertyValue("organizer");
+  if (
+    events.some(
+      (event) =>
+        event.getAllProperties("organizer").length !== 1 ||
+        event.getFirstPropertyValue("organizer") !== organizer,
+    )
+  )
+    throw new BadRequestException("来源会议例外的组织者身份无法核实。");
+  if (change.operation === "reschedule_series") {
+    if (meeting.role !== "organizer")
+      throw new BadRequestException("只有来源会议组织者可以整组改期。");
+    rescheduleMeeting(
+      master,
+      CalendarInterval.parse(change.interval),
+      commandId,
+    );
+    const changed = root.toString() + "\r\n";
+    calendarUid(changed, "scheduling");
+    return changed;
+  }
+  let targets = events;
+  if (change.operation === "reply") {
+    if (meeting.role !== "attendee")
+      throw new BadRequestException("仅可回复本人收到的会议邀请。");
+    meetingResponses(master, address);
+    if (
+      events.some((event) =>
+        event.getFirstProperty("recurrence-id")?.getParameter("range"),
+      )
+    )
+      throw new BadRequestException("含范围例外的会议须在来源日历中回复。");
+    if (change.target?.scope === "occurrence") {
+      if (!occurrence || occurrence.recurrenceId !== change.target.recurrenceId)
+        throw new BadRequestException("本次会议需先核对来源窗口。");
+      const { key, current } = meetingOccurrence(master, occurrence);
+      let exception = current;
+      if (!exception) {
+        exception = new ICAL.Component(structuredClone(master.toJSON()));
+        for (const name of ["rrule", "rdate", "exdate", "exrule"])
+          exception.removeAllProperties(name);
+        if (occurrence.start.kind === "date" && occurrence.end.kind === "date")
+          interval(root, exception, {
+            kind: "all_day",
+            start: occurrence.start.value,
+            end: occurrence.end.value,
+          });
+        else if (
+          occurrence.start.kind === "instant" &&
+          occurrence.end.kind === "instant"
+        )
+          interval(root, exception, {
+            kind: "timed",
+            start: occurrence.start.value,
+            end: occurrence.end.value,
+          });
+        else throw new BadRequestException("本次会议的时间无法核实。");
+        setTimeProperty(exception, "recurrence-id", key);
+        root.addSubcomponent(exception);
+      }
+      if (
+        exception
+          .getAllProperties("attendee")
+          .filter((p) => p.getFirstValue() === address).length !== 1
+      )
+        throw new BadRequestException("当前员工未被邀请参加本次会议。");
+      targets = [exception];
+    } else
+      targets = events.filter(
+        (event) =>
+          event.getFirstPropertyValue("status") !== "CANCELLED" &&
+          event
+            .getAllProperties("attendee")
+            .some((p) => p.getFirstValue() === address),
+      );
+    if (
+      !targets.some(
+        (event) =>
+          event
+            .getAllProperties("attendee")
+            .find((p) => p.getFirstValue() === address)!
+            .getParameter("partstat") !== change.response,
+      )
+    )
+      throw new BadRequestException("已保存相同参会回复。");
+  }
+  for (const event of targets) {
     if (change.operation !== "reply") {
       if (
         meeting.role !== "organizer" ||
@@ -590,15 +1019,9 @@ export function patchCalendarMeeting(
       }
       bumpSequence(event);
     } else {
-      if (meeting.role !== "attendee" || events.length !== 1)
-        throw new BadRequestException(
-          "仅可回复本人收到、没有单次例外的会议邀请。",
-        );
       const own = event
         .getAllProperties("attendee")
         .find((p) => p.getFirstValue() === address)!;
-      if (own.getParameter("partstat") === change.response)
-        throw new BadRequestException("已保存相同参会回复。");
       own.setParameter("partstat", change.response);
       own.setParameter("rsvp", "FALSE");
     }

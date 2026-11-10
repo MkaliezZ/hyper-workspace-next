@@ -250,7 +250,18 @@ export class CalendarRunService {
       ...(receipt.meeting ? { meeting: receipt.meeting } : {}),
       ...(receipt.plan.operation === "update" &&
       receipt.plan.scope === "meeting"
-        ? { meetingChange: receipt.plan.change.operation }
+        ? {
+            meetingChange: receipt.plan.change.operation,
+            ...(receipt.plan.change.operation === "reply"
+              ? {
+                  meetingReplyScope:
+                    receipt.plan.change.target?.scope ?? "series",
+                  ...(receipt.plan.change.target?.scope === "occurrence"
+                    ? { recurrenceId: receipt.plan.change.target.recurrenceId }
+                    : {}),
+                }
+              : {}),
+          }
         : {}),
       ...(receipt.plan.operation === "update" &&
       receipt.plan.scope === "occurrence"
