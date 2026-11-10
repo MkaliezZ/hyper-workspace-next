@@ -757,6 +757,16 @@ class ApiController {
   @Post("ocr/lookup") async lookupOcr(@Req() req: Request, @Body() body: unknown) {
     return new OcrRunService(db).review(await subject(req), OcrSource.parse(body));
   }
+  @Post("ocr/source-preview") async previewOcrSource(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Body() body: unknown,
+  ) {
+    const result = await new OcrService(db).preview(await subject(req), OcrSource.parse(body));
+    res.setHeader("Content-Security-Policy", "sandbox");
+    res.setHeader("Content-Disposition", "inline");
+    return res.status(200).type(result.mime).send(result.bytes);
+  }
   @Post("ocr/runs") async startOcrRun(@Req() req: Request, @Body() body: unknown) {
     const run = await service.startOcrRun(await subject(req), OcrRunInput.parse(body));
     await queue.enqueue(run.id);

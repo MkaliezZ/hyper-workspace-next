@@ -41,6 +41,8 @@ export function OcrPanel({
   const [modelId, setModelId] = useState("");
   const [runId, setRunId] = useState("");
   const [history, setHistory] = useState<OcrHistory[]>([]);
+  const [preview, setPreview] = useState<string | null>(null);
+  const previewRequest = useRef<AbortController>(null);
   const runState = run?.id === runId ? run.state : undefined;
   const running = runState === "queued" || runState === "running";
   const engine = executor === "manual" ? undefined : engines[executor];
@@ -58,6 +60,14 @@ export function OcrPanel({
 
   function show(next: OcrResult | null) {
     setResult(next);
+    if (!next) {
+      if (previewRequest.current) {
+        previewRequest.current.abort();
+        previewRequest.current = null;
+        setBusy(false);
+      }
+      setPreview(null);
+    }
     setPrevious(null);
     setTexts(next?.content.blocks.map((block) => block.text) ?? []);
     setSelectedBlock(0);
@@ -95,19 +105,35 @@ export function OcrPanel({
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      previewRequest.current?.abort();
+    };
   }, [file, page, reload]);
 
   useEffect(() => {
-    if (!resultId || !resultRevision) return;
+    if ((!resultId || !resultRevision) && !preview) return;
     const controller = new AbortController();
     let checking = false;
     const timer = setInterval(() => {
       if (checking || document.visibilityState !== "visible") return;
       checking = true;
-      void api("/ocr/documents/" + resultId + "?revision=" + resultRevision, {
-        signal: controller.signal,
-      })
+      const current =
+        resultId && resultRevision
+          ? api("/ocr/documents/" + resultId + "?revision=" + resultRevision, {
+              signal: controller.signal,
+            })
+          : api("/ocr/lookup", {
+              method: "POST",
+              body: JSON.stringify({
+                path: file.path,
+                expectedId: file.id,
+                expectedEtag: file.etag,
+                page,
+              }),
+              signal: controller.signal,
+            });
+      void current
         .catch((e) => {
           if (!controller.signal.aborted) {
             show(null);
@@ -123,7 +149,13 @@ export function OcrPanel({
       controller.abort();
       clearInterval(timer);
     };
-  }, [resultId, resultRevision]);
+  }, [resultId, resultRevision, preview, file, page]);
+  useEffect(
+    () => () => {
+      if (preview) URL.revokeObjectURL(preview);
+    },
+    [preview],
+  );
 
   useEffect(() => {
     if (executor === "manual") return;
@@ -169,6 +201,45 @@ export function OcrPanel({
       setError(e instanceof Error ? e.message : "暂时无法核对识别结果。");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function previewOriginal() {
+    const controller = new AbortController();
+    previewRequest.current = controller;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch("/api/ocr/source-preview", {
+        method: "POST",
+        credentials: "include",
+        signal: controller.signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          path: file.path,
+          expectedId: file.id,
+          expectedEtag: file.etag,
+          page,
+        }),
+      });
+      if (!response.ok) {
+        if ([401, 403, 404, 409, 410, 412].includes(response.status))
+          show(null);
+        setError("原件暂不可查看，请刷新并核对来源权限。");
+        return;
+      }
+      if (response.headers.get("content-type")?.split(";")[0] !== file.mime)
+        throw new Error("原件类型与来源声明不一致。");
+      const original = await response.blob();
+      if (!controller.signal.aborted) setPreview(URL.createObjectURL(original));
+    } catch (e) {
+      if (!controller.signal.aborted)
+        setError(e instanceof Error ? e.message : "暂时无法读取原件。");
+    } finally {
+      if (previewRequest.current === controller) {
+        previewRequest.current = null;
+        if (!controller.signal.aborted) setBusy(false);
+      }
     }
   }
 
@@ -324,6 +395,27 @@ export function OcrPanel({
         >
           刷新已保存结果
         </button>
+      </div>
+      <div className="ocr-original">
+        <button
+          type="button"
+          disabled={busy || loading || running}
+          onClick={() => (preview ? setPreview(null) : void previewOriginal())}
+        >
+          {preview ? "收起原件" : "读取原件核对"}
+        </button>
+        {preview && file.mime === "application/pdf" ? (
+          <a
+            href={preview + "#page=" + page}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            在新标签页打开原件第 {page} 页
+          </a>
+        ) : null}
+        {preview && file.mime !== "application/pdf" ? (
+          <img src={preview} alt="来源原图" />
+        ) : null}
       </div>
       {history.length ? (
         <details className="approval-audit">

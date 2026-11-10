@@ -17,13 +17,15 @@
 
 对照候选 PaddleOCR PP-StructureV3 支持 CPU 推理，输出文本、位置和表格结构。其当前 PaddlePaddle 3.3.1 macOS 发布包为 arm64，本机 Intel 不能直接用该发布包验证。先为 Linux CPU 验证固定模型与依赖，再用同一套合成样本对比中文、英文、扫描和表格。 [PaddleOCR 官方说明](https://www.paddleocr.ai/latest/en/version3.x/algorithm/PP-StructureV3/PP-StructureV3.html) · [PaddlePaddle 3.3.1 发布文件](https://pypi.org/project/paddlepaddle/3.3.1/#files)
 
-本机已核对 RapidOCR 3.10.0 包中的 PP-OCRv6 Small 检测与识别模型和方向分类权重，以及 RapidTable 3.0.2 所指向的 SLANet Plus 权重。四个 ONNX 文件合计约 39.5 MB；该值是模型文件体积，实际峰值内存和每页耗时仍待测量。SLANet Plus 下载内容与发布包声明的 SHA-256 一致。 [PP-OCRv6 模型说明](https://www.paddleocr.ai/latest/en/version3.x/module_usage/text_recognition.html) · [SLANet Plus 说明](https://www.paddleocr.ai/latest/en/version3.x/pipeline_usage/table_recognition_v2.html)
+本机已核对 RapidOCR 3.10.0 包中的 PP-OCRv6 Small 检测与识别模型和方向分类权重，以及 RapidTable 3.0.2 所指向的 SLANet Plus 权重。四个 ONNX 文件合计约 39.5 MB；该值是模型文件体积。SLANet Plus 下载内容与发布包声明的 SHA-256 一致。 [PP-OCRv6 模型说明](https://www.paddleocr.ai/latest/en/version3.x/module_usage/text_recognition.html) · [SLANet Plus 说明](https://www.paddleocr.ai/latest/en/version3.x/pipeline_usage/table_recognition_v2.html)
+
+2026-11-11 在 Intel Mac 上使用 ONNX Runtime 1.20.1 的 CPU 执行，采用两个算子内线程和一个算子间线程。清晰 PNG 和降质 JPEG 的标题、编号、英文说明和表格文字均与生成稿一致。以已知表格范围裁剪后，SLANet Plus 两次均提取 12 个单元格，内容和行列一致。全图文字识别加裁剪表格处理分别耗时 16.6 秒与 6.6 秒。两页共用的进程最大驻留内存约 632 MiB。两份图片来自同一生成稿，表格范围由实验传入。全页自动定位、更多业务版式及 Linux 内网服务仍须验证。
 
 在 Intel Mac 上用 Tesseract.js 7.0.0 和本地中英词库完成 CPU 对照。清晰 PNG 的中英标题、编号、说明均可读，模型总体置信度 93，表格未提取。降质 JPEG 的正文仍可读，表格区域有误识别，总体置信度 78。此路线可作为纯文字对照，结构化表格需要版面模型。 [Tesseract.js v7](https://github.com/naptha/tesseract.js/tree/v7.0.0) · [固定中英词库](https://github.com/tesseract-ocr/tessdata_fast/tree/65727574dfcd264acbb0c3e07860e4e9e9b22185)
 
 ## 工作台与内网识别协议
 
-迁移 051 保存 OCR 草稿、版本和最后一次确认。知识库 → 企业文件中选择 PNG、JPEG 或 PDF（8 MiB 内），PDF 指定页码后选择“识别这一页”。版面图按返回坐标排列文字与表格块，置信度缺失或偏低时提示校对。表格预览以制表符分隔列，可在校对框修改后确认保存。较早的确认版本可在新草稿旁查看。
+迁移 051 保存 OCR 草稿、版本和最后一次确认。知识库 → 企业文件中选择 PNG、JPEG 或 PDF（8 MiB 内），PDF 指定页码后选择“识别这一页”。版面图按返回坐标排列文字与表格块，置信度缺失或偏低时提示校对。表格预览以制表符分隔列，可在校对框修改后确认保存。较早的确认版本可在新草稿旁查看。选择“读取原件核对”可在工作台查看图片，或在浏览器 PDF 阅读器中打开原件并定位到所选页。服务在读取原件前后复核权限和文件版本。
 
 后端以当前 Nextcloud 登录、文件 ID、ETag、路径和页码核对来源。只在二进制读取后仍可核验权限和版本时调用配置的内网识别端点，写入前再次校验。来源丢失或版本替换时，已识别内容清理，审计元数据保留。识别失败保留当前草稿和上次确认；同一操作键重试可取回已经保存的回执。迁移 052 让确认版进入个人知识库文字检索，语义索引须由员工另行选择建立。新草稿不覆盖上次确认，确认新版后旧索引失效。检索、索引和资料问答在使用前复核 Nextcloud 权限与版本，撤权时删除派生文字、向量和受影响的私人回答。迁移 053 将 OCR 接入独立 Worker。员工可选择 DSH 或 Hermes 并确认本页识别，宿主固定来源、页码与版本，聊天模型只收到操作说明。文件只由内网 OCR 服务处理，校对和确认仍由员工完成。单次操作回执可从本页历史恢复，取消会停止后续保存。
 

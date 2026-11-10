@@ -297,6 +297,31 @@ test("OCR selects one PDF page and drops stale or malformed engine output", asyn
   await assert.rejects(service.detail(actor, page2.id), /来源已失效/);
 });
 
+test("Original image preview checks its exact version before returning bytes", async () => {
+  const { actor, source } = identity;
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2mH8AAAAASUVORK5CYII=",
+    "base64",
+  );
+  const file = source.files.add("alice", ["preview.png"], png, "image/png");
+  const selection = {
+    path: file.path,
+    expectedId: file.id,
+    expectedEtag: file.etag,
+    page: 1,
+  };
+  assert.deepEqual(await service.preview(actor, selection), {
+    mime: "image/png",
+    bytes: png,
+  });
+  file.afterRead = () => {
+    file.etag = '"preview-v2"';
+  };
+  await assert.rejects(
+    service.preview(actor, selection),
+    /来源文件或版本已变化/,
+  );
+});
 test("Revoking Nextcloud workspace membership clears all saved OCR text for that employee", async () => {
   const { actor, source } = identity;
   const file = source.files.add("alice", ["revoke.png"], bytes, "image/png");

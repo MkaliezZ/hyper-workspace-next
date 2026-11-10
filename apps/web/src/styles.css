@@ -2943,6 +2943,19 @@ p {
   width: 100%;
   resize: vertical;
 }
+.ocr-original {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.ocr-original img {
+  display: block;
+  max-width: min(100%, 480px);
+  max-height: 340px;
+  object-fit: contain;
+}
 .ocr-table {
   max-height: 190px;
   overflow: auto;

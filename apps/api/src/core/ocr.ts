@@ -470,6 +470,25 @@ export class OcrService {
     return (await this.inspect(s, selection)).result;
   }
 
+  async preview(s: Subject, selection: OcrSource) {
+    const source = await this.connection(s);
+    const file = await this.sourceFile(source, selection);
+    const bytes = await source.provider.download(file);
+    const fresh = await this.connection(s);
+    const current = await this.sourceFile(fresh, selection);
+    if (ocrBinding(source, file) !== ocrBinding(fresh, current))
+      throw new ConflictException("读取期间来源已变化。");
+    const signature =
+      file.mime === "application/pdf"
+        ? Buffer.from("%PDF-")
+        : file.mime === "image/png"
+          ? Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
+          : Buffer.from([255, 216, 255]);
+    if (!bytes.subarray(0, signature.length).equals(signature))
+      throw new BadRequestException("原件格式与来源声明不一致。");
+    return { mime: file.mime, bytes };
+  }
+
   async detail(s: Subject, id: string, revision?: number) {
     const document = await this.byId(s, id);
     await this.checkDocument(s, document);
