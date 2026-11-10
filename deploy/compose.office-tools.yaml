@@ -1,0 +1,37 @@
+services:
+  office-batch:
+    image: hyper-workspace-office-batch:${HYPER_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: runtime/office/Dockerfile
+    platform: linux/amd64
+    init: true
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=256m,uid=10001,gid=10001,mode=1770
+    mem_limit: 768m
+    memswap_limit: 768m
+    cpus: 1
+    pids_limit: 128
+    networks: [office-tools]
+    healthcheck:
+      test: [CMD, /opt/collaboraoffice/program/python.bin, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3123/health', timeout=3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    stop_grace_period: 5s
+    restart: unless-stopped
+  api:
+    environment:
+      HYPER_OFFICE_BATCH_URL: http://office-batch:3123
+    networks: [default, office-tools]
+  worker:
+    environment:
+      HYPER_OFFICE_BATCH_URL: http://office-batch:3123
+    networks: [default, office-tools]
+networks:
+  office-tools:
+    internal: true
