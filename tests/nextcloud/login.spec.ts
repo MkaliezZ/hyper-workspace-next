@@ -384,6 +384,19 @@ test("An approval assignment requires current real Nextcloud membership at the m
     });
     await group("POST", reviewerUid);
     revoked = false;
+    const sourceOnly = await login(browser, reviewerUid);
+    contexts.push(sourceOnly.context);
+    await expect(sourceOnly.page.getByRole("alert")).toContainText(
+      "产品权限已撤销",
+    );
+
+    // An administrator must separately restore the product membership.
+    const membership = await db.pool.query(
+      "INSERT INTO cw_members (workspace_id,user_id,role) SELECT workspace_id,user_id,'member' FROM cw_external_identities WHERE user_id=$1 AND remote_uid=$2",
+      [reviewer.user.id, reviewerUid],
+    );
+    expect(membership.rowCount).toBe(1);
+    expect((await view(reviewer.context)).status()).toBe(401);
     const restored = await employee(reviewerUid);
     expect(restored.user.id).toBe(reviewer.user.id);
     const signed = await post(restored.context, actions, vote);

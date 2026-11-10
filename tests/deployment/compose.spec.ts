@@ -21,6 +21,12 @@ function compose(...command: string[]) {
     stdio: ["ignore", "pipe", "pipe"],
   });
 }
+function restartStack() {
+  compose("stop", "api", "worker");
+  compose("stop", "db");
+  compose("start", "--wait", "--wait-timeout", "90", "db");
+  compose("up", "-d", "--no-build", "--wait", "--wait-timeout", "110");
+}
 test("Optional source database initialization is idempotent, cannot read product data and refuses credential rotation", async () => {
   test.setTimeout(120000);
   const previous = process.env.HYPER_NEXTCLOUD_DB_PASSWORD;
@@ -681,8 +687,7 @@ test("Built containers serve only the compiled web app and preserve native DSH/H
       "-e",
       seedCommand,
     );
-    compose("stop", "api", "worker", "db");
-    compose("up", "-d", "--no-build", "--wait", "--wait-timeout", "120");
+    restartStack();
     await expect
       .poll(
         async () => {
@@ -1020,8 +1025,7 @@ test("Built containers serve only the compiled web app and preserve native DSH/H
     const deliveredBaseline = noticeBaseline();
     expect(deliveredBaseline.last_notification_at).toBeTruthy();
     expect(deliveredBaseline.last_run_id).toBe(final.lastRunId);
-    compose("stop", "api", "worker", "db");
-    compose("up", "-d", "--no-build", "--wait", "--wait-timeout", "120");
+    restartStack();
     expect(noticeBaseline()).toEqual(deliveredBaseline);
   } finally {
     await context.close();
@@ -1214,8 +1218,7 @@ test("Restricted containers persist active company quotas and independent financ
       estimate: "0",
       currency: "USD",
     });
-    compose("stop", "api", "worker", "db");
-    compose("up", "-d", "--no-build", "--wait", "--wait-timeout", "120");
+    restartStack();
     await expect
       .poll(
         async () => {
