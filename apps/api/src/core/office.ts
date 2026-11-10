@@ -601,6 +601,7 @@ export class OfficeService {
       const row = await this.load(s, id, c, true);
       this.current(row);
       if (
+        auth.row.revision !== input.expectedRevision ||
         row.revision !== input.expectedRevision ||
         !(
           row.state === "prepared" ||

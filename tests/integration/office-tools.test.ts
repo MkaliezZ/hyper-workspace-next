@@ -416,6 +416,64 @@ test("Office create/edit CAS and cancel racing a transform prevent late mutation
   assert.equal(results.filter((x) => x.status === "fulfilled").length, 1);
   assert.equal((await service.get(f.actor, q.id)).revision, 2);
 });
+test("Office apply rejects old authorized operations when a concurrent edit reaches the requested revision before its lock", async () => {
+  const { input } = fixture(),
+    proposal = await service.create(f.actor, input),
+    initialPuts = puts,
+    request = apply(2);
+  const revisedOperations: OfficeProposalCreate["operations"] = [
+    {
+      kind: "writer.append",
+      target: "document:end",
+      text: "The separately saved revision two operations",
+    },
+  ];
+  // Preserve the first authorization's revision-one snapshot while a separate
+  // edit commits revision two, then let apply lock the newer row. Both calls
+  // still use the real service, synthetic DAV and isolated test database.
+  const internal = service as any;
+  const originalAuthorized = internal.authorized;
+  let interleaved = false;
+  internal.authorized = async (...args: unknown[]) => {
+    const snapshot = await originalAuthorized.apply(service, args);
+    if (!interleaved && args[1] === proposal.id && args[2] === true) {
+      interleaved = true;
+      assert.equal(snapshot.row.revision, 1);
+      const edited = await service.edit(f.actor, proposal.id, {
+        expectedRevision: 1,
+        operations: revisedOperations,
+        idempotencyKey: randomUUID(),
+      });
+      assert.equal(edited.revision, 2);
+    }
+    return snapshot;
+  };
+  try {
+    await assert.rejects(
+      () => service.apply(f.actor, proposal.id, request),
+      /版本|变化/,
+    );
+  } finally {
+    internal.authorized = originalAuthorized;
+  }
+  assert.equal(interleaved, true);
+  assert.equal(puts, initialPuts);
+  const current = await service.get(f.actor, proposal.id);
+  assert.equal(current.revision, 2);
+  assert.equal(current.state, "prepared");
+  assert.deepEqual(current.operations, revisedOperations);
+  assert.equal(current.outputSha256, null);
+  assert.equal(
+    (
+      await db.pool.query(
+        "SELECT count(*)::int AS n FROM cw_office_requests WHERE workspace_id=$1 AND actor_id=$2 AND request_key=$3",
+        [f.actor.workspaceId, f.actor.id, request.idempotencyKey],
+      )
+    ).rows[0].n,
+    0,
+  );
+});
+
 test("Office cancellation after PUT retains success and stopping an execution leaves recoverable evidence", async () => {
   const { input } = fixture(),
     p = await service.create(f.actor, input);
