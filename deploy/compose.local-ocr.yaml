@@ -1,0 +1,37 @@
+services:
+  ocr:
+    image: hyper-workspace-ocr:${HYPER_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: runtime/ocr/Dockerfile
+    init: true
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=32m,uid=10001,gid=10001,mode=1770
+    mem_limit: 1536m
+    cpus: 2
+    pids_limit: 64
+    networks: [ocr]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3122/health', timeout=3).close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 45s
+    restart: unless-stopped
+  api:
+    environment:
+      HYPER_OCR_URL: http://ocr:3122/recognize
+      HYPER_OCR_ENGINE: rapidocr-cpu/v1
+    networks: [default, ocr]
+  worker:
+    environment:
+      HYPER_OCR_URL: http://ocr:3122/recognize
+      HYPER_OCR_ENGINE: rapidocr-cpu/v1
+    networks: [default, ocr]
+networks:
+  ocr:
+    internal: true

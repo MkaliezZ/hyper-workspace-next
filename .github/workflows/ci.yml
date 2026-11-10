@@ -164,7 +164,28 @@ jobs:
       - run: docker compose --project-name hyper-deployment-ci --env-file .runtime/compose-ci.env -f compose.yaml -f deploy/compose.ci.yaml up -d --no-build --wait --wait-timeout 180
       - run: npx playwright install --with-deps chromium
       - run: npm run test:deployment
+      - name: Verify the private CPU OCR service
+        run: |
+          ocr_compose() {
+            docker compose --project-name hyper-deployment-ci --env-file .runtime/compose-ci.env -f compose.yaml -f deploy/compose.ci.yaml -f deploy/compose.local-ocr.yaml "$@"
+          }
+          ocr_compose config --quiet
+          ocr_compose build ocr
+          ocr_compose up -d --no-build --wait --wait-timeout 180
+          ocr_compose exec -T api node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import { OcrProvider } from "./dist/core/ocr-provider.js";
+            const parts = [];
+            for await (const part of process.stdin) parts.push(part);
+            const result = await new OcrProvider().recognize({
+              bytes: Buffer.concat(parts), mime: "image/png", page: 1,
+            });
+            assert.equal(result.engine, "rapidocr-cpu/v1");
+            const table = result.content.blocks.find((block) => block.kind === "table");
+            assert.equal(table?.text, "品名 Item\t数量 Qty\t金额 Amount\n白板笔\t3\t42.50\n便签纸\t7\t19.60\n合计 Total\t10\t62.10");
+            assert.ok(result.content.blocks.some((block) => block.text === "合成采购记录"));
+          ' < tests/fixtures/ocr-procurement.png
       - if: failure()
-        run: docker compose --project-name hyper-deployment-ci --env-file .runtime/compose-ci.env -f compose.yaml -f deploy/compose.ci.yaml logs --tail 100
+        run: docker compose --project-name hyper-deployment-ci --env-file .runtime/compose-ci.env -f compose.yaml -f deploy/compose.ci.yaml -f deploy/compose.local-ocr.yaml logs --tail 100
       - if: always()
-        run: docker compose --project-name hyper-deployment-ci --env-file .runtime/compose-ci.env -f compose.yaml -f deploy/compose.ci.yaml down --volumes
+        run: docker compose --project-name hyper-deployment-ci --env-file .runtime/compose-ci.env -f compose.yaml -f deploy/compose.ci.yaml -f deploy/compose.local-ocr.yaml down --volumes

@@ -27,7 +27,7 @@
 
 ## 图片与扫描件 OCR
 
-企业文件已加入图片及 PDF 选页的 OCR 工作台。可打开图片原件或定位到 PDF 指定页，核对文字和表格块并确认版本。DSH 和 Hermes 可按员工确认的页发起识别，回执可在本页执行记录核对。确认版可在个人知识库检索，并可另行建立语义索引；来源撤权会清理文本与索引。已用合成协议响应验证桌面与手机链路。RapidOCR + RapidTable 已在本机 CPU 上通过两份合成样图的文字与已知区域表格检查，正在验证全页自动定位。OXR 作为 GPU 备选。 [OCR 选型、内网协议与实测](docs/OCR.md) · [校对界面](docs/images/ocr-confirmed-desktop.png)（合成资料）
+企业文件已加入图片及 PDF 选页的 OCR 工作台。可打开图片原件或定位到 PDF 指定页，核对文字和表格块并确认版本。DSH 和 Hermes 可按员工确认的页发起识别，回执可在本页执行记录核对。确认版可在个人知识库检索，并可另行建立语义索引；来源撤权会清理文本与索引。已用合成协议响应验证桌面与手机链路。低成本主线采用 RapidOCR + RapidLayout + RapidTable，可由内网 CPU 服务运行。合成 PNG、降质 JPEG 和扫描 PDF 已在本机通过自动表格定位与 12 单元格核对，Linux 容器另有部署验证。OXR 作为 GPU 备选。 [OCR 选型、内网协议与实测](docs/OCR.md) · [校对界面](docs/images/ocr-confirmed-desktop.png)（合成资料）
 
 [![CI](https://github.com/MkaliezZ/hyper-workspace-next/actions/workflows/ci.yml/badge.svg)](https://github.com/MkaliezZ/hyper-workspace-next/actions/workflows/ci.yml)
 
