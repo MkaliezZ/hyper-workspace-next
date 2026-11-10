@@ -57,6 +57,7 @@ export function App() {
       demoEnabled: boolean;
       nextcloudConfigured: boolean;
       filesEnabled?: boolean;
+      officeEnabled?: boolean;
     }>(),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
@@ -746,6 +747,7 @@ export function App() {
             act={act}
             demo={view.user.demo}
             filesEnabled={!!status?.filesEnabled}
+            officeEnabled={!!status?.officeEnabled}
             engines={view.engines}
           />
         ) : null}

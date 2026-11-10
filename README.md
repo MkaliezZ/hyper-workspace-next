@@ -29,6 +29,10 @@
 
 企业文件已加入图片及 PDF 选页的 OCR 工作台。可打开图片原件或定位到 PDF 指定页，核对文字和表格块并确认版本。DSH 和 Hermes 可按员工确认的页发起识别，回执可在本页执行记录核对。确认版可在个人知识库检索，并可另行建立语义索引；来源撤权会清理文本与索引。已用合成协议响应验证桌面与手机链路。低成本主线采用 RapidOCR + RapidLayout + RapidTable，可由内网 CPU 服务运行。合成 PNG、降质 JPEG 和扫描 PDF 已在本机通过自动表格定位与 12 单元格核对，Linux 容器另有部署验证。OXR 作为 GPU 备选。 [OCR 选型、内网协议与实测](docs/OCR.md) · [校对界面](docs/images/ocr-confirmed-desktop.png)（合成资料）
 
+## 复杂表格与 Office 协作
+
+企业文件已加入 DOCX、XLSX 和 PPTX 的统一 Office 入口。服务核对员工权限和所选版本，再通过 Nextcloud 打开。桌面和手机入口已通过合成来源验证，当前推进真实编辑器、协作保存与双执行器操作。 [Office 接入与验证范围](docs/OFFICE.md) · [手机入口](docs/images/office-source-link-mobile.png)
+
 [![CI](https://github.com/MkaliezZ/hyper-workspace-next/actions/workflows/ci.yml/badge.svg)](https://github.com/MkaliezZ/hyper-workspace-next/actions/workflows/ci.yml)
 
 面向企业内部的 AI 协作 IM：讨论有沉淀，行动有回执，成果能修改，经验能复用。蓝、白、黑配色；拥有自己的业务核心与企业资产服务。

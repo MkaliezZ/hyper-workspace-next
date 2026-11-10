@@ -22,7 +22,7 @@ import {
   RoomManagementRunInput,
 } from "@hyper/contracts/room-management";
 import { OrganizationService } from "./core/organization.js";
-import { OrganizationPlan, OrganizationQuery } from "@hyper/contracts";
+import { OfficeSource, OrganizationPlan, OrganizationQuery } from "@hyper/contracts";
 import { KnowledgeContextService } from "./core/knowledge-context.js";
 import { WorkPlanService } from "./core/work-plans.js";
 import { WorkPlanResponse, WorkProposal } from "@hyper/contracts";
@@ -329,11 +329,14 @@ class ApiController {
     return { status: "ok", service: "Hyper Workspace", version: "0.1.0" };
   }
   @Get("auth/status") status() {
+    const nextcloudConfigured = !!nextcloudConfig();
+    const filesEnabled =
+      process.env.NEXTCLOUD_FILES_ENABLED === "true" && nextcloudConfigured;
     return {
       demoEnabled: process.env.DEMO_MODE === "true",
-      nextcloudConfigured: !!nextcloudConfig(),
-      filesEnabled:
-        process.env.NEXTCLOUD_FILES_ENABLED === "true" && !!nextcloudConfig(),
+      nextcloudConfigured,
+      filesEnabled,
+      officeEnabled: filesEnabled && process.env.NEXTCLOUD_OFFICE_ENABLED === "true",
     };
   }
   @Post("auth/nextcloud/start") async startLogin(
@@ -796,6 +799,12 @@ class ApiController {
   ) {
     const input = z.object({ path: FilePath }).strict().parse(body);
     return new SourceFileService(db).list(await subject(req), input.path);
+  }
+  @Post("files/office-link") async officeLink(
+    @Req() req: Request,
+    @Body() body: unknown,
+  ) {
+    return new SourceFileService(db).officeLink(await subject(req), OfficeSource.parse(body));
   }
   @Post("files/import") async importFile(
     @Req() req: Request,

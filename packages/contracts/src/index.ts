@@ -1069,6 +1069,38 @@ export interface SourceFile {
   importable: boolean;
 }
 
+export const OfficeSource = z
+  .object({
+    path: FilePath.min(1),
+    expectedId: z.string().regex(/^[1-9]\d{0,19}$/),
+    expectedEtag: z.string().min(1).max(256),
+  })
+  .strict();
+export type OfficeSource = z.infer<typeof OfficeSource>;
+
+const OFFICE_MIME = {
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+} as const;
+export type OfficeFormat = keyof typeof OFFICE_MIME;
+
+export function officeFormat(file: Pick<SourceFile, "kind" | "name" | "mime">) {
+  if (file.kind !== "file") return;
+  const extension = file.name
+    .toLowerCase()
+    .match(/\.(docx|xlsx|pptx)$/)?.[1] as OfficeFormat | undefined;
+  return extension && OFFICE_MIME[extension] === file.mime
+    ? extension
+    : undefined;
+}
+
+export interface OfficeLink {
+  url: string;
+  format: OfficeFormat;
+  checkedEtag: string;
+}
+
 export const FileReadingInput = z
   .object({
     engine: z.enum(["dsh", "hermes"]).default("dsh"),

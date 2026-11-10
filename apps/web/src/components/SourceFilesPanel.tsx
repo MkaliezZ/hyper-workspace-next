@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Folder, FileText, RefreshCw } from "lucide-react";
-import type { RunState, SourceFile } from "@hyper/contracts";
+import { officeFormat, type RunState, type SourceFile } from "@hyper/contracts";
 import { supportsOcr } from "@hyper/contracts/ocr";
 import { OcrPanel } from "./OcrPanel";
+import { OfficeFileDialog } from "./OfficeFileDialog";
 import { FileReaderPanel } from "./FileReaderPanel";
 import { api, mutation } from "../api";
 interface Imported {
@@ -21,6 +22,7 @@ interface Preview {
 }
 export function SourceFilesPanel({
   enabled,
+  officeEnabled,
   demo,
   busy,
   act,
@@ -32,6 +34,7 @@ export function SourceFilesPanel({
   run: { id: string; state: RunState } | null;
   onRun: (run: { id: string; state: RunState }) => void;
   enabled: boolean;
+  officeEnabled: boolean;
   demo: boolean;
   busy: boolean;
   act: (fn: () => Promise<void>) => Promise<boolean>;
@@ -42,6 +45,7 @@ export function SourceFilesPanel({
     [imports, setImports] = useState<Imported[]>([]),
     [preview, setPreview] = useState<Preview>(),
     [ocrFile, setOcrFile] = useState<SourceFile>(),
+    [officeFile, setOfficeFile] = useState<SourceFile>(),
     [notice, setNotice] = useState(""),
     [error, setError] = useState(""),
     [loading, setLoading] = useState(false);
@@ -250,6 +254,15 @@ export function SourceFilesPanel({
                   {file.importable ? "导入个人资料" : "暂不支持导入"}
                 </button>
               )}
+              {officeEnabled && officeFormat(file) ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setOfficeFile(file)}
+                >
+                  Office 协作
+                </button>
+              ) : null}
               {supportsOcr(file) ? (
                 <button type="button" disabled={busy} onClick={() => setOcrFile(file)}>
                   图片与扫描件 OCR
@@ -265,6 +278,9 @@ export function SourceFilesPanel({
       {ocrFile ? (
         <OcrPanel file={ocrFile} engines={engines} run={run} onRun={onRun}
           onClose={() => setOcrFile(undefined)} />
+      ) : null}
+      {officeFile ? (
+        <OfficeFileDialog file={officeFile} onClose={() => setOfficeFile(undefined)} />
       ) : null}
       <header className="source-import-heading">
         <h3>已选择的个人文件</h3>

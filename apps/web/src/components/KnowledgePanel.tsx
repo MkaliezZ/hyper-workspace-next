@@ -32,6 +32,7 @@ export function KnowledgePanel({
   act,
   demo,
   filesEnabled,
+  officeEnabled,
   engines,
   view,
   run,
@@ -41,6 +42,7 @@ export function KnowledgePanel({
   act: (fn: () => Promise<void>) => Promise<boolean>;
   demo: boolean;
   filesEnabled: boolean;
+  officeEnabled: boolean;
   engines: Record<string, import("@hyper/contracts").EngineCapabilities>;
   view: WorkspaceView;
   run: any;
@@ -162,6 +164,7 @@ export function KnowledgePanel({
       ) : tab === "files" ? (
         <SourceFilesPanel
           enabled={filesEnabled}
+          officeEnabled={officeEnabled}
           demo={demo}
           busy={busy}
           act={act}

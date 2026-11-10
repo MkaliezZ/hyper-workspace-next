@@ -5,7 +5,14 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
-import { FilePath, type Subject, type SourceFile } from "@hyper/contracts";
+import {
+  FilePath,
+  officeFormat,
+  type OfficeLink,
+  type OfficeSource,
+  type Subject,
+  type SourceFile,
+} from "@hyper/contracts";
 import type { Database } from "../db/database.js";
 import { assertMember } from "./security.js";
 import { sourceConnection } from "./source-connection.js";
@@ -41,6 +48,26 @@ export class SourceFileService {
   }
   async list(s: Subject, path: string[]) {
     return (await this.connection(s)).provider.list(FilePath.parse(path));
+  }
+  async officeLink(s: Subject, selection: OfficeSource): Promise<OfficeLink> {
+    if (process.env.NEXTCLOUD_OFFICE_ENABLED !== "true")
+      throw new ServiceUnavailableException("企业 Office 协作尚未启用。");
+    const source = await this.connection(s);
+    const file = await source.provider.stat(selection.path);
+    if (
+      file.id !== selection.expectedId ||
+      file.etag !== selection.expectedEtag
+    )
+      throw new ConflictException("所选文件已变化，请刷新文件夹后重试。");
+    const format = officeFormat(file);
+    if (!format)
+      throw new BadRequestException("Office 协作支持 DOCX、XLSX 和 PPTX。");
+    await source.provider.assertReadable(file);
+    return {
+      url: source.config.publicUrl + "/index.php/f/" + file.id,
+      format,
+      checkedEtag: file.etag,
+    };
   }
   private rows(s: Subject, ids?: string[]) {
     return this.db.pool.query(
