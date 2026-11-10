@@ -80,6 +80,20 @@ class Protocol(unittest.TestCase):
             with self.subTest(expression=expression), self.assertRaises(Rejected):
                 formula(expression, ["Inputs"])
 
+    def test_canonical_internal_formulas_remain_editable_and_bounded(self):
+        for expression in ("=AVERAGE(Inputs.D2:D3)", "=AVERAGE($Inputs.D2:D3)", "=AVERAGE($'Inputs'.D2:D3)"):
+            self.assertEqual(formula(expression, ["Inputs"]), "=AVERAGE($'Inputs'.D2:D3)")
+        self.assertEqual(formula("=SUM($'Sheet Name'.$A$1;'Sheet Name'.B2)", ["Sheet Name"]),
+                         "=SUM($'Sheet Name'.$A$1;$'Sheet Name'.B2)")
+        self.assertEqual(formula("=SUM('O''Brien'.A1:'O''Brien'!A2)", ["O'Brien"]),
+                         "=SUM($'O''Brien'.A1:$'O''Brien'.A2)")
+        for expression in ("=SUM(Unknown.A1)", "=SUM(Inputs.A1:Other.B2)", "=SUM(A1:Inputs.B2)",
+                           "='file:///tmp/external.xlsx'.A1", "='https://external.invalid'.A1",
+                           "='[book.xlsx]Inputs'.A1", "=Inputs.A1:BZ2000", "=Inputs.A1:BL1000",
+                           "=SUM(Inputs.A1);WEBSERVICE(A1)", "=DDE(Inputs.A1)", "=Inputs..A1"):
+            with self.subTest(expression=expression), self.assertRaises(Rejected):
+                formula(expression, ["Inputs", "Other"])
+
     @unittest.skipUnless(sys.platform == "linux", "Linux process groups and seccomp")
     def test_network_sandbox_is_inherited(self):
         script = '''from sandbox import deny_ip_network

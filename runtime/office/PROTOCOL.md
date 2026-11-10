@@ -48,8 +48,10 @@ Fixed operations (exact keys, no UNO methods, scripts, filenames or URLs):
 `calc.set.value` supports `empty/null`, `string`, finite `number`, or `formula`.
 To clear a cell use `empty/null`; an empty `string` value is rejected explicitly.
 New formulas use a deliberately small grammar: `=`, numeric constants, A1 cells
-and ranges, `Sheet!A1` / `'Sheet Name'!A1`, arithmetic `+ - * / ^`, parentheses,
-and SUM/MIN/MAX/AVERAGE/COUNT with comma arguments. References must resolve to
+and ranges, `Sheet!A1` / `'Sheet Name'!A1`, and the engine's equivalent canonical
+`Sheet.A1` / `$'Sheet Name'.$A$1` references; arithmetic `+ - * / ^`, parentheses,
+and SUM/MIN/MAX/AVERAGE/COUNT with comma or canonical semicolon arguments. Quoted
+sheet names support doubled apostrophes. References must resolve to
 existing sheets and bounded cells. No named ranges, external workbooks, URLs,
 strings, DDE, WEBSERVICE, HYPERLINK, INDIRECT or arbitrary functions. Returned
 formulas use Calc's canonical spelling; use inspect values verbatim for expected.

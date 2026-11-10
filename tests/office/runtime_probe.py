@@ -89,6 +89,21 @@ for kind in ("docx", "xlsx", "pptx"):
                      "value": {"type": "string", "value": MARKER}}
         unsafe = {**operation, "value": {"type": "formula", "value": '=WEBSERVICE("https://secret.invalid")'}}
         transform(payload, [unsafe], 422)
+        existing = next(cell for cell in report["cells"] if cell["address"] == "B3")
+        assert existing["type"] == "formula" and existing["value"].startswith("=SUM(")
+        # Start with the actual engine spelling shown by inspect, change only the
+        # selected function, and retain the exact original expected value.
+        average = "=AVERAGE(" + existing["value"][len("=SUM("):]
+        edited_formula = transform(payload, [operation, {"kind": "calc.set", "sheet": report["id"], "cell": "B3",
+                                            "expected": {"type": "formula", "value": existing["value"]},
+                                            "value": {"type": "formula", "value": average}}])
+        status, average_inspected = call("/inspect", {"format": kind, "contentBase64": edited_formula["contentBase64"]})
+        assert status == 200
+        average_report = next(sheet for sheet in average_inspected["inspection"]["sheets"] if sheet["name"] == "Report")
+        assert next(cell for cell in average_report["cells"] if cell["address"] == "B3")["display"] == "20"
+        clean()
+        # The independent preservation fixture still checks the untouched source's
+        # original total 40; do not weaken it to accommodate the formula-edit test.
         result = transform(payload, [operation, {"kind": "calc.set", "sheet": report["id"], "cell": "B6",
                                     "expected": {"type": "empty", "value": None},
                                     "value": {"type": "formula", "value": "=SUM(Inputs!D2:D3)"}}])

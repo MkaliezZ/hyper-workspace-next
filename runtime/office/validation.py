@@ -105,7 +105,13 @@ def validate_operations(operations, kind):
 
 
 # A small arithmetic parser, not a blacklist over unrestricted spreadsheet formulas.
-TOKEN = re.compile(r"\s*(?:(?P<number>(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[Ee][+-]?[0-9]+)?)|(?P<ref>(?:(?:'[^'\r\n]{1,64}'|[A-Za-z_][A-Za-z0-9_ ]{0,63})!)?\$?[A-Z]{1,2}\$?[1-9][0-9]{0,3})|(?P<word>[A-Z]+)|(?P<op>[+*/^(),:\-]))")
+# Both Excel-style input and the engine's own internal-reference spelling are
+# lexed as references; dots/quotes are never rewritten across an arbitrary formula.
+SHEET_TOKEN = r"\$?(?:'(?:[^'\r\n]|''){1,64}'|[A-Za-z_][A-Za-z0-9_]{0,63})"
+CELL_TOKEN = r"\$?[A-Z]{1,2}\$?[1-9][0-9]{0,3}"
+REF_TOKEN = rf"(?:(?:{SHEET_TOKEN})[!.])?{CELL_TOKEN}"
+REFERENCE = re.compile(rf"(?:(?P<sheet>{SHEET_TOKEN})[!.])?(?P<cell>{CELL_TOKEN})")
+TOKEN = re.compile(rf"\s*(?:(?P<number>(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[Ee][+-]?[0-9]+)?)|(?P<ref>{REF_TOKEN})|(?P<word>[A-Z]+)|(?P<op>[+*/^(),;:\-]))")
 
 
 def formula(value, sheets=None):
@@ -120,15 +126,21 @@ def formula(value, sheets=None):
     position, depth = 0, 0
 
     def reference(token):
-        if "!" in token:
-            sheet, cell = token.rsplit("!", 1)
-            sheet = sheet.strip("'")
+        parsed = REFERENCE.fullmatch(token)
+        require(parsed is not None, "invalid_formula")
+        sheet, cell = parsed.group("sheet"), parsed.group("cell")
+        if sheet is not None:
+            sheet = sheet.removeprefix("$")
+            if sheet.startswith("'"):
+                sheet = sheet[1:-1].replace("''", "'")
+            require(0 < len(sheet) <= 64 and not any(c in sheet for c in "[]:/\\?*")
+                    and not any(ord(c) < 32 for c in sheet) and not URL.search(sheet), "invalid_formula")
             require(sheets is None or sheet in sheets, "unknown_sheet")
             prefix = "$'" + sheet.replace("'", "''") + "'."
         else:
-            cell, prefix = token, ""
+            prefix = ""
         address(cell.replace("$", ""))
-        return prefix + cell
+        return prefix + cell, sheet, cell
 
     def expression():
         nonlocal position, depth
@@ -155,25 +167,25 @@ def formula(value, sheets=None):
             require(math.isfinite(float(token)) and abs(float(token)) <= 1e100, "invalid_formula")
             return token
         if kind == "ref":
-            result = reference(token)
+            result, first_sheet, first_cell = reference(token)
             if position < len(tokens) and tokens[position][1] == ":":
                 position += 1
                 require(position < len(tokens) and tokens[position][0] == "ref", "invalid_formula")
                 end = tokens[position][1]
                 position += 1
-                first_cell, last_cell = token.rsplit("!", 1)[-1], end.rsplit("!", 1)[-1]
+                end_result, last_sheet, last_cell = reference(end)
                 x1, y1 = address(first_cell.replace("$", ""))
                 x2, y2 = address(last_cell.replace("$", ""))
                 require((abs(x2-x1)+1)*(abs(y2-y1)+1) <= MAX_CELLS, "formula_limit", 413)
-                require("!" not in end or token.rsplit("!", 1)[0] == end.rsplit("!", 1)[0], "invalid_formula")
-                result += ":" + reference(end)
+                require(last_sheet is None or first_sheet == last_sheet, "invalid_formula")
+                result += ":" + end_result
             return result
         if kind == "word":
             require(token in ("SUM", "MIN", "MAX", "AVERAGE", "COUNT"), "unsupported_formula")
             require(position < len(tokens) and tokens[position][1] == "(", "invalid_formula")
             position += 1
             args = [expression()]
-            while position < len(tokens) and tokens[position][1] == ",":
+            while position < len(tokens) and tokens[position][1] in (",", ";"):
                 position += 1
                 args.append(expression())
             require(position < len(tokens) and tokens[position][1] == ")", "invalid_formula")
