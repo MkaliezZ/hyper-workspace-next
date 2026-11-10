@@ -1,5 +1,7 @@
 # Hyper Workspace
 
+> **Windows 开发交接 · 2026-11-11**　[PRD](docs/PRD.md) · [接手步骤、已知 CI 问题与待办](docs/WINDOWS-HANDOFF.md) · [阶段源码包](https://github.com/MkaliezZ/hyper-workspace-next/releases)
+
 
 > **扩展阶段开发仓库 hyper-workspace-next** 由首阶段 `61082e0` 派生，按日历排期 → 复杂审批 → 图片 OCR → 复杂表格与 Office 协作推进。 [扩展基线 v2.0](docs/PHASE2-BASELINE.md)
 

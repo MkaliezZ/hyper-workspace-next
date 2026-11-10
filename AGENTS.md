@@ -1,5 +1,9 @@
 # Hyper Workspace 开发规则
 
+## Windows 阶段交接（2026-11-11）
+
+用户要求将当前全部代码、PRD 与接手说明上传 GitHub，由 Windows 端 Codex 继续。先阅读 [接手说明](docs/WINDOWS-HANDOFF.md)和[PRD](docs/PRD.md)，检查当前提交与 Actions，优先诊断其中记录的 Office 真实编辑器加载失败。完整功能范围和验收标准继续以下列基线为准。
+
 ## 当前扩展阶段（用户明确授权）
 
 当前仓库为 `hyper-workspace-next`，由首阶段交付版本 `61082e0d2a872df25e94bb935d073afae9421729` 派生。依次完成：日历排期 → 复杂审批 → 图片 OCR（评估 SoMarkAI/OXR）→ 复杂表格与 Office 协作。不得把 Provider、原型或协议测试通过当作某阶段已交付，也不得将后续功能永久排除。新范围以 [扩展基线](docs/PHASE2-BASELINE.md) 及配套 JSON 为准；原 v1.0 快照保持不变。
