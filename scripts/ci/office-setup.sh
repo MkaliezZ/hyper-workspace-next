@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+: "${NC_TEST_PASSWORD:?Synthetic CI password required}"
 
 # This script targets the disposable Nextcloud fixture created by nextcloud-setup.sh.
 python3 runtime/nextcloud/install-office.py
@@ -39,6 +40,10 @@ docker exec --user root hyper-nextcloud-test chmod 644 /var/www/html/config/zz-h
 docker exec -i hyper-nextcloud-test php /dev/stdin /var/www/html/config/zz-hyper-office-settings.config.php "$office_ip" < tests/fixtures/office-settings.php
 occ config:system:set trusted_domains 9 --value=nextcloud
 occ app:enable richdocuments
+for employee in office-alice office-bob; do
+  docker exec --user www-data --env OC_PASS="$NC_TEST_PASSWORD" hyper-nextcloud-test php occ user:add --password-from-env "$employee"
+  occ group:adduser hyper-members "$employee"
+done
 occ config:app:set richdocuments wopi_allowlist --value="$office_ip"
 occ richdocuments:activate-config --wopi-url=http://collabora:9980 --callback-url=http://nextcloud
 test "$(occ config:app:get richdocuments installed_version)" = 10.3.3

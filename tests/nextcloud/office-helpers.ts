@@ -163,7 +163,7 @@ export async function observeOffice(
           record(page, {
             kind: "socket-protocol-error",
             route,
-            command: ["internal", "storage", "load", "socket"].includes(
+            command: ["internal", "storage", "load", "save", "socket"].includes(
               command ?? "",
             )
               ? command
@@ -171,6 +171,9 @@ export async function observeOffice(
             reason: [
               "unauthorized",
               "loadfailed",
+              "savefailed",
+              "saveunauthorized",
+              "renamefailed",
               "faileddocloading",
               "docloadtimeout",
               "docunloading",
@@ -357,6 +360,7 @@ export async function observeOffice(
   }
   return {
     hasLoaded: (page: Page) => !!loaded(page),
+    loadedFrame: (page: Page) => loaded(page),
     async waitForLoaded(page: Page, timeout = 60000) {
       await expect
         .poll(
