@@ -66,3 +66,5 @@ docker compose --env-file .env.compose -f compose.yaml -f deploy/compose.local-o
 [CPU 服务首轮 Linux 容器检查 42863084490](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42863084490) 通过既有产品容器用例后发现，RapidTable 首次导入会创建包内目录，导致只读 OCR 容器启动失败。现已在镜像构建时完成首次导入，运行时保持只读。
 
 [只读启动复验 42864784410](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42864784410) 中 OCR、API 和 Worker 容器均达到健康状态。其后的识别探针漏加载产品运行时使用的 `tsx`，已补齐加载参数。
+
+修正后的 [Linux 部署任务 42866355777](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42866355777) 已通过。只读 CPU OCR 容器通过健康检查，API 容器使用正式 `OcrProvider` 读取合成 PNG，返回标题、自动定位表格和全部 12 个预期单元格。

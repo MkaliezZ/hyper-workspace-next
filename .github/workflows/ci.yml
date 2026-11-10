@@ -129,6 +129,12 @@ jobs:
         run: npm run test:nextcloud -- calendar-meeting.spec.ts calendar.spec.ts
       - name: Verify other real Nextcloud workflows
         run: npm run test:nextcloud -- files.spec.ts login.spec.ts notifications.spec.ts search.spec.ts talk.spec.ts
+      - name: Verify the real Nextcloud Office editor
+        env:
+          NEXTCLOUD_OFFICE_ENABLED: "true"
+        run: |
+          bash scripts/ci/office-setup.sh
+          npm run test:nextcloud -- office.spec.ts
       - if: failure()
         run: |
           if docker inspect hyper-nextcloud-test >/dev/null 2>&1; then
