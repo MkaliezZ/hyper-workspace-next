@@ -7,7 +7,7 @@
 
 员工可以查看有权访问的来源日历和七天周视图，创建单次、全天或重复日程，修改文字、调整时间、取消某次重复实例，并核对来源回执。新建支持按天、周、月、年重复，定时日程可以指定 IANA 时区。Nextcloud 连接完成后，设置 `NEXTCLOUD_CALENDAR_ENABLED=true` 并重启 API。人工、DSH 和 Hermes 共用后端权限、版本与回执检查。AI 可以查询选定窗口、执行员工已确认的修改计划，或核对忙闲和候选时段。私人执行记录可刷新找回。
 
-忙闲查询支持在多个获准日历中，按指定时区、工作日、工作时间和会议时长合并占用、识别冲突并列出候选时段。来源时间无法确定时，结果会指出疑点并暂缓推荐。可以从候选时段直接新建日程。确认提交前会重新核对所选日历，若时段被占用则停止写入。整组重复规则可调整，原有例外会保留。在日程中可选择项目或待办建立仅本人可见的关联，适用于整个重复系列。人工、DSH 和 Hermes 保存前同时核对来源日历和目标权限。真实模型验收仍待完成。 [日历能力与验证记录](docs/CALENDAR.md)
+忙闲查询支持在多个获准日历中，按指定时区、工作日、工作时间和会议时长合并占用、识别冲突并列出候选时段。来源时间无法确定时，结果会指出疑点并暂缓推荐。可以从候选时段直接新建日程。确认提交前会重新核对所选日历，若时段被占用则停止写入。整组重复规则可调整，原有例外会保留。在日程中可选择项目或待办建立仅本人可见的关联，适用于整个重复系列。人工、DSH 和 Hermes 保存前同时核对来源日历和目标权限。DSH 和 Hermes 已各用真实模型通过忙闲查询、候选预约及私人关联检查。 [日历能力与验证记录](docs/CALENDAR.md)
 
 会议支持从本人日历选择当前企业员工并确认发出邀请。参会人可接受、暂定或拒绝，组织者可查看回复、修改单次会议的时间和信息，或确认取消。回执分开记录来源保存、送达和参会回复。人工、DSH 和 Hermes 共用相同操作入口。整组会议改期和含单次例外的参会回复仍待补齐。真实来源送达、改期与取消按当前提交的 Actions 核验。 [会议邀请回执](docs/images/calendar-invitation-mobile.png)
 
@@ -18,6 +18,12 @@
 [候选时段预约与提交前复核](docs/images/calendar-booking-desktop.png) · [手机日程关联](docs/images/calendar-link-mobile.png)（合成测试资料）
 
 [手机上的 AI 排期回执](docs/images/calendar-availability-mobile.png) · [日历周视图](docs/images/calendar-desktop.png) · [日历手机界面](docs/images/calendar-mobile.png) · [手机重复规则与指定时区](docs/images/calendar-recurrence-mobile.png)
+
+## 复杂审批开发进展
+
+审批工作台已支持发布版本化流程、填写表单、条件分支、串行阶段、并行步骤与多人会签。管理员可视化配置字段、阶段、审批人和条件，也可导入 JSON。员工可以确认提交、同意、拒绝、退回重提、撤回、转交或发起站内催办，结果可在申请详情中核对。双执行器入口继续开发。 [审批能力与接口](docs/APPROVALS.md) · [桌面工作台](docs/images/approvals-desktop.png) · [手机确认审批](docs/images/approvals-mobile.png)（合成资料）
+
+![可视化审批流程设计器，合成资料](docs/images/approval-builder.png)
 
 [![CI](https://github.com/MkaliezZ/hyper-workspace-next/actions/workflows/ci.yml/badge.svg)](https://github.com/MkaliezZ/hyper-workspace-next/actions/workflows/ci.yml)
 

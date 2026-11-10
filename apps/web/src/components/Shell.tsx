@@ -10,6 +10,7 @@ import {
   PanelRight,
   Menu,
   CalendarDays,
+  ClipboardCheck,
 } from "lucide-react";
 import type { Project, WorkspaceView } from "@hyper/contracts";
 export type Section =
@@ -19,12 +20,14 @@ export type Section =
   | "settings"
   | "enterprise"
   | "organization"
-  | "calendar";
+  | "calendar"
+  | "approvals";
 const navigation = [
   { id: "messages", label: "消息", Icon: MessageSquare },
   { id: "enterprise", label: "企业消息", Icon: MessagesSquare },
   { id: "organization", label: "通讯录", Icon: Users },
   { id: "calendar", label: "日历", Icon: CalendarDays },
+  { id: "approvals", label: "审批", Icon: ClipboardCheck },
   { id: "projects", label: "项目", Icon: Folder },
   { id: "knowledge", label: "知识库", Icon: FileText },
   { id: "settings", label: "设置", Icon: Settings },

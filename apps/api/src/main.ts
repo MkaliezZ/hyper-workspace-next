@@ -1,6 +1,7 @@
 import { NotificationPolicyService } from "./core/notification-policy.js";
 import { CalendarService } from "./core/calendar.js";
 import { CalendarRunService } from "./core/calendar-runs.js";
+import { ApprovalService } from "./core/approvals.js";
 import {
   CalendarCommandInput,
   CalendarQuery,
@@ -188,6 +189,40 @@ class ApiController {
     );
     await queue.enqueue(run.id);
     return run;
+  }
+  @Get("approvals/flows") async approvalFlows(@Req() req: Request) {
+    return new ApprovalService(db).flows(await subject(req));
+  }
+  @Post("approvals/flows") async publishApprovalFlow(
+    @Req() req: Request,
+    @Body() body: unknown,
+  ) {
+    return new ApprovalService(db).publish(await subject(req), body);
+  }
+  @Get("approvals/requests") async approvalRequests(@Req() req: Request) {
+    return new ApprovalService(db).list(await subject(req));
+  }
+  @Get("approvals/reminders") async approvalReminders(@Req() req: Request) {
+    return new ApprovalService(db).reminders(await subject(req));
+  }
+  @Post("approvals/requests") async openApprovalRequest(
+    @Req() req: Request,
+    @Body() body: unknown,
+  ) {
+    return new ApprovalService(db).open(await subject(req), body);
+  }
+  @Get("approvals/requests/:id") async approvalRequest(
+    @Req() req: Request,
+    @Param("id") id: string,
+  ) {
+    return new ApprovalService(db).detail(await subject(req), uuid(id));
+  }
+  @Post("approvals/requests/:id/actions") async approvalAction(
+    @Req() req: Request,
+    @Param("id") id: string,
+    @Body() body: unknown,
+  ) {
+    return new ApprovalService(db).action(await subject(req), uuid(id), body);
   }
   @Get("calendar/calendars") async calendars(@Req() req: Request) {
     return new CalendarService(db).calendars(await subject(req));

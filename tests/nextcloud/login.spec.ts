@@ -4,6 +4,8 @@ import { Database } from "../../apps/api/src/db/database.js";
 import { Vault } from "../../apps/api/src/core/credentials.js";
 import { execFileSync } from "node:child_process";
 import { Agent, get } from "node:http";
+import { randomUUID } from "node:crypto";
+import type { BrowserContext } from "@playwright/test";
 const db = new Database(process.env.TEST_DATABASE_URL);
 if (!source || !password || !process.env.TEST_DATABASE_URL?.endsWith("_test"))
   throw new Error(
@@ -290,5 +292,108 @@ test("Upstream admin status does not grant product admin; flow endpoints enforce
     expect((await view(context)).status()).toBe(401);
   } finally {
     await context.close();
+  }
+});
+
+test("An approval assignment requires current real Nextcloud membership at the moment of signing", async ({
+  browser,
+}) => {
+  test.setTimeout(180000);
+  const reviewerUid = "calendar-bob";
+  const contexts: BrowserContext[] = [];
+  let revoked = false;
+  async function employee(uid: string) {
+    const loginResult = await login(browser, uid);
+    contexts.push(loginResult.context);
+    await expect
+      .poll(async () => (await view(loginResult.context)).status())
+      .toBe(200);
+    const workspace = await (await view(loginResult.context)).json();
+    return { context: loginResult.context, user: workspace.user };
+  }
+  const post = (context: BrowserContext, path: string, data: object) =>
+    context.request.post(origin + "/api/approvals/" + path, {
+      headers: { Origin: origin },
+      data: { ...data, idempotencyKey: randomUUID() },
+    });
+  try {
+    const admin = await employee("employee-one");
+    const applicant = await employee("calendar-alice");
+    const reviewer = await employee(reviewerUid);
+    const publication = await post(admin.context, "flows", {
+      definition: {
+        title: "Synthetic approval source boundary",
+        fields: [
+          { key: "reason", label: "Reason", kind: "text", required: true },
+        ],
+        stages: [
+          {
+            label: "Review",
+            steps: [
+              {
+                key: "sign",
+                label: "Sign",
+                reviewers: [reviewer.user.id],
+                requiredApprovals: 1,
+              },
+            ],
+          },
+        ],
+      },
+    });
+    await expect(publication).toBeOK();
+    const { id: flowId, version } = await publication.json();
+    const created = await post(applicant.context, "requests", {
+      flowId,
+      version,
+    });
+    await expect(created).toBeOK();
+    const draft = await created.json();
+    const actions = "requests/" + draft.id + "/actions";
+    const submitted = await post(applicant.context, actions, {
+      operation: "submit",
+      expectedRevision: draft.revision,
+      form: { reason: "Synthetic scenario" },
+      confirmed: true,
+    });
+    await expect(submitted).toBeOK();
+    const active = await submitted.json();
+    await expect(
+      await reviewer.context.request.get(
+        origin + "/api/approvals/requests/" + draft.id,
+      ),
+    ).toBeOK();
+    await group("DELETE", reviewerUid);
+    revoked = true;
+    const vote = {
+      operation: "review",
+      attempt: active.attempt,
+      step: "sign",
+      assignmentVersion: 1,
+      decision: "approve",
+      confirmed: true,
+    };
+    expect((await post(reviewer.context, actions, vote)).status()).toBe(403);
+    const unchanged = await applicant.context.request.get(
+      origin + "/api/approvals/requests/" + draft.id,
+    );
+    await expect(unchanged).toBeOK();
+    expect(await unchanged.json()).toMatchObject({
+      state: "active",
+      revision: active.revision,
+    });
+    await group("POST", reviewerUid);
+    revoked = false;
+    const restored = await employee(reviewerUid);
+    expect(restored.user.id).toBe(reviewer.user.id);
+    const signed = await post(restored.context, actions, vote);
+    await expect(signed).toBeOK();
+    expect(await signed.json()).toMatchObject({
+      state: "approved",
+      revision: active.revision + 1,
+    });
+  } finally {
+    if (revoked) await group("POST", reviewerUid);
+    await Promise.all(contexts.map((context) => context.close()));
   }
 });

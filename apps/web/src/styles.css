@@ -2798,3 +2798,91 @@ p {
 .calendar-slots li button {
   margin-inline-start: .4rem;
 }
+
+.approval-panel {
+  padding: clamp(16px, 3vw, 32px);
+  display: grid;
+  gap: 20px;
+  color: #121a29;
+}
+.approval-heading,
+.approval-intake,
+.approval-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.approval-heading { justify-content: space-between; }
+.approval-heading h2,
+.approval-heading h3,
+.approval-heading p { margin: 0; }
+.approval-heading p { color: #50617b; margin-top: 6px; }
+.approval-intake label,
+.approval-form label { display: grid; gap: 6px; min-width: 0; }
+.approval-intake label { min-width: min(220px, 100%); }
+.approval-workspace {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(0, 3fr);
+  align-items: start;
+  gap: 16px;
+}
+.approval-list, .approval-case, .approval-reminders {
+  border: 1px solid #d9e1ed;
+  border-radius: 12px;
+  background: #fff;
+  padding: 16px;
+  min-width: 0;
+}
+.approval-list, .approval-case, .approval-form {
+  display: grid;
+  gap: 12px;
+}
+.approval-list h3, .approval-reminders h3 { margin: 0; }
+.approval-list button {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  border: 1px solid #d9e1ed;
+  border-radius: 8px;
+  padding: 10px;
+}
+.approval-list button[aria-current="true"] {
+  background: #eef4ff;
+  border-color: #3167d4;
+  color: #194595;
+}
+.approval-form textarea { resize: vertical; }
+.approval-stage, .approval-audit { border-top: 1px solid #d9e1ed; padding-top: 10px; }
+.approval-stage h4, .approval-fields { margin: 0; }
+.approval-fields dd { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.approval-step ul, .approval-member-search ul, .approval-reminders ul {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0;
+  padding-left: 18px;
+}
+.approval-step li > span { margin-right: 10px; }
+.approval-audit { overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .approval-workspace { grid-template-columns: minmax(0, 1fr); }
+}
+.approval-form fieldset {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+  border: 1px solid #d9e1ed;
+  border-radius: 10px;
+  padding: 12px;
+}
+.approval-form legend { padding: 0 5px; color: #194595; font-weight: 650; }
+.approval-condition {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.approval-condition > label { flex: 1 1 120px; }
+.approval-condition > label > span { display: flex; align-items: center; gap: 6px; }
+.approval-editor-step { background: #f7f9fd; }
+.approval-reviewers ul { overflow-wrap: anywhere; }

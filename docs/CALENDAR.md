@@ -127,3 +127,18 @@ GET `/api/calendar/runs` 返回本人当前授权来源下最近20次日历Run�
 - 真实模型验收需在隔离工作区使用已核准的 chat 连接。每个执行器单独确认员工选定的合成日历计划，检查实际供应商请求、用量状态、宿主回读、来源写入次数和私有 Run。协议模型回归、真实来源 CI、实际供应商调用分别记录。公司内网安装待目标机就绪后另验。
 - `c9a7cf1` 的 verify 与 deployment 已通过，真实 Nextcloud 19 项通过。会议测试已完成两名员工登录和组织者保存，但来源将参会邀请标记为拒绝。Nextcloud 会另行启用邮件邀请插件，而隔离 CI 没有 SMTP。下一轮仅在合成测试容器关闭该插件，保留本地 CalDAV 调度，仍要求参会人实际收到日程、回复回传、改期及取消。失败时报告来源数值状态码，邮件路径与内部日历交付分开验证。 [本轮 Actions](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42779801563) · [Nextcloud 邮件插件开关](https://github.com/nextcloud/server/blob/v33.0.10/apps/dav/lib/Server.php#L326-L339)
 - 新增待办版本与来源对象替换用例后，本地 PostgreSQL/HTTP 280 项通过。手机关联表单按可访问名称操作，无横向溢出。
+- `5d5bf6f` 的真实 CalDAV 步骤已通过。实际 Nextcloud 观察到内部邀请、参会回复回传、组织者改期和取消。另一用例覆盖候选预约、重复例外、共享撤权，以及关联保存和移除时来源 ETag 与内容保持。该运行的其他任务见 [当前 Actions](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42782886569)。
+- 同一提交的 verify、nextcloud-identity 和 deployment 全部通过。日志确认 99 项单元、280 项 PostgreSQL/HTTP、10 项原生运行、87 项浏览器、20 项真实 Nextcloud（2 项日历与 18 项其他工作流）和 7 项部署检查通过。
+
+## 双执行器真实模型验收
+
+2026-11-10 在隔离的本机数据库副本上，沿用已验证的 `deepseek-flash` 个人连接和仓库锁定的 DSH、Hermes。来源为回环合成 CalDAV，项目也是合成资料。测试使用原来的执行规则和模型连接配置。 [供应商模型说明](https://api-docs.deepseek.com/updates/)
+
+| 执行器 | 忙闲查询 tokens | 预约 tokens | 私人关联 tokens |
+| --- | ---: | ---: | ---: |
+| DSH | 3006 / 134 | 3108 / 33 | 2922 / 95 |
+| Hermes | 3701 / 212 | 3818 / 258 | 3626 / 188 |
+
+每格为供应商报告的输入 / 输出 tokens。六次请求均为 HTTP 200、传输完成、用量已报告。连接在产品内没有适用价格版本，费用状态为 `unpriced`。两次预约均保存提交前复核时间并通过宿主回读，合成来源共写入两次。忙闲查询与私人关联未产生来源写入。六条 Run 均为私人执行，运行目录已清理，数据库副本已关闭并移除。
+
+真实 Nextcloud 的共享撤权、预约、重复例外、邀请、回传、改期、取消及关联读取由独立 CI 验证。公司内网安装待目标机就绪。扩展开发按顺序进入复杂审批。
