@@ -727,6 +727,9 @@ test("Lost or changed file access removes cached previews and private knowledge 
   await page.route("**/api/files/imports/*", (route) =>
     route.fulfill({ json: { id, title, content, sourceVersion: "v1:hash" } }),
   );
+  await page.route("**/api/knowledge/source-access", (route) =>
+    route.fulfill({ json: { versions: revoked ? {} : { [id]: "v1:hash" } } }),
+  );
   await page.route("**/api/knowledge?*", (route) =>
     route.fulfill({
       json: [

@@ -138,6 +138,9 @@ export function OcrPanel({
       <p className="muted">
         {file.name} · 第 {page} 页 · 私人资料
       </p>
+      <p className="muted">
+        确认版本可在个人知识库检索，语义索引由你另行选择建立。
+      </p>
       <div className="ocr-actions">
         {file.mime === "application/pdf" ? (
           <form

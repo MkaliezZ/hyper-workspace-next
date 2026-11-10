@@ -32,6 +32,7 @@ type Source = {
 };
 type OcrDocument = {
   id: string;
+  asset_id: string | null;
   provider_key: string;
   source_uid: string;
   source_file_id: string;
@@ -302,6 +303,121 @@ export class OcrService {
     return this.result(head.rows[0]!, row);
   }
 
+  /** The confirmed version stays indexed while an employee works on a later draft. */
+  private async publishConfirmedAsset(
+    c: Queryable,
+    s: Subject,
+    document: OcrDocument,
+    result: OcrResult,
+  ) {
+    const id = document.asset_id ?? randomUUID();
+    const title = result.title + " · 第 " + result.source.page + " 页（OCR）";
+    const sourceRef = "ocr:" + document.id + "#page=" + document.page;
+    const content = result.content.blocks
+      .map((block, index) =>
+        block.text.trim()
+          ? "[第 " +
+            document.page +
+            " 页 · 块 " +
+            (index + 1) +
+            "]\n" +
+            block.text
+          : "",
+      )
+      .filter(Boolean)
+      .join("\n\n");
+    const version = "ocr:" + result.revision;
+    if (document.asset_id) {
+      const updated = await c.query(
+        `UPDATE cw_assets SET title=$2,content=$3,source_version=$4,updated_at=clock_timestamp()
+         WHERE id=$1 AND workspace_id=$5 AND owner_id=$6 AND type='ocr' AND visibility='private'
+           AND validity='active' AND project_id IS NULL AND deleted_at IS NULL`,
+        [id, title, content, version, s.workspaceId, s.id],
+      );
+      if (!updated.rowCount) throw new ConflictException("原 OCR 资料已变化。");
+      return;
+    }
+    await c.query(
+      `INSERT INTO cw_assets(id,workspace_id,owner_id,visibility,title,content,type,source_ref,source_version)
+       VALUES($1,$2,$3,'private',$4,$5,'ocr',$6,$7)`,
+      [id, s.workspaceId, s.id, title, content, sourceRef, version],
+    );
+    await c.query("UPDATE cw_ocr_documents SET asset_id=$2 WHERE id=$1", [
+      document.id,
+      id,
+    ]);
+  }
+
+  async verifyAssets(s: Subject, ids?: string[]) {
+    const allowed = new Map<string, string>();
+    if (
+      s.demo ||
+      !s.identityCredentialId ||
+      ids?.length === 0 ||
+      process.env.NEXTCLOUD_FILES_ENABLED !== "true"
+    )
+      return allowed;
+    const documents = (
+      await this.db.pool.query<OcrDocument>(
+        `SELECT d.* FROM cw_ocr_documents d JOIN cw_assets a ON a.id=d.asset_id
+       WHERE d.workspace_id=$1 AND d.actor_id=$2 AND d.invalidated_at IS NULL
+         AND d.confirmed_revision IS NOT NULL AND a.type='ocr' AND a.visibility='private'
+         AND a.workspace_id=$1 AND a.owner_id=$2 AND a.project_id IS NULL AND a.deleted_at IS NULL
+         AND a.validity='active' AND ($3::uuid[] IS NULL OR d.asset_id=ANY($3::uuid[]))`,
+        [s.workspaceId, s.id, ids ?? null],
+      )
+    ).rows;
+    if (!documents.length) return allowed;
+    let source: Source;
+    try {
+      source = await this.connection(s);
+    } catch (error) {
+      if (error instanceof ServiceUnavailableException) return allowed;
+      throw error;
+    }
+    const groups = new Map<string, OcrDocument[]>();
+    for (const document of documents) {
+      const binding = stableDigest([
+        document.provider_key,
+        document.source_uid,
+        document.source_file_id,
+        document.source_etag,
+        document.source_path,
+        document.source_size,
+        document.source_mime,
+      ]);
+      const group = groups.get(binding);
+      if (group) group.push(document);
+      else groups.set(binding, [document]);
+    }
+    const batches = [...groups.values()];
+    for (let offset = 0; offset < batches.length; offset += 4) {
+      await Promise.all(
+        batches.slice(offset, offset + 4).map(async (group) => {
+          try {
+            await this.checkDocument(s, group[0]!, source);
+            for (const document of group)
+              allowed.set(
+                document.asset_id!,
+                "ocr:" + document.confirmed_revision,
+              );
+          } catch (error) {
+            if (
+              !(
+                error instanceof NotFoundException ||
+                error instanceof ServiceUnavailableException ||
+                (error instanceof FileSourceRejected &&
+                  error.getStatus() === 429)
+              )
+            )
+              throw error;
+          }
+        }),
+      );
+    }
+    return allowed;
+  }
+
   async lookup(s: Subject, selection: OcrSource) {
     const source = await this.connection(s);
     const known = await this.active(this.db.pool, s, source, selection);
@@ -435,13 +551,15 @@ export class OcrService {
           text: input.texts[index],
         })),
       });
-      return this.append(c, document, {
+      const confirmed = await this.append(c, document, {
         content,
         engine: current.engine,
         key: input.idempotencyKey,
         hash,
         state: "confirmed",
       });
+      await this.publishConfirmedAsset(c, s, document, confirmed);
+      return confirmed;
     });
   }
 }

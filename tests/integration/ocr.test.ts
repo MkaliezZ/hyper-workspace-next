@@ -3,6 +3,10 @@ import { createServer } from "node:http";
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { Database } from "../../apps/api/src/db/database.js";
+import { KnowledgeService } from "../../apps/api/src/core/knowledge.js";
+import { KnowledgeContextService } from "../../apps/api/src/core/knowledge-context.js";
+import { WorkspaceService } from "../../apps/api/src/core/workspace.js";
+import { engineRegistry } from "../../apps/api/src/engines/adapters.js";
 import { OcrService } from "../../apps/api/src/core/ocr.js";
 import { ocrEndpoint } from "../../apps/api/src/core/ocr-provider.js";
 import { createCalendarScope } from "../fixtures/calendar-scope.js";
@@ -12,6 +16,10 @@ if (!url || !new URL(url).pathname.endsWith("_test"))
   throw Error("Isolated _test database required");
 const db = new Database(url);
 const service = new OcrService(db);
+const workspace = new WorkspaceService(db, engineRegistry());
+const knowledge = new KnowledgeService(db);
+const knowledgeContext = new KnowledgeContextService(db);
+const embeddingInputs: string[] = [];
 let identity: Awaited<ReturnType<typeof createCalendarScope>>;
 let requests = 0;
 let respond: "ok" | "error" | "wrong-bounds" = "ok";
@@ -20,6 +28,20 @@ const bytes = Buffer.from(
   "Synthetic OCR image or scan bytes used only in protocol tests.",
 );
 const engine = createServer(async (req, res) => {
+  if (req.url === "/v1/embeddings") {
+    let raw = "";
+    for await (const chunk of req) raw += chunk;
+    const input: string[] = JSON.parse(raw).input;
+    embeddingInputs.push(...input);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(
+      JSON.stringify({
+        data: input.map((_, index) => ({ index, embedding: [1, 0] })),
+        usage: { prompt_tokens: 10, total_tokens: 10 },
+      }),
+    );
+    return;
+  }
   requests++;
   assert.equal(req.method, "POST");
   assert.equal(req.url, "/recognize");
@@ -95,6 +117,7 @@ test("Selected OCR pages are private, versioned and explicitly confirmed without
   assert.equal(draft.state, "draft");
   assert.equal(draft.revision, 1);
   assert.equal(draft.confirmedRevision, null);
+  assert.deepEqual(await workspace.search(actor, "合成测试"), []);
   const calls = requests;
   assert.deepEqual(await service.recognize(actor, request), draft);
   assert.equal(requests, calls);
@@ -125,6 +148,40 @@ test("Selected OCR pages are private, versioned and explicitly confirmed without
     first.content.blocks[0]!.bounds,
     draft.content.blocks[0]!.bounds,
   );
+  const [asset] = await workspace.search(actor, "已校对");
+  assert.equal(asset.type, "ocr");
+  assert.equal(asset.sourceVersion, "ocr:2");
+  assert.equal(asset.sourceRef, "ocr:" + draft.id + "#page=1");
+  assert.match(asset.content, /第 1 页 · 块 1/);
+  assert.deepEqual(await workspace.search(peer, "已校对"), []);
+  const endpoint =
+    "http://127.0.0.1:" + (engine.address() as { port: number }).port + "/v1";
+  const profile = await workspace.saveModel(actor, {
+    name: "Synthetic OCR embedding",
+    provider: "openai-compatible",
+    endpoint,
+    model: "synthetic-ocr-2d",
+    purpose: "embedding",
+    scope: "personal",
+    apiKey: "synthetic-ocr-index-key",
+  });
+  assert.deepEqual(
+    (await knowledge.index(actor, [asset.id], profile.id)).indexed,
+    [asset.id],
+  );
+  assert.ok(embeddingInputs.some((value) => value.includes("已校对")));
+  assert.ok(!embeddingInputs.some((value) => value.includes("合成测试")));
+  assert.equal(
+    (await knowledge.semantic(actor, "已校对", profile.id, [asset.id]))[0]!.id,
+    asset.id,
+  );
+  const plan = {
+    mode: "keyword" as const,
+    query: "已校对",
+    assetRefs: [{ id: asset.id, sourceVersion: "ocr:2" }],
+  };
+  const context = await knowledgeContext.context(actor, plan);
+  assert.ok(context.excerpts.some((value) => value.content.includes("已校对")));
   await assert.rejects(
     service.confirm(actor, draft.id, { ...payload, texts: ["不同", "不同"] }),
     /不能更换/,
@@ -154,8 +211,31 @@ test("Selected OCR pages are private, versioned and explicitly confirmed without
     (await service.detail(actor, draft.id, 2)).content.blocks[0]!.text,
     "已校对",
   );
+  assert.equal(
+    (await workspace.search(actor, "已校对"))[0]!.sourceVersion,
+    "ocr:2",
+  );
+  assert.deepEqual(await workspace.search(actor, "合成测试"), []);
   file.blockedDownloads.add("alice");
-  await assert.rejects(service.detail(actor, draft.id), /旧识别内容已清理/);
+  assert.deepEqual(await workspace.search(actor, "已校对"), []);
+  assert.deepEqual(
+    await knowledge.semantic(actor, "已校对", profile.id, [asset.id]),
+    [],
+  );
+  await assert.rejects(knowledgeContext.prepare(actor, plan), /来源权限已变化/);
+  const stored = (
+    await db.pool.query(
+      "SELECT content,embedding,validity,(SELECT count(*)::int FROM cw_asset_chunks WHERE asset_id=$1) AS chunks FROM cw_assets WHERE id=$1",
+      [asset.id],
+    )
+  ).rows[0];
+  assert.deepEqual(stored, {
+    content: "",
+    embedding: null,
+    validity: "source_unavailable",
+    chunks: 0,
+  });
+  await assert.rejects(service.detail(actor, draft.id), /来源已失效/);
   assert.equal(
     (
       await db.pool.query(

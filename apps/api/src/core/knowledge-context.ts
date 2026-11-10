@@ -8,7 +8,7 @@ import { KnowledgePlan, type Subject } from "@hyper/contracts";
 import type { PoolClient } from "pg";
 import type { Database } from "../db/database.js";
 import { ProjectAccess } from "./project-access.js";
-import { SourceFileService } from "./source-files.js";
+import { verifyKnowledgeSources } from "./knowledge-sources.js";
 import { MethodsService } from "./methods.js";
 import { KnowledgeService } from "./knowledge.js";
 import { assertMember } from "./security.js";
@@ -24,11 +24,11 @@ export class KnowledgeContextService {
       access = new ProjectAccess(this.db);
     await assertMember(this.db, s);
     const projects = await access.visibleIds(s),
-      files = await new SourceFileService(this.db).verify(s, ids);
+      files = await verifyKnowledgeSources(this.db, s, ids);
     const rows = (
       await this.db.pool.query(
-        `SELECT id,title,content,source_ref AS "sourceRef",source_version AS "sourceVersion",project_id,EXISTS(SELECT 1 FROM cw_source_files f WHERE f.asset_id=cw_assets.id) AS "fileSource" FROM cw_assets WHERE workspace_id=$1 AND id=ANY($2::uuid[]) AND deleted_at IS NULL AND validity='active' AND (visibility='workspace' OR owner_id=$3) AND (project_id IS NULL OR project_id=ANY($4::uuid[])) AND (NOT EXISTS(SELECT 1 FROM cw_source_files f WHERE f.asset_id=cw_assets.id) OR id=ANY($5::uuid[])) ORDER BY id`,
-        [s.workspaceId, ids, s.id, projects, [...files.allowed.keys()]],
+        `SELECT id,title,content,source_ref AS "sourceRef",source_version AS "sourceVersion",project_id,EXISTS(SELECT 1 FROM cw_source_bound_assets f WHERE f.asset_id=cw_assets.id) AS "fileSource" FROM cw_assets WHERE workspace_id=$1 AND id=ANY($2::uuid[]) AND deleted_at IS NULL AND validity='active' AND (visibility='workspace' OR owner_id=$3) AND (project_id IS NULL OR project_id=ANY($4::uuid[])) AND (NOT EXISTS(SELECT 1 FROM cw_source_bound_assets f WHERE f.asset_id=cw_assets.id) OR id=ANY($5::uuid[])) ORDER BY id`,
+        [s.workspaceId, ids, s.id, projects, [...files.keys()]],
       )
     ).rows;
     if (

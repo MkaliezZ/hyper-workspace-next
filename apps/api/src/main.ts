@@ -1,3 +1,4 @@
+import { verifyKnowledgeSources } from "./core/knowledge-sources.js";
 import { OcrCorrection, OcrRecognition, OcrSource } from "@hyper/contracts/ocr";
 import { OcrService } from "./core/ocr.js";
 import { ApprovalRunInput } from "@hyper/contracts/approvals";
@@ -815,6 +816,13 @@ class ApiController {
   ) {
     z.object({}).strict().parse(body);
     return new SourceFileService(db).refresh(await subject(req), uuid(id));
+  }
+  @Post("knowledge/source-access") async knowledgeSourceAccess(
+    @Req() req: Request,
+    @Body() body: unknown,
+  ) {
+    const input = z.object({ ids: z.array(z.uuid()).min(1).max(50) }).strict().parse(body);
+    return { versions: Object.fromEntries(await verifyKnowledgeSources(db, await subject(req), input.ids)) };
   }
   @Post("knowledge/index") async indexKnowledge(
     @Req() req: Request,

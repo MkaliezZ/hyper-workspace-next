@@ -24,6 +24,9 @@ interface KnowledgeResult {
     reference: string;
   }[];
 }
+const sourceBound = (row: { type?: string }) =>
+  row.type === "source_file" || row.type === "ocr";
+
 export function KnowledgePanel({
   busy,
   act,
@@ -63,31 +66,29 @@ export function KnowledgePanel({
     };
   }, [view.user.id, view.project.id]);
   const surface = usePageTransition<HTMLDivElement>(tab);
-  const hasFileResults = results.some((row) => row.type === "source_file");
+  const hasFileResults = results.some(sourceBound);
   useEffect(() => {
     if (!hasFileResults) return;
     let alive = true,
       inFlight = false;
     const refresh = async () => {
       if (inFlight || document.visibilityState !== "visible") return;
+      const ids = latestResults.current
+        .filter(sourceBound)
+        .map((row) => row.id);
+      if (!ids.length) return;
+      const started = generation.current;
       inFlight = true;
       try {
-        const values =
-          await api<{ id: string; state: string; sourceVersion?: string }[]>(
-            "/files/imports",
-          );
-        if (alive) {
+        const { versions } = await mutation<{
+          versions: Record<string, string>;
+        }>("/knowledge/source-access", { ids });
+        if (alive && started === generation.current) {
           const invalid = new Set(
             latestResults.current
               .filter(
                 (row) =>
-                  row.type === "source_file" &&
-                  !values.some(
-                    (file) =>
-                      file.id === row.id &&
-                      file.state === "ready" &&
-                      file.sourceVersion === row.sourceVersion,
-                  ),
+                  sourceBound(row) && versions[row.id] !== row.sourceVersion,
               )
               .map((row) => row.id),
           );
@@ -98,14 +99,10 @@ export function KnowledgePanel({
           }
         }
       } catch {
-        if (alive) {
+        if (alive && started === generation.current) {
           generation.current++;
-          setResults((rows) =>
-            rows.filter((row) => row.type !== "source_file"),
-          );
-          setSelected((rows) =>
-            rows.filter((row) => row.type !== "source_file"),
-          );
+          setResults((rows) => rows.filter((row) => !sourceBound(row)));
+          setSelected((rows) => rows.filter((row) => !sourceBound(row)));
         }
       } finally {
         inFlight = false;

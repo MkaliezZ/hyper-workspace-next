@@ -1,3 +1,4 @@
+import { verifyKnowledgeSources } from "./knowledge-sources.js";
 import { ApprovalRunInput } from "@hyper/contracts/approvals";
 import { ApprovalRunService } from "./approval-runs.js";
 import { NotificationPolicyService } from "./notification-policy.js";
@@ -273,21 +274,20 @@ export class WorkspaceService {
     await assertMember(this.db, s);
     if (!query.trim()) return [];
     const projectIds = await this.access.visibleIds(s);
-    const files = new SourceFileService(this.db),
-      fileAccess = await files.verify(s);
+    const fileAccess = await verifyKnowledgeSources(this.db, s);
     const r = await this.db.pool.query(
-      'SELECT id,title,content,type,project_id,updated_at::text AS "assetUpdatedAt",EXISTS(SELECT 1 FROM cw_source_files f WHERE f.asset_id=cw_assets.id) AS "fileSource",source_ref AS "sourceRef",source_version AS "sourceVersion" FROM cw_assets WHERE workspace_id=$1 AND deleted_at IS NULL AND validity=\'active\' AND (visibility=\'workspace\' OR owner_id=$2) AND (project_id IS NULL OR project_id=ANY($4::uuid[])) AND (NOT EXISTS(SELECT 1 FROM cw_source_files f WHERE f.asset_id=cw_assets.id) OR id=ANY($5::uuid[])) AND (title ILIKE $3 OR content ILIKE $3) ORDER BY created_at DESC LIMIT 30',
+      'SELECT id,title,content,type,project_id,updated_at::text AS "assetUpdatedAt",EXISTS(SELECT 1 FROM cw_source_bound_assets f WHERE f.asset_id=cw_assets.id) AS "fileSource",source_ref AS "sourceRef",source_version AS "sourceVersion" FROM cw_assets WHERE workspace_id=$1 AND deleted_at IS NULL AND validity=\'active\' AND (visibility=\'workspace\' OR owner_id=$2) AND (project_id IS NULL OR project_id=ANY($4::uuid[])) AND (NOT EXISTS(SELECT 1 FROM cw_source_bound_assets f WHERE f.asset_id=cw_assets.id) OR id=ANY($5::uuid[])) AND (title ILIKE $3 OR content ILIKE $3) ORDER BY created_at DESC LIMIT 30',
       [
         s.workspaceId,
         s.id,
         "%" + query.replace(/[\\%_]/g, "\\$&") + "%",
         projectIds,
-        [...fileAccess.allowed.keys()],
+        [...fileAccess.keys()],
       ],
     );
     const current = new Set(await this.access.visibleIds(s));
-    const finalFiles = await files.verify(
-      s,
+    const finalFiles = await verifyKnowledgeSources(
+      this.db, s,
       r.rows.filter((row) => row.fileSource).map((row) => row.id),
     );
     const latest = (
@@ -301,7 +301,7 @@ export class WorkspaceService {
       .filter(
         (row) =>
           !row.fileSource ||
-          finalFiles.allowed.get(row.id) === row.sourceVersion,
+          finalFiles.get(row.id) === row.sourceVersion,
       )
       .filter((row) =>
         latest.some(

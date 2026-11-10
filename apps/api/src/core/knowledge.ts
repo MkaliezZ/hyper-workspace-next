@@ -9,7 +9,7 @@ import type { Subject } from "@hyper/contracts";
 import type { Database } from "../db/database.js";
 import { assertMember } from "./security.js";
 import { ProjectAccess } from "./project-access.js";
-import { SourceFileService } from "./source-files.js";
+import { verifyKnowledgeSources } from "./knowledge-sources.js";
 import { ModelService, embed, type ModelConnection } from "./models.js";
 import { MethodsService } from "./methods.js";
 import { stableDigest } from "./credentials.js";
@@ -36,7 +36,7 @@ export class KnowledgeService {
   private async allowed(s: Subject, ids?: string[]) {
     await assertMember(this.db, s);
     const projects = await new ProjectAccess(this.db).visibleIds(s),
-      files = await new SourceFileService(this.db).verify(s, ids);
+      files = await verifyKnowledgeSources(this.db, s, ids);
     return { projects, files };
   }
   async index(s: Subject, ids: string[], modelProfileId?: string) {
@@ -46,13 +46,13 @@ export class KnowledgeService {
       access = new ProjectAccess(this.db),
       rows = (
         await this.db.pool.query(
-          `SELECT id,title,content,source_version,source_version AS "sourceVersion",source_ref AS "sourceRef",project_id,EXISTS(SELECT 1 FROM cw_source_files f WHERE f.asset_id=cw_assets.id) AS "fileSource" FROM cw_assets WHERE id=ANY($1::uuid[]) AND workspace_id=$2 AND deleted_at IS NULL AND validity='active' AND (visibility='workspace' OR owner_id=$3) AND (project_id IS NULL OR project_id=ANY($4::uuid[])) AND (NOT EXISTS(SELECT 1 FROM cw_source_files f WHERE f.asset_id=cw_assets.id) OR id=ANY($5::uuid[])) ORDER BY id`,
+          `SELECT id,title,content,source_version,source_version AS "sourceVersion",source_ref AS "sourceRef",project_id,EXISTS(SELECT 1 FROM cw_source_bound_assets f WHERE f.asset_id=cw_assets.id) AS "fileSource" FROM cw_assets WHERE id=ANY($1::uuid[]) AND workspace_id=$2 AND deleted_at IS NULL AND validity='active' AND (visibility='workspace' OR owner_id=$3) AND (project_id IS NULL OR project_id=ANY($4::uuid[])) AND (NOT EXISTS(SELECT 1 FROM cw_source_bound_assets f WHERE f.asset_id=cw_assets.id) OR id=ANY($5::uuid[])) ORDER BY id`,
           [
             ids,
             s.workspaceId,
             s.id,
             initial.projects,
-            [...initial.files.allowed.keys()],
+            [...initial.files.keys()],
           ],
         )
       ).rows;
@@ -144,7 +144,7 @@ export class KnowledgeService {
                   current.projects.includes(value.project_id)),
             ) &&
             (!row.fileSource ||
-              current.files.allowed.get(row.id) === row.source_version),
+              current.files.get(row.id) === row.source_version),
         );
         if (!send.length) continue;
         // A single supplier request must have an honest project attribution. Do not
@@ -206,7 +206,7 @@ export class KnowledgeService {
       if (
         (row.project_id && !final.projects.includes(row.project_id)) ||
         (row.fileSource &&
-          final.files.allowed.get(row.id) !== row.source_version) ||
+          final.files.get(row.id) !== row.source_version) ||
         chunks.some((chunk) => !vectors.has(row.id + ":" + chunk.ordinal))
       )
         continue;
@@ -331,7 +331,7 @@ export class KnowledgeService {
             (!value.project_id || current.projects.includes(value.project_id)),
         ) &&
         (!row.fileSource ||
-          current.files.allowed.get(row.id) === row.sourceVersion),
+          current.files.get(row.id) === row.sourceVersion),
     );
   }
   async semantic(
@@ -350,8 +350,8 @@ export class KnowledgeService {
       ),
       vector = (await embed(connection, [query]))[0]!,
       current = await this.allowed(s, assetIds);
-    const common = `a.workspace_id=$2 AND a.deleted_at IS NULL AND a.validity='active' AND (a.visibility='workspace' OR a.owner_id=$3) AND (a.project_id IS NULL OR a.project_id=ANY($6::uuid[])) AND (NOT EXISTS(SELECT 1 FROM cw_source_files f WHERE f.asset_id=a.id) OR a.id=ANY($7::uuid[])) AND ($8::uuid[] IS NULL OR a.id=ANY($8::uuid[]))`;
-    const fields = `a.id,a.title,a.type,a.project_id,a.source_ref AS "sourceRef",a.source_version AS "sourceVersion",a.updated_at::text AS "assetUpdatedAt",EXISTS(SELECT 1 FROM cw_source_files f WHERE f.asset_id=a.id) AS "fileSource"`;
+    const common = `a.workspace_id=$2 AND a.deleted_at IS NULL AND a.validity='active' AND (a.visibility='workspace' OR a.owner_id=$3) AND (a.project_id IS NULL OR a.project_id=ANY($6::uuid[])) AND (NOT EXISTS(SELECT 1 FROM cw_source_bound_assets f WHERE f.asset_id=a.id) OR a.id=ANY($7::uuid[])) AND ($8::uuid[] IS NULL OR a.id=ANY($8::uuid[]))`;
+    const fields = `a.id,a.title,a.type,a.project_id,a.source_ref AS "sourceRef",a.source_version AS "sourceVersion",a.updated_at::text AS "assetUpdatedAt",EXISTS(SELECT 1 FROM cw_source_bound_assets f WHERE f.asset_id=a.id) AS "fileSource"`;
     const args = [
       JSON.stringify(vector),
       s.workspaceId,
@@ -359,7 +359,7 @@ export class KnowledgeService {
       connection.id,
       vector.length,
       current.projects,
-      [...current.files.allowed.keys()],
+      [...current.files.keys()],
       assetIds ?? null,
     ];
     const [chunks, legacy] = await Promise.all([
