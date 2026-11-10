@@ -213,6 +213,36 @@ test("Real CalDAV and product UI preserve source permissions, versions, recurrin
       await expect(planner.getByText(/2 段占用/)).toBeVisible({
         timeout: 60000,
       });
+      await planner
+        .getByRole("button", { name: "用此时段新建", exact: true })
+        .first()
+        .click();
+      const bookingEditor = actor.page.getByRole("dialog", {
+        name: "新建日程",
+        exact: true,
+      });
+      await bookingEditor
+        .getByLabel("日程标题", { exact: true })
+        .fill("Synthetic booking from candidate");
+      await bookingEditor
+        .getByRole("button", { name: "确认预约并复核时段", exact: true })
+        .click();
+      await expect(bookingEditor).not.toBeVisible({ timeout: 60000 });
+      const bookings = await (
+        await actor.context.request.get(origin + "/api/calendar/commands")
+      ).json();
+      const booked = bookings.find(
+        (item: any) => item.title === "Synthetic booking from candidate",
+      );
+      expect(booked).toMatchObject({
+        state: "succeeded",
+        observedResult: "matched",
+      });
+      expect(typeof booked.bookingCheckedAt).toBe("string");
+      const observedBooking = await alice.read(calendarId, booked.objectId);
+      expect(observedBooking.ical).toContain("DTSTART:20261104T020000Z");
+      expect(observedBooking.ical).toContain("DTEND:20261104T030000Z");
+      await alice.remove(calendarId, booked.objectId, observedBooking.etag);
       const originalEvent = panel.locator(".calendar-event").filter({
         has: actor.page.getByRole("heading", {
           name: "Synthetic private calendar source test",
@@ -282,6 +312,42 @@ test("Real CalDAV and product UI preserve source permissions, versions, recurrin
       expect(remaining.map((event) => event.start.value)).toEqual([
         "2026-11-11T01:00:00.000Z",
         "2026-11-18T01:00:00.000Z",
+      ]);
+      const revised = await actor.context.request.post(
+        origin + "/api/calendar/commands",
+        {
+          headers: { Origin: origin },
+          data: {
+            operation: "update",
+            scope: "series_rule",
+            calendarId,
+            objectId,
+            etag: seriesEtag,
+            repeat: { frequency: "WEEKLY", interval: 1, count: 4 },
+            idempotencyKey: randomUUID(),
+          },
+        },
+      );
+      await expect(revised).toBeOK();
+      const ruleCommand = await revised.json();
+      const appliedRule = await actor.context.request.post(
+        origin + "/api/calendar/commands/" + ruleCommand.id + "/apply",
+        { headers: { Origin: origin }, data: { confirmed: true } },
+      );
+      await expect(appliedRule).toBeOK();
+      const ruleReceipt = await appliedRule.json();
+      expect(ruleReceipt.state).toBe("succeeded");
+      seriesEtag = ruleReceipt.sourceEtag;
+      const extended = calendarOccurrences(
+        await alice.occurrences(calendarId, {
+          start: "2026-11-01T00:00:00Z",
+          end: "2026-12-01T00:00:00Z",
+        }),
+      ).filter((event) => event.uid === uid);
+      expect(extended.map((event) => event.start.value)).toEqual([
+        "2026-11-11T01:00:00.000Z",
+        "2026-11-18T01:00:00.000Z",
+        "2026-11-25T01:00:00.000Z",
       ]);
       const prepared = await actor.context.request.post(
         origin + "/api/calendar/commands",

@@ -1,12 +1,14 @@
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import ICAL from "ical.js";
+import { Temporal } from "@js-temporal/polyfill";
 import {
   CalendarDraft,
   CalendarPatch,
-  type CalendarInterval,
+  CalendarInterval,
   type CalendarCommandInput,
   type CalendarOccurrence,
-  type CalendarRepeat,
+  CalendarRepeat,
+  type CalendarSeriesRule,
   type CalendarInvitationStatus,
   type CalendarMeeting,
 } from "@hyper/contracts/calendar";
@@ -136,6 +138,145 @@ export function patchCalendarObject(
     bumpSequence(event);
     stamp(root, event, commandId);
   }
+  const changed = root.toString() + "\r\n";
+  calendarUid(changed, true);
+  return changed;
+}
+
+export function readCalendarSeriesRule(ical: string): CalendarSeriesRule {
+  calendarUid(ical, true);
+  const master = meetingMaster(ical);
+  const rules = master
+    .getAllProperties("rrule")
+    .map((property) => property.getFirstValue());
+  if (!rules.length || rules.some((rule) => !(rule instanceof ICAL.Recur)))
+    throw new BadRequestException("来源没有可调整的 RRULE 系列。");
+  const rule = rules.length === 1 ? rules[0] : null;
+  const parsed =
+    rule instanceof ICAL.Recur && !rule.until && !Object.keys(rule.parts).length
+      ? CalendarRepeat.safeParse({
+          frequency: rule.freq,
+          count: rule.count,
+          interval: rule.interval,
+        })
+      : null;
+  return {
+    rules: rules.map(String),
+    simple: parsed?.success ? parsed.data : null,
+    exceptionCount:
+      master.parent!.getAllSubcomponents("vevent").length -
+      1 +
+      master.getAllProperties("exdate").flatMap((p) => p.getValues()).length,
+  };
+}
+
+export function patchCalendarSeriesRule(
+  ical: string,
+  repeat: CalendarRepeat | null,
+  commandId: string,
+) {
+  calendarUid(ical, true);
+  const master = meetingMaster(ical);
+  const root = master.parent!;
+  if (!master.hasProperty("rrule") || master.hasProperty("exrule"))
+    throw new BadRequestException("此来源系列的规则须在来源日历中调整。");
+  const overrides = root
+    .getAllSubcomponents("vevent")
+    .filter((event) => event !== master);
+  if (
+    overrides.some((event) =>
+      event.getFirstProperty("recurrence-id")?.getParameter("range"),
+    )
+  )
+    throw new BadRequestException("含范围例外的规则须在来源日历中调整。");
+  const additions = master
+    .getAllProperties("rdate")
+    .flatMap((p) => p.getValues());
+  const exceptions = [
+    ...master.getAllProperties("exdate").flatMap((p) => p.getValues()),
+    ...overrides.map((event) => event.getFirstPropertyValue("recurrence-id")),
+  ];
+  if (!repeat) {
+    if (additions.length || exceptions.length)
+      throw new ConflictException(
+        "请先处理已有单次例外和附加日期，再取消整组重复。",
+      );
+    master.removeAllProperties("rrule");
+  } else {
+    const event = new ICAL.Event(master);
+    const start = event.startDate,
+      end = event.endDate;
+    if (
+      !start ||
+      !end ||
+      start.isDate !== end.isDate ||
+      (!start.isDate &&
+        (start.zone.tzid === "floating" || end.zone.tzid === "floating"))
+    )
+      throw new BadRequestException("无法核实系列的起止时间与来源时区。");
+    const zone = start.zone;
+    const sourceInterval = CalendarInterval.parse(
+      start.isDate
+        ? { kind: "all_day", start: start.toString(), end: end.toString() }
+        : zone === ICAL.Timezone.utcTimezone
+          ? {
+              kind: "timed",
+              start: start.toString(),
+              end: end.convertToZone(zone).toString(),
+            }
+          : {
+              kind: "zoned",
+              start: start.toString(),
+              end: end.convertToZone(zone).toString(),
+              timeZone: zone.tzid,
+            },
+    );
+    const { rule } = recurrenceHorizon(sourceInterval, repeat);
+    const allowed = new Set([recurrenceKey(start)]);
+    const iter = rule!.iterator(start);
+    for (let i = 0; i < repeat.count; i++) {
+      const occurrence = iter.next();
+      if (!occurrence)
+        throw new BadRequestException("新规则没有足够的有效日期。");
+      if (sourceInterval.kind === "zoned") {
+        const instant = Temporal.PlainDateTime.from(
+          occurrence.toString(),
+        ).toZonedDateTime(sourceInterval.timeZone, {
+          disambiguation: "reject",
+        }).epochMilliseconds;
+        if (instant !== occurrence.toUnixTime() * 1000)
+          throw new ConflictException(
+            "来源时区定义未覆盖新规则，请在来源日历扩展时区定义。",
+          );
+      }
+      allowed.add(recurrenceKey(occurrence));
+    }
+    for (const entry of additions) {
+      const time = entry instanceof ICAL.Period ? entry.start : entry;
+      if (
+        !(time instanceof ICAL.Time) ||
+        time.isDate !== start.isDate ||
+        (!time.isDate && time.zone.tzid === "floating")
+      )
+        throw new ConflictException("附加日期的来源时间无法核实。");
+      allowed.add(recurrenceKey(time));
+    }
+    for (const value of exceptions) {
+      if (
+        !(value instanceof ICAL.Time) ||
+        value.isDate !== start.isDate ||
+        (!value.isDate && value.zone.tzid === "floating") ||
+        !allowed.has(recurrenceKey(value))
+      )
+        throw new ConflictException(
+          "新规则会使已有单次例外失去原实例，请先处理这些例外。",
+        );
+    }
+    master.removeAllProperties("rrule");
+    master.updatePropertyWithValue("rrule", rule!);
+  }
+  bumpSequence(master);
+  stamp(root, master, commandId);
   const changed = root.toString() + "\r\n";
   calendarUid(changed, true);
   return changed;
@@ -427,13 +568,26 @@ export function patchCalendarMeeting(
   const root = new ICAL.Component(ICAL.parse(ical));
   const events = root.getAllSubcomponents("vevent");
   for (const event of events) {
-    if (change.operation === "cancel") {
+    if (change.operation !== "reply") {
       if (
         meeting.role !== "organizer" ||
         event.getFirstPropertyValue("organizer") !== address
       )
-        throw new BadRequestException("只有来源会议组织者可以取消会议。");
-      event.updatePropertyWithValue("status", "CANCELLED");
+        throw new BadRequestException("只有来源会议组织者可以调整或取消会议。");
+      if (change.operation === "cancel")
+        event.updatePropertyWithValue("status", "CANCELLED");
+      else {
+        if (
+          change.patch.interval &&
+          (events.length > 1 ||
+            event.hasProperty("rrule") ||
+            event.hasProperty("rdate"))
+        )
+          throw new BadRequestException(
+            "重复会议的时间需按系列或单次实例调整。",
+          );
+        editFields(root, event, change.patch);
+      }
       bumpSequence(event);
     } else {
       if (meeting.role !== "attendee" || events.length !== 1)

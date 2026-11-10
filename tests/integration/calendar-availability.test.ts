@@ -1,5 +1,6 @@
 import { before, after, test } from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { Database } from "../../apps/api/src/db/database.js";
 import { createCalendarScope } from "../fixtures/calendar-scope.js";
 import { CalendarAvailabilityQuery } from "@hyper/contracts/calendar";
@@ -173,6 +174,111 @@ test("Availability input cannot introduce identities, duplicates or arbitrary en
     );
     assert.equal(f.source.writes, 0);
   } finally {
+    await f.close();
+  }
+});
+
+test("Booking rechecks every selected calendar and stops before writing if another source filled the exact slot", async () => {
+  const f = await createCalendarScope(db);
+  try {
+    f.source.calendarIds.add("team");
+    const booking = query(["personal", "team"]);
+    const suggested = (await f.service.availability(f.actor, booking))
+      .candidates[0]!;
+    const create = f.create();
+    const plan = {
+      ...create,
+      booking,
+      draft: {
+        ...create.draft,
+        interval: { kind: "timed" as const, ...suggested },
+      },
+    };
+    await assert.rejects(
+      f.service.prepare(f.actor, { ...plan, booking: query(["team"]) }),
+      /须纳入写入日历/,
+    );
+    const prepared = await f.service.prepare(f.actor, plan);
+    assert.equal(prepared.bookingCheckedAt, undefined);
+    assert.equal(f.source.writes, 0);
+    f.source.objects.set("alice/team/busy.ics", {
+      version: 1,
+      ical: createCalendarObject(
+        plan.draft,
+        "new-busy-uid",
+        "other-source-command",
+      ),
+    });
+    const stale = await f.service.apply(f.actor, prepared.id);
+    assert.equal(stale.state, "failed");
+    assert.equal(stale.error, "calendar_slot_no_longer_available");
+    assert.equal(stale.bookingCheckedAt, undefined);
+    assert.equal(f.source.writes, 0);
+    await assert.rejects(
+      f.service.prepare(f.actor, { ...plan, idempotencyKey: randomUUID() }),
+      /无法确认空闲/,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("Overlapping confirmed candidate submissions are serialized and a lost write is observed without resending", async () => {
+  const f = await createCalendarScope(db);
+  let release: (() => void) | undefined;
+  let applying: ReturnType<typeof f.service.apply> | undefined;
+  try {
+    const booking = query();
+    const suggested = (await f.service.availability(f.actor, booking))
+      .candidates[0]!;
+    const create = f.create();
+    const plan = {
+      ...create,
+      booking,
+      draft: {
+        ...create.draft,
+        interval: { kind: "timed" as const, ...suggested },
+      },
+    };
+    const first = await f.service.prepare(f.actor, plan);
+    const second = await f.service.prepare(f.actor, {
+      ...plan,
+      idempotencyKey: randomUUID(),
+    });
+    const entered = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    release = gate.resolve;
+    f.source.afterReport = async () => {
+      entered.resolve();
+      await gate.promise;
+    };
+    f.source.mode = "drop-after";
+    applying = f.service.apply(f.actor, first.id);
+    await Promise.race([
+      entered.promise,
+      applying.then(() => {
+        throw new Error("Apply completed before the preflight");
+      }),
+    ]);
+    await assert.rejects(f.service.apply(f.actor, second.id), /重叠时段/);
+    assert.equal(f.source.writes, 0);
+    gate.resolve();
+    const saved = await applying;
+    assert.equal(saved.state, "succeeded");
+    assert.equal(saved.observedResult, "matched");
+    assert.ok(saved.bookingCheckedAt);
+    assert.equal(
+      (await f.service.reconcile(f.actor, first.id)).bookingCheckedAt,
+      saved.bookingCheckedAt,
+    );
+    assert.equal(
+      (await f.service.apply(f.actor, second.id)).error,
+      "calendar_slot_no_longer_available",
+    );
+    assert.equal(f.source.writes, 1);
+  } finally {
+    release?.();
+    await applying?.catch(() => {});
     await f.close();
   }
 });

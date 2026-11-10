@@ -11,7 +11,7 @@ import {
   CalendarCommandInput,
   CalendarQuery,
   CalendarAvailabilityQuery,
-  CalendarMeetingQuery,
+  CalendarObjectQuery,
   type CalendarMeeting,
   type CalendarCommandReceipt,
   type CalendarInvitationStatus,
@@ -28,6 +28,8 @@ import {
   createCalendarObject,
   patchCalendarObject,
   patchCalendarOccurrence,
+  patchCalendarSeriesRule,
+  readCalendarSeriesRule,
   calendarObjectDigest,
   calendarCommandMarker,
   invitationStatuses,
@@ -39,6 +41,9 @@ import { calendarOccurrences } from "./calendar-projection.js";
 
 const publicReceipt = (row: any): CalendarCommandReceipt => ({
   sourceRunId: row.source_run_id ?? null,
+  ...(row.booking_checked_at
+    ? { bookingCheckedAt: row.booking_checked_at.toISOString() }
+    : {}),
   ...(row.invitation_status ? { invitations: row.invitation_status } : {}),
   ...(row.meeting_result ? { meeting: row.meeting_result } : {}),
   plan: row.plan,
@@ -55,6 +60,12 @@ const publicReceipt = (row: any): CalendarCommandReceipt => ({
   acknowledgedAt: row.acknowledged_at?.toISOString() ?? null,
   createdAt: row.created_at.toISOString(),
 });
+type Creation = Extract<CalendarCommandInput, { operation: "create" }>;
+class CalendarSlotUnavailable extends ConflictException {
+  constructor() {
+    super("所选时段已无法确认空闲，请重新查询候选时段。");
+  }
+}
 type Source = Awaited<ReturnType<CalendarService["connection"]>>;
 
 /** Private calendar commands shared by manual UI and host-bound AI tools. */
@@ -250,8 +261,19 @@ export class CalendarService {
     await this.recheck(s, source, input.calendarId);
     return result;
   }
+  async seriesRule(s: Subject, raw: unknown) {
+    const input = CalendarObjectQuery.parse(raw);
+    const source = await this.connection(s);
+    await this.calendar(source, input.calendarId, "update");
+    const actual = await source.provider.read(input.calendarId, input.objectId);
+    if (actual.etag !== input.etag)
+      throw new ConflictException("来源重复日程已更新，请刷新日历。");
+    const rule = readCalendarSeriesRule(actual.ical);
+    await this.recheck(s, source, input.calendarId);
+    return rule;
+  }
   async meeting(s: Subject, raw: unknown) {
-    const input = CalendarMeetingQuery.parse(raw);
+    const input = CalendarObjectQuery.parse(raw);
     const source = await this.connection(s);
     const { address, canUpdate } = await this.ownMeetingAddress(
       source,
@@ -298,6 +320,14 @@ export class CalendarService {
   async availability(s: Subject, raw: unknown, signal?: AbortSignal) {
     const input = CalendarAvailabilityQuery.parse(raw),
       source = await this.connection(s);
+    return this.readAvailability(s, source, input, signal);
+  }
+  private async readAvailability(
+    s: Subject,
+    source: Source,
+    input: CalendarAvailabilityQuery,
+    signal?: AbortSignal,
+  ) {
     const { readCalendarAvailability } = await import(
       "./calendar-source-availability.js"
     );
@@ -310,6 +340,36 @@ export class CalendarService {
       },
       signal,
     );
+  }
+  private async checkBooking(
+    s: Subject,
+    source: Source,
+    plan: Creation,
+    signal?: AbortSignal,
+  ) {
+    const interval = plan.draft.interval;
+    if (!plan.booking || interval.kind !== "timed")
+      throw new CalendarSlotUnavailable();
+    // Narrow the refreshed read to the exact selected interval. The working-hours
+    // grid and source calendar set remain bound to the confirmed query.
+    const refreshed = await this.readAvailability(
+      s,
+      source,
+      {
+        ...plan.booking,
+        start: interval.start,
+        end: interval.end,
+      },
+      signal,
+    );
+    if (
+      refreshed.state !== "evaluated" ||
+      !refreshed.candidates.some(
+        (slot) => slot.start === interval.start && slot.end === interval.end,
+      )
+    )
+      throw new CalendarSlotUnavailable();
+    return refreshed.checkedAt;
   }
   async prepare(s: Subject, raw: unknown) {
     const input = CalendarCommandInput.parse(raw),
@@ -344,6 +404,7 @@ export class CalendarService {
       const participants = input.invitees
         ? await this.meetingAddresses(source, input.calendarId, input.invitees)
         : undefined;
+      if (input.booking) await this.checkBooking(s, source, input);
       desired = createCalendarObject(input.draft, uid, id, participants);
     } else {
       const original = await source.provider.read(
@@ -377,6 +438,8 @@ export class CalendarService {
         if (input.operation === "update") {
           if (input.scope === "series")
             desired = patchCalendarObject(original.ical, input.patch, id);
+          else if (input.scope === "series_rule")
+            desired = patchCalendarSeriesRule(original.ical, input.repeat, id);
           else if (input.scope === "occurrence") {
             const selected = (
               await source.provider.occurrences(
@@ -602,6 +665,8 @@ export class CalendarService {
   ) {
     const { source, row } = await this.authorized(s, id, true);
     if (row.state !== "prepared") return publicReceipt(row);
+    const plan = CalendarCommandInput.parse(row.plan);
+    const booking = plan.operation === "create" && plan.booking ? plan : null;
     execution?.signal?.throwIfAborted();
     if (execution) await execution.beforeWrite();
     const claimed = await this.db.tx(async (c) => {
@@ -621,6 +686,31 @@ export class CalendarService {
         if (active.rowCount)
           throw new ConflictException("请先停止此日历AI执行，再人工接管。");
       }
+      if (booking) {
+        await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
+          `calendar-booking:${s.workspaceId}:${source.config.providerKey}:${source.remoteUid}`,
+        ]);
+        const interval = booking.draft.interval;
+        const overlap = await c.query(
+          `SELECT 1 FROM cw_calendar_commands
+           WHERE workspace_id=$1 AND provider_key=$2 AND source_actor_id=$3 AND id<>$4
+             AND state IN ('applying','recovery_required') AND plan ? 'booking'
+             AND plan #>> '{draft,interval,start}' < $6
+             AND plan #>> '{draft,interval,end}' > $5 LIMIT 1`,
+          [
+            s.workspaceId,
+            source.config.providerKey,
+            source.remoteUid,
+            id,
+            interval.start,
+            interval.end,
+          ],
+        );
+        if (overlap.rowCount)
+          throw new ConflictException(
+            "已有重叠时段正在提交或待核对，请先查看原操作回执。",
+          );
+      }
       return (
         await c.query(
           "UPDATE cw_calendar_commands SET state='applying',attempted_at=now(),updated_at=now() WHERE id=$1 AND state='prepared' AND stop_requested_at IS NULL RETURNING id",
@@ -633,7 +723,6 @@ export class CalendarService {
     try {
       const live = await this.recheck(s, source);
       await this.calendar(live, row.calendar_id, row.operation);
-      const plan = CalendarCommandInput.parse(row.plan);
       const invitees = plan.operation === "create" ? plan.invitees : undefined;
       if (invitees) {
         const participants = await this.meetingAddresses(
@@ -656,6 +745,9 @@ export class CalendarService {
         if (current.address !== row.meeting_actor_address)
           throw new ConflictException("来源会议身份已变化，请重新确认。");
       }
+      const checkedAt = booking
+        ? await this.checkBooking(s, live, booking, execution?.signal)
+        : null;
       const current = await this.owned(s, id);
       if (current.stop_requested_at) {
         await this.db.pool.query(
@@ -666,6 +758,22 @@ export class CalendarService {
       }
       execution?.signal?.throwIfAborted();
       if (execution) await execution.beforeWrite();
+      if (checkedAt) {
+        const ready = await this.db.pool.query(
+          `UPDATE cw_calendar_commands SET booking_checked_at=$2,updated_at=now()
+           WHERE id=$1 AND state='applying' AND stop_requested_at IS NULL
+           RETURNING id`,
+          [id, checkedAt],
+        );
+        if (!ready.rowCount) {
+          await this.db.pool.query(
+            "UPDATE cw_calendar_commands SET state='cancelled',updated_at=now() WHERE id=$1 AND state='applying' AND stop_requested_at IS NOT NULL",
+            [id],
+          );
+          return this.get(s, id);
+        }
+        execution?.signal?.throwIfAborted();
+      }
       dispatched = true;
       if (invitees)
         await live.provider.createMeeting(
@@ -706,8 +814,14 @@ export class CalendarService {
     } catch (error) {
       if (!dispatched) {
         await this.db.pool.query(
-          "UPDATE cw_calendar_commands SET state=$2,error='calendar_dispatch_not_started',updated_at=now() WHERE id=$1 AND state='applying'",
-          [id, execution?.signal?.aborted ? "cancelled" : "failed"],
+          "UPDATE cw_calendar_commands SET state=$2,error=$3,updated_at=now() WHERE id=$1 AND state='applying'",
+          [
+            id,
+            execution?.signal?.aborted ? "cancelled" : "failed",
+            error instanceof CalendarSlotUnavailable
+              ? "calendar_slot_no_longer_available"
+              : "calendar_dispatch_not_started",
+          ],
         );
         return this.get(s, id);
       }

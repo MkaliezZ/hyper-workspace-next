@@ -253,6 +253,15 @@ test("Calendar desktop/mobile manual create and update use durable intents and r
       ? route.fulfill({ json: events })
       : route.fulfill({ status: 403, json: { message: "日历访问已撤销。" } }),
   );
+  await page.route("**/api/calendar/series-rule", (route) =>
+    route.fulfill({
+      json: {
+        rules: ["FREQ=WEEKLY;COUNT=3"],
+        simple: { frequency: "WEEKLY", interval: 1, count: 3 },
+        exceptionCount: 1,
+      },
+    }),
+  );
   await page.route("**/api/calendar/commands", async (route) => {
     if (route.request().method() === "GET")
       return route.fulfill({ json: receipts });
@@ -307,7 +316,7 @@ test("Calendar desktop/mobile manual create and update use durable intents and r
     const plan = receipt.plan;
     if (plan.operation === "update") {
       if (plan.scope === "series") events[0]!.title = plan.patch.title!;
-      else {
+      else if (plan.scope === "occurrence") {
         const index = events.findIndex(
           (event) =>
             event.objectId === plan.objectId &&
@@ -442,6 +451,25 @@ test("Calendar desktop/mobile manual create and update use durable intents and r
   });
   await expect(recurring("仅本次更新")).toHaveCount(0);
   await expect(recurring("重复日程第二场")).toBeVisible();
+  await recurring("重复日程第二场")
+    .getByRole("button", { name: "调整重复规则", exact: true })
+    .click();
+  const ruleForm = page.getByRole("dialog", {
+    name: "调整整组重复规则",
+    exact: true,
+  });
+  await expect(ruleForm.getByText(/已有单次例外 1 条/)).toBeVisible();
+  await ruleForm.getByLabel("重复总次数（含首次）", { exact: true }).fill("4");
+  await ruleForm
+    .getByRole("button", { name: "确认修改重复规则", exact: true })
+    .click();
+  await expect(ruleForm).not.toBeVisible();
+  expect(receipts[0]?.plan).toMatchObject({
+    operation: "update",
+    scope: "series_rule",
+    repeat: { frequency: "WEEKLY", interval: 1, count: 4 },
+  });
+
   await panel.getByRole("button", { name: "新建日程", exact: true }).click();
   await dialog
     .getByLabel("日程标题", { exact: true })
@@ -929,4 +957,120 @@ test("A mobile employee selects exact invitees and sees separately reported deli
   await page.screenshot({
     path: "/tmp/hyper-next-calendar-invitation-mobile.png",
   });
+});
+
+test("Candidate booking keeps the confirmed slot and guides a requery when the source fills it", async ({
+  page,
+}) => {
+  const slot = { start: "2026-11-04T02:00:00Z", end: "2026-11-04T03:00:00Z" };
+  const id = "77000000-0000-4000-8000-000000000001";
+  let receipt: CalendarCommandReceipt | undefined;
+  let applies = 0;
+  await page.route("**/api/calendar/calendars", (route) =>
+    route.fulfill({
+      json: [
+        {
+          id: "personal",
+          name: "合成日历",
+          canRead: true,
+          canCreate: true,
+          canUpdate: true,
+          canDelete: true,
+        },
+      ],
+    }),
+  );
+  await page.route("**/api/calendar/query", (route) =>
+    route.fulfill({ json: [] }),
+  );
+  await page.route("**/api/calendar/availability", (route) => {
+    const query = route.request().postDataJSON();
+    return route.fulfill({
+      json: {
+        state: "evaluated",
+        timeZone: query.timeZone,
+        checkedAt: "2026-11-04T00:00:00Z",
+        window: { start: query.start, end: query.end },
+        busy: [],
+        conflicts: [],
+        conflictsTruncated: false,
+        unknown: [],
+        candidates: [slot],
+        candidateLimit: 20,
+        skippedWindows: [],
+        reservation: false,
+        observations: [],
+      },
+    });
+  });
+  await page.route("**/api/calendar/commands", (route) => {
+    if (route.request().method() === "GET")
+      return route.fulfill({ json: receipt ? [receipt] : [] });
+    const plan = route.request().postDataJSON() as CalendarCommandInput;
+    expect(plan).toMatchObject({
+      operation: "create",
+      booking: { calendarIds: ["personal"], timeZone: "Asia/Shanghai" },
+      draft: { title: "候选时段验收", interval: { kind: "timed", ...slot } },
+    });
+    receipt = {
+      id,
+      calendarId: "personal",
+      objectId: "candidate.ics",
+      title: "候选时段验收",
+      operation: "create",
+      plan,
+      state: "prepared",
+      error: null,
+      stopRequested: false,
+      sourceEtag: null,
+      observedResult: null,
+      acknowledgedAt: null,
+      createdAt: new Date().toISOString(),
+    };
+    return route.fulfill({ json: receipt });
+  });
+  await page.route("**/api/calendar/commands/" + id + "/apply", (route) => {
+    expect(route.request().postDataJSON()).toEqual({ confirmed: true });
+    applies++;
+    receipt = {
+      ...receipt!,
+      state: "failed",
+      error: "calendar_slot_no_longer_available",
+    };
+    return route.fulfill({ json: receipt });
+  });
+  const panel = await start(page);
+  await panel.getByLabel("起始日期", { exact: true }).fill("2026-11-04");
+  const planner = panel.getByRole("region", {
+    name: "忙闲与候选时段",
+    exact: true,
+  });
+  await planner.getByLabel("排期时区", { exact: true }).fill("Asia/Shanghai");
+  await planner
+    .getByRole("button", { name: "查询忙闲与候选", exact: true })
+    .click();
+  await planner
+    .getByRole("button", { name: "用此时段新建", exact: true })
+    .click();
+  const editor = page.getByRole("dialog", { name: "新建日程", exact: true });
+  await expect(editor.getByText(/所选候选时段.*Asia\/Shanghai/)).toBeVisible();
+  await expect(editor.getByLabel("重复规则", { exact: true })).toHaveCount(0);
+  await expect(
+    editor.getByLabel("开始（本机时区）", { exact: true }),
+  ).toHaveCount(0);
+  await editor.getByLabel("日程标题", { exact: true }).fill("候选时段验收");
+  expect(applies).toBe(0);
+  await page.screenshot({
+    path: "/tmp/hyper-next-calendar-booking-desktop.png",
+  });
+  await editor
+    .getByRole("button", { name: "确认预约并复核时段", exact: true })
+    .click();
+  await expect(editor.getByRole("status")).toContainText(
+    "请关闭并重新查询候选时段",
+  );
+  await expect(
+    editor.getByRole("button", { name: "确认预约并复核时段", exact: true }),
+  ).toBeDisabled();
+  expect(applies).toBe(1);
 });

@@ -70,7 +70,30 @@ test(
           work.engines.get(engine)!.describeCapabilities().configured,
           true,
         );
-        const command = await f.service.prepare(f.actor, f.create());
+        const draft = f.create();
+        const command = await f.service.prepare(f.actor, {
+          ...draft,
+          booking: CalendarAvailabilityQuery.parse({
+            calendarIds: ["personal"],
+            timeZone: "Asia/Shanghai",
+            start: "2026-11-04T00:00:00Z",
+            end: "2026-11-05T00:00:00Z",
+          }),
+          draft: {
+            ...draft.draft,
+            interval: {
+              kind: "timed",
+              start:
+                engine === "dsh"
+                  ? "2026-11-04T01:00:00Z"
+                  : "2026-11-04T02:00:00Z",
+              end:
+                engine === "dsh"
+                  ? "2026-11-04T02:00:00Z"
+                  : "2026-11-04T03:00:00Z",
+            },
+          },
+        });
         const input = {
           plan: {
             operation: "apply" as const,
@@ -92,6 +115,7 @@ test(
         assert.equal(actual.result.evidence, "runtime");
         assert.equal(actual.result.receipts[0].observedResult, "matched");
         assert.equal(actual.result.receipts[0].commandId, command.id);
+        assert.ok(actual.result.receipts[0].bookingCheckedAt);
         assert.ok(!actual.result.text.includes("Model text"));
         const row = (
           await db.pool.query(

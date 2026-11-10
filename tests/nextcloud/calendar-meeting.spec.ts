@@ -1,7 +1,7 @@
 import { test, expect, type BrowserContext } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import type { CalendarOccurrence } from "@hyper/contracts/calendar";
-import { login, origin } from "./helpers.js";
+import { login, origin, view } from "./helpers.js";
 
 test("Nextcloud delivers an internal invitation, propagates a reply and processes organizer cancellation", async ({
   browser,
@@ -18,6 +18,12 @@ test("Nextcloud delivers an internal invitation, propagates a reply and processe
     contexts.push(alice.context);
     const bob = await login(browser, bobUid);
     contexts.push(bob.context);
+    // Nextcloud granting access and the workspace setting its session are separate steps.
+    await Promise.all(
+      contexts.map((context) =>
+        expect.poll(async () => (await view(context)).status()).toBe(200),
+      ),
+    );
     const post = async (
       context: BrowserContext,
       path: string,
@@ -183,6 +189,40 @@ test("Nextcloud delivers an internal invitation, propagates a reply and processe
         { timeout: 20000 },
       )
       .toBe("accepted");
+    const edit = await post(alice.context, "commands", {
+      ...address(event!),
+      operation: "update",
+      scope: "meeting",
+      idempotencyKey: randomUUID(),
+      change: {
+        operation: "edit",
+        patch: {
+          interval: {
+            kind: "timed",
+            start: day + "T10:30:00Z",
+            end: day + "T11:30:00Z",
+          },
+        },
+      },
+    });
+    expect(
+      await post(alice.context, `commands/${edit.id}/apply`, {
+        confirmed: true,
+      }),
+    ).toMatchObject({
+      state: "succeeded",
+      meeting: { role: "organizer", cancelled: false },
+    });
+    await expect
+      .poll(
+        async () => {
+          const rescheduled = await find(bob.context, bobCalendars, uid);
+          return rescheduled?.start.value;
+        },
+        { timeout: 20000 },
+      )
+      .toBe(day + "T10:30:00.000Z");
+    event = await find(alice.context, [owned!.id], uid);
     const cancel = await post(alice.context, "commands", {
       ...address(event!),
       operation: "update",

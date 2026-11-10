@@ -259,6 +259,45 @@ test("One occurrence binds the current expanded source version and updates the o
     assert.match(remaining, /EXDATE:20261125T010000Z/);
     assert.match(remaining, /EXDATE:20261111T010000Z/);
     assert.doesNotMatch(remaining, /SUMMARY:One instance|RECURRENCE-ID/);
+    const target = {
+      calendarId: "personal",
+      objectId,
+      etag: cancelled.sourceEtag,
+    };
+    assert.deepEqual(await service.seriesRule(actor(), target), {
+      rules: ["FREQ=WEEKLY;COUNT=4"],
+      simple: { frequency: "WEEKLY", interval: 1, count: 4 },
+      exceptionCount: 2,
+    });
+    const rulePlan = {
+      ...target,
+      operation: "update",
+      scope: "series_rule",
+      idempotencyKey: randomUUID(),
+    };
+    await assert.rejects(
+      service.prepare(actor(), {
+        ...rulePlan,
+        repeat: { frequency: "WEEKLY", interval: 1, count: 2 },
+      }),
+      /使已有单次例外失去原实例/,
+    );
+    await assert.rejects(
+      service.prepare(actor(), { ...rulePlan, repeat: null }),
+      /先处理已有单次例外/,
+    );
+    const rule = await service.prepare(actor(), {
+      ...rulePlan,
+      repeat: { frequency: "WEEKLY", interval: 1, count: 5 },
+    });
+    const extended = await service.apply(actor(), rule.id);
+    assert.equal(extended.state, "succeeded");
+    assert.equal(fixture.writes, before + 3);
+    const unchangedExceptions = fixture.objects.get(key)!.ical;
+    assert.match(unchangedExceptions, /RRULE:FREQ=WEEKLY;COUNT=5/);
+    assert.match(unchangedExceptions, /EXDATE:20261125T010000Z/);
+    assert.match(unchangedExceptions, /EXDATE:20261111T010000Z/);
+    await assert.rejects(service.seriesRule(actor(), target), /重复日程已更新/);
   } finally {
     fixture.expand = undefined;
     fixture.objects.delete(key);
@@ -401,8 +440,46 @@ test("Only the attendee can reply and only the organizer can cancel a current me
       "accepted",
     );
     await assert.rejects(service.meeting(actor("bob"), target), /会议已更新/);
+    const editChange = {
+      operation: "edit",
+      patch: {
+        title: "Organizer rescheduled",
+        interval: {
+          kind: "timed",
+          start: "2026-11-04T03:00:00Z",
+          end: "2026-11-04T04:00:00Z",
+        },
+      },
+    };
+    await assert.rejects(
+      service.prepare(actor("bob"), {
+        ...command,
+        etag: replied.sourceEtag,
+        idempotencyKey: randomUUID(),
+        change: editChange,
+      }),
+      /只有来源会议组织者/,
+    );
+    const edit = await service.prepare(actor(), {
+      ...command,
+      idempotencyKey: randomUUID(),
+      change: editChange,
+    });
+    const edited = await service.apply(actor(), edit.id);
+    assert.equal(edited.state, "succeeded");
+    assert.equal(edited.meeting?.title, "Organizer rescheduled");
+    assert.match(fixture.objects.get(key)!.ical, /DTSTART:20261104T030000Z/);
+    assert.match(
+      fixture.objects.get(key)!.ical,
+      /ORGANIZER:mailto:alice@example.invalid/,
+    );
+    await assert.rejects(
+      service.prepare(actor(), { ...command, change: { operation: "cancel" } }),
+      /日程已更新/,
+    );
     const cancel = await service.prepare(actor(), {
       ...command,
+      etag: edited.sourceEtag,
       change: { operation: "cancel" },
     });
     const cancelled = await service.apply(actor(), cancel.id);

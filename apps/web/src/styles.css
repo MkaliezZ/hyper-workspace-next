@@ -2794,3 +2794,7 @@ p {
   max-block-size: 12rem;
   overflow-y: auto;
 }
+
+.calendar-slots li button {
+  margin-inline-start: .4rem;
+}

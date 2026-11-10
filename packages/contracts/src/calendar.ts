@@ -97,6 +97,49 @@ const occurrenceTarget = z
     window: z.object(calendarWindow).strict().refine(boundedCalendarWindow),
   })
   .strict();
+const clock = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/u);
+export const CalendarAvailabilityQuery = z
+  .object({
+    calendarIds: z
+      .array(CalendarId)
+      .min(1)
+      .max(10)
+      .refine((v) => new Set(v).size === v.length),
+    start: instant,
+    end: instant,
+    timeZone: z
+      .string()
+      .min(1)
+      .max(100)
+      .refine((v) => {
+        try {
+          new Intl.DateTimeFormat("en", { timeZone: v });
+          return true;
+        } catch {
+          return false;
+        }
+      }),
+    durationMinutes: z.number().int().min(5).max(480).default(60),
+    stepMinutes: z.number().int().min(5).max(120).default(30),
+    weekdays: z
+      .array(z.number().int().min(1).max(7))
+      .min(1)
+      .max(7)
+      .refine((v) => new Set(v).size === v.length)
+      .default([1, 2, 3, 4, 5]),
+    dailyStart: clock.default("09:00"),
+    dailyEnd: clock.default("18:00"),
+  })
+  .strict()
+  .refine(
+    (v) =>
+      Date.parse(v.end) > Date.parse(v.start) &&
+      Date.parse(v.end) - Date.parse(v.start) <= 31 * 86400000,
+    "排期窗口须大于0且不超过31天。",
+  );
+export type CalendarAvailabilityQuery = z.infer<
+  typeof CalendarAvailabilityQuery
+>;
 const seriesTarget = { objectId: CalendarId, etag: CalendarEtag };
 const base = { calendarId: CalendarId, idempotencyKey: z.uuid() };
 const invitees = z
@@ -111,8 +154,22 @@ export const CalendarCommandInput = z.discriminatedUnion("operation", [
       operation: z.literal("create"),
       draft: CalendarDraft,
       invitees: invitees.optional(),
+      booking: CalendarAvailabilityQuery.optional(),
     })
-    .strict(),
+    .strict()
+    .refine(({ booking, draft, calendarId }) => {
+      if (!booking) return true;
+      const slot = draft.interval;
+      return (
+        !draft.repeat &&
+        slot.kind === "timed" &&
+        booking.calendarIds.includes(calendarId) &&
+        slot.start >= booking.start &&
+        slot.end <= booking.end &&
+        Date.parse(slot.end) - Date.parse(slot.start) ===
+          booking.durationMinutes * 60000
+      );
+    }, "候选预约仅支持选定的单次时段，且须纳入写入日历。"),
   z.discriminatedUnion("scope", [
     z
       .object({
@@ -143,6 +200,15 @@ export const CalendarCommandInput = z.discriminatedUnion("operation", [
         ...base,
         ...seriesTarget,
         operation: z.literal("update"),
+        scope: z.literal("series_rule"),
+        repeat: CalendarRepeat.nullable(),
+      })
+      .strict(),
+    z
+      .object({
+        ...base,
+        ...seriesTarget,
+        operation: z.literal("update"),
         scope: z.literal("meeting"),
         change: z.discriminatedUnion("operation", [
           z
@@ -150,6 +216,9 @@ export const CalendarCommandInput = z.discriminatedUnion("operation", [
               operation: z.literal("reply"),
               response: z.enum(["ACCEPTED", "TENTATIVE", "DECLINED"]),
             })
+            .strict(),
+          z
+            .object({ operation: z.literal("edit"), patch: CalendarPatch })
             .strict(),
           z.object({ operation: z.literal("cancel") }).strict(),
         ]),
@@ -167,13 +236,18 @@ export const CalendarCommandInput = z.discriminatedUnion("operation", [
 ]);
 export type CalendarCommandInput = z.infer<typeof CalendarCommandInput>;
 
-export const CalendarMeetingQuery = z
+export const CalendarObjectQuery = z
   .object({
     calendarId: CalendarId,
     objectId: CalendarId,
     etag: CalendarEtag,
   })
   .strict();
+export interface CalendarSeriesRule {
+  rules: string[];
+  simple: CalendarRepeat | null;
+  exceptionCount: number;
+}
 export interface CalendarMeeting {
   role: "organizer" | "attendee";
   cancelled: boolean;
@@ -224,6 +298,7 @@ export interface CalendarInvitationStatus {
 }
 export interface CalendarCommandReceipt {
   sourceRunId?: string | null;
+  bookingCheckedAt?: string;
   invitations?: CalendarInvitationStatus[];
   meeting?: CalendarMeeting;
   plan: CalendarCommandInput;
@@ -247,49 +322,6 @@ export interface CalendarCommandReceipt {
   createdAt: string;
 }
 
-const clock = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/u);
-export const CalendarAvailabilityQuery = z
-  .object({
-    calendarIds: z
-      .array(CalendarId)
-      .min(1)
-      .max(10)
-      .refine((v) => new Set(v).size === v.length),
-    start: instant,
-    end: instant,
-    timeZone: z
-      .string()
-      .min(1)
-      .max(100)
-      .refine((v) => {
-        try {
-          new Intl.DateTimeFormat("en", { timeZone: v });
-          return true;
-        } catch {
-          return false;
-        }
-      }),
-    durationMinutes: z.number().int().min(5).max(480).default(60),
-    stepMinutes: z.number().int().min(5).max(120).default(30),
-    weekdays: z
-      .array(z.number().int().min(1).max(7))
-      .min(1)
-      .max(7)
-      .refine((v) => new Set(v).size === v.length)
-      .default([1, 2, 3, 4, 5]),
-    dailyStart: clock.default("09:00"),
-    dailyEnd: clock.default("18:00"),
-  })
-  .strict()
-  .refine(
-    (v) =>
-      Date.parse(v.end) > Date.parse(v.start) &&
-      Date.parse(v.end) - Date.parse(v.start) <= 31 * 86400000,
-    "排期窗口须大于0且不超过31天。",
-  );
-export type CalendarAvailabilityQuery = z.infer<
-  typeof CalendarAvailabilityQuery
->;
 export interface CalendarEventRef {
   calendarId: string;
   objectId: string;

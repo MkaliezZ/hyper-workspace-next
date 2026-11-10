@@ -8,9 +8,11 @@ import {
 } from "lucide-react";
 import type {
   CalendarCommandInput,
+  CalendarAvailabilityQuery,
   CalendarCommandReceipt,
   CalendarOccurrence,
   CalendarMeeting,
+  CalendarSeriesRule,
   CalendarPoint,
   CalendarRepeat,
   CalendarSummary,
@@ -100,21 +102,50 @@ function instantInput(value: string) {
     throw new Error("所选本机时间无效或处于夏令时跳过区间，请重新选择。");
   return utc(date);
 }
+type Booking = {
+  query: CalendarAvailabilityQuery;
+  slot: { start: string; end: string };
+};
+function BookingTime({ booking }: { booking: Booking }) {
+  const formatter = new Intl.DateTimeFormat("zh-CN", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: booking.query.timeZone,
+  });
+  return (
+    <p>
+      所选候选时段 {formatter.format(new Date(booking.slot.start))} 至{" "}
+      {formatter.format(new Date(booking.slot.end))}（{booking.query.timeZone}
+      ）。提交前会重新核对 {booking.query.calendarIds.length} 个日历。
+    </p>
+  );
+}
 const meetingReplies = {
   ACCEPTED: "接受",
   TENTATIVE: "暂定",
   DECLINED: "拒绝",
 };
-type MeetingAction = keyof typeof meetingReplies | "cancel";
+type SeriesChoice = CalendarRepeat["frequency"] | "none" | "";
+type CalendarScope = "series" | "occurrence" | "meeting" | "series_rule";
+type MeetingAction = keyof typeof meetingReplies | "cancel" | "edit";
 function commandLabel(plan: CalendarCommandInput) {
   if (plan.operation === "create")
-    return plan.invitees?.length ? "新建会议并邀请员工" : "新建日程";
+    return plan.booking
+      ? plan.invitees?.length
+        ? "复核时段并邀请员工"
+        : "复核候选时段并预约"
+      : plan.invitees?.length
+        ? "新建会议并邀请员工"
+        : "新建日程";
   if (plan.operation === "delete") return "删除整个日程系列";
   if (plan.scope === "series") return "修改整个日程系列";
+  if (plan.scope === "series_rule") return "调整整组重复规则";
   if (plan.scope === "meeting")
     return plan.change.operation === "reply"
       ? "提交参会回复"
-      : "取消会议并通知参会人";
+      : plan.change.operation === "edit"
+        ? "调整会议并通知参会人"
+        : "取消会议并通知参会人";
   return plan.change.operation === "edit"
     ? "修改本次重复日程"
     : "取消本次重复日程";
@@ -127,7 +158,8 @@ function CalendarPreview({ receipt }: { receipt: CalendarCommandReceipt }) {
       : plan.operation === "update"
         ? plan.scope === "series"
           ? plan.patch
-          : plan.scope === "occurrence" && plan.change.operation === "edit"
+          : (plan.scope === "occurrence" || plan.scope === "meeting") &&
+              plan.change.operation === "edit"
             ? plan.change.patch
             : null
         : null;
@@ -135,7 +167,20 @@ function CalendarPreview({ receipt }: { receipt: CalendarCommandReceipt }) {
   return (
     <div className="calendar-preview">
       <p>{commandLabel(plan)}</p>
-      {fields ? (
+      {plan.operation === "create" &&
+      plan.booking &&
+      plan.draft.interval.kind === "timed" ? (
+        <BookingTime
+          booking={{ query: plan.booking, slot: plan.draft.interval }}
+        />
+      ) : null}
+      {plan.operation === "update" && plan.scope === "series_rule" ? (
+        <p>
+          {plan.repeat
+            ? `每 ${plan.repeat.interval} ${frequencyLabel[plan.repeat.frequency]}重复，共 ${plan.repeat.count} 次。`
+            : "取消重复，保留首次日程。"}
+        </p>
+      ) : fields ? (
         <>
           <strong>{fields.title ?? "保留原标题"}</strong>
           {fields.location !== undefined ? (
@@ -229,12 +274,12 @@ export function CalendarPanel({
     [revision, setRevision] = useState(0);
   const [mode, setMode] = useState<"create" | "update" | "delete" | null>(null),
     [selected, setSelected] = useState<CalendarOccurrence | null>(null);
-  const [scope, setScope] = useState<"series" | "occurrence" | "meeting">(
-    "series",
-  );
+  const [scope, setScope] = useState<CalendarScope>("series");
+  const [seriesRule, setSeriesRule] = useState<CalendarSeriesRule | null>(null);
+  const [seriesChoice, setSeriesChoice] = useState<SeriesChoice>("");
   const [meeting, setMeeting] = useState<CalendarMeeting | null>(null);
   const [meetingAction, setMeetingAction] = useState<MeetingAction | "">("");
-  const meetingLoad = useRef<AbortController | null>(null);
+  const objectLoad = useRef<AbortController | null>(null);
   const [title, setTitle] = useState(""),
     [description, setDescription] = useState(""),
     [location, setLocation] = useState("");
@@ -243,6 +288,7 @@ export function CalendarPanel({
     [end, setEnd] = useState(""),
     [reschedule, setReschedule] = useState(false);
   const [eventZone, setEventZone] = useState("");
+  const [booking, setBooking] = useState<Booking | null>(null);
   const [invitees, setInvitees] = useState<{ uid: string; name: string }[]>([]);
   const [frequency, setFrequency] = useState<CalendarRepeat["frequency"] | "">(
     "",
@@ -273,7 +319,10 @@ export function CalendarPanel({
     setIntent(null);
     setMeeting(null);
     setMeetingAction("");
+    setSeriesRule(null);
+    setSeriesChoice("");
     setInvitees([]);
+    setBooking(null);
     pending.current = null;
     aiPending.current = null;
     setModels([]);
@@ -462,11 +511,13 @@ export function CalendarPanel({
   function open(
     operation: "create" | "update" | "delete",
     event?: CalendarOccurrence,
-    actionScope: "series" | "occurrence" | "meeting" = "series",
+    actionScope: CalendarScope = "series",
   ) {
-    meetingLoad.current?.abort();
+    objectLoad.current?.abort();
     setMeeting(null);
     setMeetingAction("");
+    setSeriesRule(null);
+    setSeriesChoice("");
     setScope(actionScope);
     setSelected(event ?? null);
     setMode(operation);
@@ -479,6 +530,7 @@ export function CalendarPanel({
     setAllDay(event?.start.kind === "date");
     setReschedule(false);
     setEventZone("");
+    setBooking(null);
     setInvitees([]);
     setFrequency("");
     setRepeatInterval(1);
@@ -486,13 +538,16 @@ export function CalendarPanel({
     setStart(event ? inputTime(event.start) : initialTime(day, "09:00"));
     setEnd(event ? inputTime(event.end) : initialTime(day, "10:00"));
   }
-  useEffect(() => () => meetingLoad.current?.abort(), []);
-  function openMeeting(event: CalendarOccurrence) {
-    open("update", event, "meeting");
+  useEffect(() => () => objectLoad.current?.abort(), []);
+  function loadObjectDetails<T>(
+    event: CalendarOccurrence,
+    path: "meeting" | "series-rule",
+    onLoaded: (value: T) => void,
+  ) {
     const controller = new AbortController();
-    meetingLoad.current = controller;
+    objectLoad.current = controller;
     loaders.current.add(controller);
-    void api<CalendarMeeting>("/calendar/meeting", {
+    void api<T>("/calendar/" + path, {
       method: "POST",
       body: JSON.stringify({
         calendarId: event.calendarId,
@@ -502,7 +557,7 @@ export function CalendarPanel({
       signal: controller.signal,
     })
       .then((value) => {
-        if (!controller.signal.aborted) setMeeting(value);
+        if (!controller.signal.aborted) onLoaded(value);
       })
       .catch((error) => {
         if (controller.signal.aborted) return;
@@ -510,14 +565,29 @@ export function CalendarPanel({
           failure(error);
         else
           setModalError(
-            error instanceof Error ? error.message : "读取会议失败。",
+            error instanceof Error ? error.message : "读取日程详情失败。",
           );
       })
       .finally(() => loaders.current.delete(controller));
   }
+  function openMeeting(event: CalendarOccurrence) {
+    open("update", event, "meeting");
+    loadObjectDetails<CalendarMeeting>(event, "meeting", setMeeting);
+  }
+  function openSeriesRule(event: CalendarOccurrence) {
+    open("update", event, "series_rule");
+    loadObjectDetails<CalendarSeriesRule>(event, "series-rule", (value) => {
+      setSeriesRule(value);
+      if (value.simple) {
+        setSeriesChoice(value.simple.frequency);
+        setRepeatInterval(value.simple.interval);
+        setRepeatCount(value.simple.count);
+      }
+    });
+  }
   function close() {
     if (!busy) {
-      meetingLoad.current?.abort();
+      objectLoad.current?.abort();
       setMode(null);
       setSelected(null);
       setIntent(null);
@@ -582,6 +652,7 @@ export function CalendarPanel({
           operation: "create",
           calendarId,
           idempotencyKey: "",
+          ...(booking ? { booking: booking.query } : {}),
           ...(invitees.length
             ? { invitees: invitees.map((person) => person.uid) }
             : {}),
@@ -589,8 +660,8 @@ export function CalendarPanel({
             title,
             description,
             location,
-            interval: interval(),
-            ...(frequency
+            interval: booking ? { kind: "timed", ...booking.slot } : interval(),
+            ...(!booking && frequency
               ? {
                   repeat: {
                     frequency,
@@ -620,11 +691,37 @@ export function CalendarPanel({
                 ...(reschedule ? { interval: interval() } : {}),
               }
             : null;
-        if (scope !== "meeting" && patch && !Object.keys(patch).length)
+        if (
+          scope !== "meeting" &&
+          scope !== "series_rule" &&
+          patch &&
+          !Object.keys(patch).length
+        )
           throw new Error("请先修改日程内容。");
-        if (scope === "meeting") {
+        if (scope === "series_rule") {
+          if (!seriesRule || !seriesChoice)
+            throw new Error("请明确选择新的重复规则。");
+          input = {
+            ...base,
+            operation: "update",
+            scope,
+            repeat:
+              seriesChoice === "none"
+                ? null
+                : {
+                    frequency: seriesChoice,
+                    interval: repeatInterval,
+                    count: repeatCount,
+                  },
+          };
+        } else if (scope === "meeting") {
           if (!meeting?.canUpdate || !meetingAction)
             throw new Error("请选择要确认的会议操作。");
+          if (
+            meetingAction === "edit" &&
+            (!patch || !Object.keys(patch).length)
+          )
+            throw new Error("请先修改会议内容。");
           input = {
             ...base,
             operation: "update",
@@ -632,7 +729,9 @@ export function CalendarPanel({
             change:
               meetingAction === "cancel"
                 ? { operation: "cancel" }
-                : { operation: "reply", response: meetingAction },
+                : meetingAction === "edit"
+                  ? { operation: "edit", patch: patch! }
+                  : { operation: "reply", response: meetingAction },
           };
         } else if (scope === "occurrence") {
           if (!selected.recurrenceId) throw new Error("请重新选择重复实例。");
@@ -934,6 +1033,13 @@ export function CalendarPanel({
                                 >
                                   取消本次
                                 </button>
+                                <button
+                                  type="button"
+                                  disabled={!currentCalendar?.canUpdate || busy}
+                                  onClick={() => openSeriesRule(event)}
+                                >
+                                  调整重复规则
+                                </button>
                               </>
                             ) : null}
                           </>
@@ -1004,6 +1110,12 @@ export function CalendarPanel({
                     ? " · 已请求停止后续"
                     : ""}
                 </span>
+                {receipt.bookingCheckedAt ? (
+                  <span>
+                    写入前复核{" "}
+                    {new Date(receipt.bookingCheckedAt).toLocaleString("zh-CN")}
+                  </span>
+                ) : null}
                 <time dateTime={receipt.acknowledgedAt ?? receipt.createdAt}>
                   {new Date(
                     receipt.acknowledgedAt ?? receipt.createdAt,
@@ -1013,7 +1125,9 @@ export function CalendarPanel({
                   <p>
                     {receipt.error === "calendar_version_conflict"
                       ? "来源已变化，请刷新后重新修改。"
-                      : "请先核对原操作，避免重复提交。"}
+                      : receipt.error === "calendar_slot_no_longer_available"
+                        ? "所选时段已无法确认空闲，请重新查询候选时段。"
+                        : "请先核对原操作，避免重复提交。"}
                   </p>
                 ) : null}
               </div>
@@ -1058,6 +1172,14 @@ export function CalendarPanel({
               setBusy(false);
             }
           }}
+          onBook={
+            currentCalendar.canCreate
+              ? (query, slot) => {
+                  open("create");
+                  setBooking({ query, slot });
+                }
+              : undefined
+          }
           onFailure={failure}
         />
       ) : null}
@@ -1102,15 +1224,17 @@ export function CalendarPanel({
           title={
             mode === "create"
               ? "新建日程"
-              : scope === "meeting"
-                ? "会议与参会回复"
-                : scope === "occurrence"
-                  ? mode === "update"
-                    ? "修改本次重复日程"
-                    : "取消本次重复日程"
-                  : mode === "update"
-                    ? "修改日程"
-                    : "删除日程"
+              : scope === "series_rule"
+                ? "调整整组重复规则"
+                : scope === "meeting"
+                  ? "会议与参会回复"
+                  : scope === "occurrence"
+                    ? mode === "update"
+                      ? "修改本次重复日程"
+                      : "取消本次重复日程"
+                    : mode === "update"
+                      ? "修改日程"
+                      : "删除日程"
           }
           onClose={close}
           error={modalError}
@@ -1125,6 +1249,65 @@ export function CalendarPanel({
           >
             {intent ? (
               <CalendarPreview receipt={intent} />
+            ) : scope === "series_rule" ? (
+              seriesRule ? (
+                <fieldset disabled={busy}>
+                  <p>当前来源规则 {seriesRule.rules.join("；")}</p>
+                  <p>
+                    已有单次例外 {seriesRule.exceptionCount}{" "}
+                    条。提交时会核对它们仍能对应原实例。
+                  </p>
+                  <label>
+                    新的重复规则
+                    <select
+                      aria-label="新的重复规则"
+                      value={seriesChoice}
+                      onChange={(e) =>
+                        setSeriesChoice(e.target.value as SeriesChoice)
+                      }
+                    >
+                      <option value="">请选择</option>
+                      <option value="none">取消重复，仅保留首次</option>
+                      <option value="DAILY">按天</option>
+                      <option value="WEEKLY">按周</option>
+                      <option value="MONTHLY">按月</option>
+                      <option value="YEARLY">按年</option>
+                    </select>
+                  </label>
+                  {seriesChoice && seriesChoice !== "none" ? (
+                    <>
+                      <label>
+                        重复间隔
+                        <input
+                          type="number"
+                          min={1}
+                          max={12}
+                          required
+                          value={repeatInterval}
+                          onChange={(e) =>
+                            setRepeatInterval(e.target.valueAsNumber)
+                          }
+                        />
+                      </label>
+                      <label>
+                        重复总次数（含首次）
+                        <input
+                          type="number"
+                          min={2}
+                          max={104}
+                          required
+                          value={repeatCount}
+                          onChange={(e) =>
+                            setRepeatCount(e.target.valueAsNumber)
+                          }
+                        />
+                      </label>
+                    </>
+                  ) : null}
+                </fieldset>
+              ) : !modalError ? (
+                <p role="status">正在核对来源重复规则…</p>
+              ) : null
             ) : scope === "meeting" ? (
               meeting ? (
                 <fieldset disabled={busy}>
@@ -1142,7 +1325,10 @@ export function CalendarPanel({
                       >
                         <option value="">请选择</option>
                         {meeting.role === "organizer" ? (
-                          <option value="cancel">取消会议并通知参会人</option>
+                          <>
+                            <option value="edit">调整会议并通知参会人</option>
+                            <option value="cancel">取消会议并通知参会人</option>
+                          </>
                         ) : (
                           Object.entries(meetingReplies).map(
                             ([value, label]) => (
@@ -1154,6 +1340,95 @@ export function CalendarPanel({
                         )}
                       </select>
                     </label>
+                  ) : null}
+                  {meetingAction === "edit" ? (
+                    <>
+                      <label>
+                        会议标题
+                        <input
+                          value={title}
+                          maxLength={500}
+                          required
+                          disabled={selected?.truncatedFields.includes(
+                            "summary",
+                          )}
+                          onChange={(e) => setTitle(e.target.value)}
+                        />
+                      </label>
+                      <label>
+                        会议地点
+                        <input
+                          value={location}
+                          maxLength={1000}
+                          disabled={selected?.truncatedFields.includes(
+                            "location",
+                          )}
+                          onChange={(e) => setLocation(e.target.value)}
+                        />
+                      </label>
+                      <label>
+                        会议说明
+                        <textarea
+                          value={description}
+                          maxLength={10000}
+                          disabled={selected?.truncatedFields.includes(
+                            "description",
+                          )}
+                          onChange={(e) => setDescription(e.target.value)}
+                        />
+                      </label>
+                      {!selected?.recurrenceId ? (
+                        <label className="calendar-check">
+                          <input
+                            type="checkbox"
+                            checked={reschedule}
+                            onChange={(e) => setReschedule(e.target.checked)}
+                          />
+                          同时调整会议时间
+                        </label>
+                      ) : null}
+                      {reschedule ? (
+                        <>
+                          {!allDay ? (
+                            <label>
+                              会议时区
+                              <input
+                                value={eventZone}
+                                maxLength={100}
+                                placeholder="留空使用本机时区"
+                                onChange={(e) => setEventZone(e.target.value)}
+                              />
+                            </label>
+                          ) : null}
+                          <label>
+                            {allDay
+                              ? "会议开始日期"
+                              : eventZone
+                                ? "会议开始（指定时区）"
+                                : "会议开始（本机时区）"}
+                            <input
+                              required
+                              type={allDay ? "date" : "datetime-local"}
+                              value={start}
+                              onChange={(e) => setStart(e.target.value)}
+                            />
+                          </label>
+                          <label>
+                            {allDay
+                              ? "会议结束日期（不含当天）"
+                              : eventZone
+                                ? "会议结束（指定时区）"
+                                : "会议结束（本机时区）"}
+                            <input
+                              required
+                              type={allDay ? "date" : "datetime-local"}
+                              value={end}
+                              onChange={(e) => setEnd(e.target.value)}
+                            />
+                          </label>
+                        </>
+                      ) : null}
+                    </>
                   ) : null}
                 </fieldset>
               ) : !modalError ? (
@@ -1225,7 +1500,8 @@ export function CalendarPanel({
                     onChange={setInvitees}
                   />
                 ) : null}
-                {mode === "create" ? (
+                {booking ? <BookingTime booking={booking} /> : null}
+                {mode === "create" && !booking ? (
                   <>
                     <label>
                       重复
@@ -1283,7 +1559,7 @@ export function CalendarPanel({
                     ) : null}
                   </>
                 ) : null}
-                {mode === "create" || reschedule ? (
+                {(mode === "create" && !booking) || reschedule ? (
                   <>
                     <label className="calendar-check">
                       <input
@@ -1350,6 +1626,9 @@ export function CalendarPanel({
             {intent ? (
               <p role="status">
                 {labels[intent.state]}。
+                {intent.error === "calendar_slot_no_longer_available"
+                  ? "所选时段已无法确认空闲，请关闭并重新查询候选时段。"
+                  : ""}
                 {["applying", "recovery_required"].includes(intent.state)
                   ? "只核对来源结果，不重新发送。"
                   : ""}
@@ -1383,6 +1662,9 @@ export function CalendarPanel({
                 className="primary"
                 disabled={
                   busy ||
+                  (scope === "series_rule" &&
+                    !intent &&
+                    (!seriesRule || !seriesChoice)) ||
                   (scope === "meeting" &&
                     !intent &&
                     (!meeting?.canUpdate ||
@@ -1398,27 +1680,37 @@ export function CalendarPanel({
                   : intent &&
                       ["applying", "recovery_required"].includes(intent.state)
                     ? "核对原操作"
-                    : scope === "meeting"
+                    : scope === "series_rule"
                       ? executor === "manual"
-                        ? "确认提交会议操作"
-                        : "确认会议操作并交给 AI"
-                      : mode === "delete"
-                        ? scope === "occurrence"
-                          ? "确认取消本次"
-                          : "确认删除系列"
-                        : executor === "manual"
-                          ? mode === "create" &&
-                            (invitees.length ||
+                        ? "确认修改重复规则"
+                        : "确认规则并交给 AI"
+                      : scope === "meeting"
+                        ? executor === "manual"
+                          ? "确认提交会议操作"
+                          : "确认会议操作并交给 AI"
+                        : mode === "delete"
+                          ? scope === "occurrence"
+                            ? "确认取消本次"
+                            : "确认删除系列"
+                          : booking ||
                               (intent?.plan.operation === "create" &&
-                                intent.plan.invitees?.length))
-                            ? "创建会议并邀请"
-                            : "保存日程"
-                          : mode === "create" &&
-                              (invitees.length ||
-                                (intent?.plan.operation === "create" &&
-                                  intent.plan.invitees?.length))
-                            ? "确认邀请并交给 AI"
-                            : "确认并交给 AI"}
+                                intent.plan.booking)
+                            ? executor === "manual"
+                              ? "确认预约并复核时段"
+                              : "确认预约并交给 AI"
+                            : executor === "manual"
+                              ? mode === "create" &&
+                                (invitees.length ||
+                                  (intent?.plan.operation === "create" &&
+                                    intent.plan.invitees?.length))
+                                ? "创建会议并邀请"
+                                : "保存日程"
+                              : mode === "create" &&
+                                  (invitees.length ||
+                                    (intent?.plan.operation === "create" &&
+                                      intent.plan.invitees?.length))
+                                ? "确认邀请并交给 AI"
+                                : "确认并交给 AI"}
               </button>
             </div>
           </form>

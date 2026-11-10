@@ -18,8 +18,10 @@ function time(value: string, zone: string) {
 }
 export function CalendarAvailabilityResults({
   result,
+  onSelect,
 }: {
   result: CalendarAvailabilityResult;
+  onSelect?: (slot: CalendarAvailabilityResult["candidates"][number]) => void;
 }) {
   return (
     <div className="calendar-availability-results">
@@ -45,6 +47,11 @@ export function CalendarAvailabilityResults({
           {result.candidates.map((c) => (
             <li key={c.start}>
               {time(c.start, result.timeZone)} — {time(c.end, result.timeZone)}
+              {onSelect ? (
+                <button type="button" onClick={() => onSelect(c)}>
+                  用此时段新建
+                </button>
+              ) : null}
             </li>
           ))}
         </ol>
@@ -96,6 +103,7 @@ export function CalendarAvailabilityPanel({
   disabled,
   aiReady,
   onAi,
+  onBook,
   onFailure,
 }: {
   calendars: CalendarSummary[];
@@ -105,6 +113,10 @@ export function CalendarAvailabilityPanel({
   disabled: boolean;
   aiReady: boolean;
   onAi: (query: CalendarAvailabilityQuery) => Promise<void>;
+  onBook?: (
+    query: CalendarAvailabilityQuery,
+    slot: CalendarAvailabilityResult["candidates"][number],
+  ) => void;
   onFailure: (error: unknown) => void;
 }) {
   const [ids, setIds] = useState([selectedId]),
@@ -115,7 +127,10 @@ export function CalendarAvailabilityPanel({
     [dailyStart, setDailyStart] = useState("09:00"),
     [dailyEnd, setDailyEnd] = useState("18:00"),
     [days, setDays] = useState([1, 2, 3, 4, 5]);
-  const [result, setResult] = useState<CalendarAvailabilityResult | null>(null),
+  const [result, setResult] = useState<{
+      query: CalendarAvailabilityQuery;
+      data: CalendarAvailabilityResult;
+    } | null>(null),
     [error, setError] = useState(""),
     [loading, setLoading] = useState(false);
   const request = useRef<AbortController | null>(null);
@@ -156,7 +171,7 @@ export function CalendarAvailabilityPanel({
             signal: controller.signal,
           },
         );
-        if (!controller.signal.aborted) setResult(next);
+        if (!controller.signal.aborted) setResult({ query: input, data: next });
       }
     } catch (e) {
       if (!controller.signal.aborted) {
@@ -300,7 +315,16 @@ export function CalendarAvailabilityPanel({
         </fieldset>
       </form>
       {error ? <p role="alert">{error}</p> : null}
-      {result ? <CalendarAvailabilityResults result={result} /> : null}
+      {result ? (
+        <CalendarAvailabilityResults
+          result={result.data}
+          onSelect={
+            !disabled && onBook && result.query.calendarIds.includes(selectedId)
+              ? (slot) => onBook(result.query, slot)
+              : undefined
+          }
+        />
+      ) : null}
     </section>
   );
 }

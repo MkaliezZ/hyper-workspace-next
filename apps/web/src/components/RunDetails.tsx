@@ -72,6 +72,8 @@ const actionLabels: Record<PlannedAction["tool"], string> = {
 };
 function receiptLabel(receipt: Record<string, unknown>) {
   if (receipt.tool === "calendar.manage") {
+    if (receipt.seriesRuleAction === true) return "调整整组重复规则";
+    if (receipt.meetingChange === "edit") return "调整会议";
     if (receipt.meetingChange === "reply") return "提交参会回复";
     if (receipt.meetingChange === "cancel") return "取消会议";
     if (receipt.occurrenceChange === "edit") return "修改本次重复日程";
@@ -301,6 +303,14 @@ export function RunDetails({
                       <CalendarMeetingFacts
                         meeting={receipt.meeting as CalendarMeeting}
                       />
+                    ) : null}
+                    {typeof receipt.bookingCheckedAt === "string" ? (
+                      <span>
+                        写入前复核{" "}
+                        {new Date(receipt.bookingCheckedAt).toLocaleString(
+                          "zh-CN",
+                        )}
+                      </span>
                     ) : null}
                     {typeof receipt.version === "number" ? (
                       <span>保存版本：{receipt.version}</span>
