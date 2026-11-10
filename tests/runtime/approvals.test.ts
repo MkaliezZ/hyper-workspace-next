@@ -61,7 +61,7 @@ test(
       const approvals = new ApprovalService(db);
       const work = new WorkspaceService(db, engineRegistry());
       const processor = new RunProcessor(work);
-      const profile = await work.saveModel(actor, {
+      const profile = await work.saveModel(peer, {
         name: "Synthetic approval model",
         provider: "openai-compatible",
         endpoint:
@@ -70,7 +70,7 @@ test(
           "/v1",
         model: "native-test-model",
         purpose: "chat",
-        scope: "personal",
+        scope: "workspace",
         apiKey: key,
       });
       const flow = await approvals.publish(peer, {
@@ -95,6 +95,20 @@ test(
           ],
         },
       });
+      const recipient = {
+        ...actor,
+        id: randomUUID(),
+        name: "Synthetic delegate",
+        identityCredentialId: undefined,
+      };
+      await db.pool.query("INSERT INTO cw_users(id,name) VALUES($1,$2)", [
+        recipient.id,
+        recipient.name,
+      ]);
+      await db.pool.query(
+        "INSERT INTO cw_members(workspace_id,user_id,role) VALUES($1,$2,'member')",
+        [recipient.workspaceId, recipient.id],
+      );
       for (const engine of ["dsh", "hermes"] as const) {
         assert.equal(
           work.engines.get(engine)?.describeCapabilities().configured,
@@ -161,7 +175,9 @@ test(
         assert.ok(
           (await history.history(actor)).some((item) => item.id === started.id),
         );
-        assert.deepEqual(await history.history(peer), []);
+        assert.ok(
+          !(await history.history(peer)).some((item) => item.id === started.id),
+        );
         const readPlan = { operation: "read" as const, requestId: draft.id };
         const invalid = await work.startApprovalRun(actor, {
           ...options,
@@ -196,8 +212,86 @@ test(
         assert.equal(observed.state, "succeeded", observed.error);
         assert.deepEqual(observed.result.receipts[0].approval, signed);
         assert.ok(!JSON.stringify(observed.result).includes(privateReason));
+
+        const another = await approvals.open(actor, {
+          flowId: flow.id,
+          version: flow.version,
+          idempotencyKey: randomUUID(),
+        });
+        const active = (await approvals.action(actor, another.id, {
+          operation: "submit",
+          expectedRevision: another.revision,
+          form: { reason: privateReason },
+          confirmed: true,
+          idempotencyKey: randomUUID(),
+        })) as { attempt: number; revision: number };
+        const assignment = {
+          attempt: active.attempt,
+          step: "sign",
+          assignmentVersion: 1,
+          confirmed: true,
+        };
+        async function assist(
+          owner: typeof actor,
+          action: Record<string, unknown>,
+        ) {
+          const input = ApprovalRunInput.parse({
+            ...options,
+            idempotencyKey: randomUUID(),
+            plan: {
+              operation: "apply",
+              requestId: another.id,
+              action: { ...action, idempotencyKey: randomUUID() },
+            },
+          });
+          const queued = await work.startApprovalRun(owner, input);
+          await processor.process(queued.id);
+          const completed = await work.getRun(owner, queued.id);
+          assert.equal(completed.state, "succeeded", completed.error);
+          assert.equal(
+            completed.result.receipts[0].operation,
+            action.operation,
+          );
+          return {
+            id: queued.id,
+            approval: completed.result.receipts[0].approval,
+          };
+        }
+        const reminded = await assist(actor, {
+          ...assignment,
+          operation: "remind",
+          recipientId: peer.id,
+        });
+        assert.equal(reminded.approval.revision, active.revision);
+        assert.ok(
+          (await approvals.reminders(peer)).some(
+            (reminder) => reminder.requestId === another.id,
+          ),
+        );
+        const transferred = await assist(peer, {
+          ...assignment,
+          operation: "transfer",
+          recipientId: recipient.id,
+          comment: "Synthetic reassignment",
+        });
+        assert.equal(transferred.approval.revision, active.revision + 1);
+        assert.ok(
+          (await history.history(peer)).some(
+            (item) => item.id === transferred.id,
+          ),
+        );
+        await assert.rejects(approvals.detail(peer, another.id), /不存在|无权/);
+        const delegated = await approvals.detail(recipient, another.id);
+        assert.equal(delegated.stages[0].steps[0].assignments[0].version, 2);
+        const withdrawn = await assist(actor, {
+          operation: "withdraw",
+          expectedRevision: delegated.revision,
+          comment: "Synthetic withdrawal",
+          confirmed: true,
+        });
+        assert.equal(withdrawn.approval.state, "withdrawn");
       }
-      assert.equal(model.calls(), 6);
+      assert.equal(model.calls(), 12);
       assert.equal(
         (
           await db.pool.query(

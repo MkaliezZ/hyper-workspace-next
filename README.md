@@ -25,6 +25,8 @@
 
 ![可视化审批流程设计器，合成资料](docs/images/approval-builder.png)
 
+图片 OCR 已核对 OXR 的硬件要求与代码、权重许可证，并用合成扫描件验证中英文字、表格和坐标。内网识别服务继续开发。 [OCR 评估与实测](docs/OCR.md)
+
 [![CI](https://github.com/MkaliezZ/hyper-workspace-next/actions/workflows/ci.yml/badge.svg)](https://github.com/MkaliezZ/hyper-workspace-next/actions/workflows/ci.yml)
 
 面向企业内部的 AI 协作 IM：讨论有沉淀，行动有回执，成果能修改，经验能复用。蓝、白、黑配色；拥有自己的业务核心与企业资产服务。
