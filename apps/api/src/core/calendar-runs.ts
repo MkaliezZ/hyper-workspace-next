@@ -1,4 +1,8 @@
-import { ConflictException, ForbiddenException } from "@nestjs/common";
+import {
+  ConflictException,
+  ForbiddenException,
+  HttpException,
+} from "@nestjs/common";
 import type { Subject } from "@hyper/contracts";
 import { CalendarRunPlan } from "@hyper/contracts/calendar";
 import type { Database } from "../db/database.js";
@@ -16,9 +20,11 @@ export class CalendarRunService {
     await assertMember(this.db, s);
     const rows = (
       await this.db.pool.query(
-        `SELECT r.id,r.state,r.engine,r.calendar_binding,r.calendar_plan->>'operation' AS operation,
+        `SELECT r.id,r.state,r.engine,r.calendar_binding,r.calendar_plan,r.calendar_plan->>'operation' AS operation,
        CASE WHEN r.calendar_plan->>'operation'='availability' THEN r.calendar_plan->'query'->'calendarIds'
-       ELSE jsonb_build_array(CASE WHEN r.calendar_plan->>'operation'='read' THEN r.calendar_plan->'query'->>'calendarId' ELSE cc.calendar_id END) END AS calendar_ids,r.created_at
+       ELSE jsonb_build_array(CASE WHEN r.calendar_plan->>'operation'='read' THEN r.calendar_plan->'query'->>'calendarId'
+       WHEN r.calendar_plan->>'operation'='link' THEN r.calendar_plan->'change'->'event'->>'calendarId'
+       ELSE cc.calendar_id END) END AS calendar_ids,r.created_at
        FROM cw_runs r LEFT JOIN cw_calendar_commands cc ON cc.id::text=r.calendar_plan->>'commandId' AND cc.workspace_id=r.workspace_id AND cc.actor_id=r.actor_id
        WHERE r.workspace_id=$1 AND r.actor_id=$2 AND r.conversation_id IS NULL AND r.workflow='manage_calendar' ORDER BY r.created_at DESC,r.id DESC LIMIT 20`,
         [s.workspaceId, s.id],
@@ -34,27 +40,43 @@ export class CalendarRunService {
       throw new ForbiddenException("日历来源身份在历史读取期间变化。");
     const allowed = new Set(current.map((c) => c.id));
     await assertMember(this.db, s);
-    return rows
-      .filter(
-        (r) =>
-          r.calendar_binding === binding.bindingKey &&
-          Array.isArray(r.calendar_ids) &&
-          r.calendar_ids.length > 0 &&
-          r.calendar_ids.every(
-            (id: unknown) => typeof id === "string" && allowed.has(id),
-          ),
+    const visible = [];
+    for (const r of rows) {
+      if (
+        !Array.isArray(r.calendar_ids) ||
+        !r.calendar_ids.length ||
+        !r.calendar_ids.every(
+          (id: unknown) => typeof id === "string" && allowed.has(id),
+        )
       )
-      .map((r) => ({
-        id: r.id,
-        state: r.state,
-        engine: r.engine,
-        operation: r.operation,
-        calendarId: r.calendar_ids[0],
-        createdAt: r.created_at.toISOString(),
-      }));
+        continue;
+      if (r.operation === "link") {
+        try {
+          await this.assertRunScope(s, r);
+        } catch (error) {
+          if (!(error instanceof HttpException)) throw error;
+          continue;
+        }
+      } else if (r.calendar_binding !== binding.bindingKey) continue;
+      visible.push(r);
+    }
+    return visible.map((r) => ({
+      id: r.id,
+      state: r.state,
+      engine: r.engine,
+      operation: r.operation,
+      calendarId: r.calendar_ids[0],
+      createdAt: r.created_at.toISOString(),
+    }));
   }
   async prepare(s: Subject, raw: unknown, allowTerminal = false) {
     const plan = CalendarRunPlan.parse(raw);
+    if (plan.operation === "link")
+      return {
+        plan,
+        command: null,
+        ...(await this.calendars.linkScope(s, plan.change, !allowTerminal)),
+      };
     const command =
       plan.operation === "apply"
         ? await this.calendars.get(s, plan.commandId)
@@ -109,7 +131,8 @@ export class CalendarRunService {
             ? { command: prepared.command.plan }
             : {
                 query:
-                  prepared.plan.operation !== "apply"
+                  prepared.plan.operation === "read" ||
+                  prepared.plan.operation === "availability"
                     ? prepared.plan.query
                     : null,
                 ...(prepared.plan.operation === "read"
@@ -189,6 +212,19 @@ export class CalendarRunService {
           start: prepared.plan.query.start,
           end: prepared.plan.query.end,
         },
+      };
+    }
+    if (prepared.plan.operation === "link") {
+      const link = await this.calendars.changeLink(s, prepared.plan.change, {
+        runId: run.id,
+        lease: execution.lease,
+        signal: execution.signal,
+      });
+      return {
+        tool: "calendar.manage" as const,
+        state: "succeeded",
+        operation: "link",
+        link,
       };
     }
     const receipt = await this.calendars.apply(s, prepared.plan.commandId, {

@@ -207,6 +207,18 @@ class ApiController {
   ) {
     return new CalendarService(db).seriesRule(await subject(req), body);
   }
+  @Post("calendar/links/query") async calendarLinks(
+    @Req() req: Request,
+    @Body() body: unknown,
+  ) {
+    return new CalendarService(db).links(await subject(req), body);
+  }
+  @Post("calendar/links/change") async changeCalendarLink(
+    @Req() req: Request,
+    @Body() body: unknown,
+  ) {
+    return new CalendarService(db).changeLink(await subject(req), body);
+  }
   @Post("calendar/meeting") async calendarMeeting(
     @Req() req: Request,
     @Body() body: unknown,

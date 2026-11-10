@@ -12,6 +12,10 @@ import {
   CalendarQuery,
   CalendarAvailabilityQuery,
   CalendarObjectQuery,
+  CalendarLinkChange,
+  type CalendarLink,
+  type CalendarLinkReceipt,
+  type CalendarLinkTarget,
   type CalendarMeeting,
   type CalendarCommandReceipt,
   type CalendarInvitationStatus,
@@ -38,6 +42,7 @@ import {
   patchCalendarMeeting,
 } from "./calendar-codec.js";
 import { calendarOccurrences } from "./calendar-projection.js";
+import { ProjectAccess } from "./project-access.js";
 
 const publicReceipt = (row: any): CalendarCommandReceipt => ({
   sourceRunId: row.source_run_id ?? null,
@@ -89,14 +94,17 @@ export class CalendarService {
     const calendar = await this.calendar(source, calendarId);
     return {
       calendar,
-      bindingKey: stableDigest({
-        provider: source.config.providerKey,
-        transport: source.config.transportUrl,
-        workspaceId: source.config.workspaceId,
-        memberGroup: source.config.memberGroup,
-        actor: source.remoteUid,
-      }),
+      bindingKey: this.bindingKey(source),
     };
+  }
+  private bindingKey(source: Source) {
+    return stableDigest({
+      provider: source.config.providerKey,
+      transport: source.config.transportUrl,
+      workspaceId: source.config.workspaceId,
+      memberGroup: source.config.memberGroup,
+      actor: source.remoteUid,
+    });
   }
   private async calendar(
     source: Source,
@@ -271,6 +279,183 @@ export class CalendarService {
     const rule = readCalendarSeriesRule(actual.ical);
     await this.recheck(s, source, input.calendarId);
     return rule;
+  }
+  private async linkEvent(s: Subject, raw: unknown) {
+    const input = CalendarObjectQuery.parse(raw);
+    const source = await this.connection(s);
+    await this.calendar(source, input.calendarId);
+    const event = await source.provider.read(input.calendarId, input.objectId);
+    await this.recheck(s, source, input.calendarId);
+    return { source, event, bindingKey: this.bindingKey(source) };
+  }
+  async assertLinkTarget(s: Subject, target: CalendarLinkTarget) {
+    await new ProjectAccess(this.db).assert(s, target.projectId);
+    if (target.kind === "task") {
+      const task = await this.db.pool.query(
+        "SELECT id FROM cw_tasks WHERE id=$1 AND project_id=$2 AND workspace_id=$3",
+        [target.taskId, target.projectId, s.workspaceId],
+      );
+      if (!task.rowCount) throw new NotFoundException("待办不存在或无权访问。");
+    }
+  }
+  async linkScope(s: Subject, change: CalendarLinkChange, current: boolean) {
+    await this.assertLinkTarget(s, change.target);
+    const { event, bindingKey } = await this.linkEvent(s, change.event);
+    if (current && event.etag !== change.event.etag)
+      throw new ConflictException("来源日程已更新，请刷新日历。");
+    return { bindingKey: stableDigest({ bindingKey, uid: event.uid }) };
+  }
+  async links(s: Subject, raw: unknown): Promise<CalendarLink[]> {
+    const input = CalendarObjectQuery.parse(raw);
+    const { source, event, bindingKey } = await this.linkEvent(s, input);
+    if (event.etag !== input.etag)
+      throw new ConflictException("来源日程已更新，请刷新日历。");
+    const allowed = new Map(
+      (await new ProjectAccess(this.db).list(s)).map((p) => [p.id, p.name]),
+    );
+    const rows = (
+      await this.db.pool.query(
+        `SELECT latest.project_id, latest.task_id, task.title, task.version
+           FROM (
+             SELECT DISTINCT ON (project_id,task_id) project_id,task_id,linked
+             FROM cw_calendar_link_operations
+             WHERE workspace_id=$1 AND actor_id=$2 AND source_binding=$3
+               AND calendar_id=$4 AND object_id=$5 AND source_uid=$6
+             ORDER BY project_id,task_id,revision DESC
+           ) latest LEFT JOIN cw_tasks task ON task.id=latest.task_id
+             AND task.project_id=latest.project_id AND task.workspace_id=$1
+           WHERE latest.linked AND latest.project_id=ANY($7::uuid[])
+             AND (latest.task_id IS NULL OR task.id IS NOT NULL)`,
+        [
+          s.workspaceId,
+          s.id,
+          bindingKey,
+          event.calendarId,
+          event.objectId,
+          event.uid,
+          [...allowed.keys()],
+        ],
+      )
+    ).rows;
+    await this.recheck(s, source, input.calendarId);
+    return rows.map((row) =>
+      row.task_id
+        ? {
+            target: {
+              kind: "task",
+              projectId: row.project_id,
+              taskId: row.task_id,
+              taskVersion: row.version,
+            },
+            label: row.title,
+          }
+        : {
+            target: { kind: "project", projectId: row.project_id },
+            label: allowed.get(row.project_id)!,
+          },
+    );
+  }
+  async changeLink(
+    s: Subject,
+    raw: unknown,
+    execution?: { runId: string; lease: string; signal?: AbortSignal },
+  ): Promise<CalendarLinkReceipt> {
+    const input = CalendarLinkChange.parse(raw);
+    const { target, linked } = input;
+    await this.assertLinkTarget(s, target);
+    const { source, event, bindingKey } = await this.linkEvent(s, input.event);
+    await this.assertLinkTarget(s, target);
+    const hash = stableDigest({ input, bindingKey, sourceUid: event.uid });
+    const receipt = (row: {
+      id: string;
+      source_etag: string;
+      recorded_at: Date;
+    }) => ({
+      id: row.id,
+      linked,
+      target,
+      sourceEtag: row.source_etag,
+      recordedAt: row.recorded_at.toISOString(),
+    });
+    return this.db.tx(async (c) => {
+      execution?.signal?.throwIfAborted();
+      if (execution) {
+        const alive = await c.query(
+          `SELECT id FROM cw_runs WHERE id=$1 AND workspace_id=$2 AND actor_id=$3
+            AND state='running' AND lease_owner=$4 AND lease_expires_at>clock_timestamp()
+            AND workflow='manage_calendar' AND calendar_plan=$5::jsonb AND calendar_binding=$6
+            FOR UPDATE`,
+          [
+            execution.runId,
+            s.workspaceId,
+            s.id,
+            execution.lease,
+            { operation: "link", change: input },
+            stableDigest({ bindingKey, uid: event.uid }),
+          ],
+        );
+        if (!alive.rowCount)
+          throw new ConflictException("日历执行已停止或租约失效。");
+      }
+      await this.guard(c, s, source);
+      await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
+        `calendar-link:${s.workspaceId}:${s.id}`,
+      ]);
+      const previous = (
+        await c.query(
+          `SELECT id,params_hash,source_etag,recorded_at FROM cw_calendar_link_operations
+            WHERE workspace_id=$1 AND actor_id=$2 AND idempotency_key=$3`,
+          [s.workspaceId, s.id, input.idempotencyKey],
+        )
+      ).rows[0];
+      if (previous) {
+        if (previous.params_hash !== hash)
+          throw new ConflictException("同一关联操作键不能更换日程或目标。");
+        return receipt(previous);
+      }
+      if (event.etag !== input.event.etag)
+        throw new ConflictException("来源日程已更新，请刷新日历。");
+      const project = await c.query(
+        "SELECT id FROM cw_projects WHERE id=$1 AND workspace_id=$2 FOR SHARE",
+        [target.projectId, s.workspaceId],
+      );
+      if (!project.rowCount)
+        throw new NotFoundException("项目不存在或无权访问。");
+      if (target.kind === "task") {
+        const task = await c.query(
+          "SELECT version FROM cw_tasks WHERE id=$1 AND project_id=$2 AND workspace_id=$3 FOR SHARE",
+          [target.taskId, target.projectId, s.workspaceId],
+        );
+        if (task.rows[0]?.version !== target.taskVersion)
+          throw new ConflictException("待办版本已更新，请刷新项目。");
+      }
+      execution?.signal?.throwIfAborted();
+      const { rows } = await c.query(
+        `INSERT INTO cw_calendar_link_operations
+          (id,workspace_id,actor_id,source_binding,calendar_id,object_id,source_uid,source_etag,
+           project_id,task_id,task_version,linked,idempotency_key,params_hash,source_run_id)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+          RETURNING id,source_etag,recorded_at`,
+        [
+          randomUUID(),
+          s.workspaceId,
+          s.id,
+          bindingKey,
+          event.calendarId,
+          event.objectId,
+          event.uid,
+          event.etag,
+          target.projectId,
+          target.kind === "task" ? target.taskId : null,
+          target.kind === "task" ? target.taskVersion : null,
+          linked,
+          input.idempotencyKey,
+          hash,
+          execution?.runId ?? null,
+        ],
+      );
+      return receipt(rows[0]);
+    });
   }
   async meeting(s: Subject, raw: unknown) {
     const input = CalendarObjectQuery.parse(raw);

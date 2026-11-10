@@ -180,6 +180,34 @@ test("Real CalDAV and product UI preserve source permissions, versions, recurrin
       expect(receipt.observedResult).toBe("matched");
       const original = await alice.read(calendarId, receipt.objectId);
       expect(original.uid).toBe(receipt.id + "@hyper-workspace");
+      const createdEvent = panel.locator(".calendar-event").filter({
+        has: actor.page.getByRole("heading", {
+          name: "Synthetic product calendar event",
+          exact: true,
+        }),
+      });
+      await createdEvent
+        .getByRole("button", { name: "关联项目与待办", exact: true })
+        .click();
+      const linkDialog = actor.page.getByRole("dialog", {
+        name: "关联项目与待办",
+        exact: true,
+      });
+      await linkDialog
+        .getByRole("button", { name: "确认保存关联", exact: true })
+        .click();
+      await expect(linkDialog.getByRole("status")).toHaveText("关联已保存");
+      await expect(
+        linkDialog.getByRole("button", { name: "确认移除", exact: true }),
+      ).toBeVisible();
+      const unchanged = await alice.read(calendarId, receipt.objectId);
+      expect(unchanged.etag).toBe(original.etag);
+      expect(unchanged.ical).toBe(original.ical);
+      await linkDialog
+        .getByRole("button", { name: "确认移除", exact: true })
+        .click();
+      await expect(linkDialog.getByRole("status")).toHaveText("关联已移除");
+      await linkDialog.getByRole("button", { name: "关闭", exact: true }).click();
       const availability = await actor.context.request.post(
         origin + "/api/calendar/availability",
         {

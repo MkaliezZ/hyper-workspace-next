@@ -693,7 +693,8 @@ export class RunProcessor {
               )
             : run.workflow === "manage_calendar"
               ? await c.query(
-                  "SELECT id FROM cw_calendar_commands WHERE source_run_id=$1 AND state IN ('applying','succeeded','recovery_required') LIMIT 1",
+                  `SELECT id FROM cw_calendar_commands WHERE source_run_id=$1 AND state IN ('applying','succeeded','recovery_required')
+                   UNION ALL SELECT id FROM cw_calendar_link_operations WHERE source_run_id=$1 LIMIT 1`,
                   [runId],
                 )
               : run.workflow === "manage_communication"

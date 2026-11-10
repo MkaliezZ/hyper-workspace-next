@@ -357,6 +357,39 @@ export interface CalendarAvailabilityResult {
     objects: { objectId: string; etag: string }[];
   }[];
 }
+export const CalendarLinkTarget = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("project"), projectId: z.uuid() }).strict(),
+  z
+    .object({
+      kind: z.literal("task"),
+      projectId: z.uuid(),
+      taskId: z.uuid(),
+      taskVersion: z.number().int().positive(),
+    })
+    .strict(),
+]);
+export type CalendarLinkTarget = z.infer<typeof CalendarLinkTarget>;
+export const CalendarLinkChange = z
+  .object({
+    event: CalendarObjectQuery,
+    target: CalendarLinkTarget,
+    linked: z.boolean(),
+    idempotencyKey: z.uuid(),
+    confirmed: z.literal(true),
+  })
+  .strict();
+export type CalendarLinkChange = z.infer<typeof CalendarLinkChange>;
+export interface CalendarLink {
+  target: CalendarLinkTarget;
+  label: string;
+}
+export interface CalendarLinkReceipt {
+  id: string;
+  linked: boolean;
+  target: CalendarLinkTarget;
+  sourceEtag: string;
+  recordedAt: string;
+}
 export const CalendarRunPlan = z.discriminatedUnion("operation", [
   z.object({ operation: z.literal("read"), query: CalendarQuery }).strict(),
   z
@@ -371,6 +404,9 @@ export const CalendarRunPlan = z.discriminatedUnion("operation", [
       commandId: z.uuid(),
       confirmed: z.literal(true),
     })
+    .strict(),
+  z
+    .object({ operation: z.literal("link"), change: CalendarLinkChange })
     .strict(),
 ]);
 export type CalendarRunPlan = z.infer<typeof CalendarRunPlan>;
@@ -387,7 +423,7 @@ export interface CalendarRunSummary {
   id: string;
   state: string;
   engine: "dsh" | "hermes";
-  operation: "read" | "apply" | "availability";
+  operation: "read" | "apply" | "availability" | "link";
   calendarId: string;
   createdAt: string;
 }

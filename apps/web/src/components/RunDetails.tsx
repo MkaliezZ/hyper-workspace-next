@@ -72,6 +72,10 @@ const actionLabels: Record<PlannedAction["tool"], string> = {
 };
 function receiptLabel(receipt: Record<string, unknown>) {
   if (receipt.tool === "calendar.manage") {
+    if (receipt.operation === "link") {
+      const link = receipt.link as { linked?: boolean } | undefined;
+      return link?.linked === false ? "移除私人日程关联" : "保存私人日程关联";
+    }
     if (receipt.seriesRuleAction === true) return "调整整组重复规则";
     if (receipt.meetingChange === "edit") return "调整会议";
     if (receipt.meetingChange === "reply") return "提交参会回复";

@@ -14,7 +14,7 @@ import { CalendarAvailabilityQuery } from "@hyper/contracts/calendar";
 
 test(
   "Native DSH and Hermes execute the same private calendar service with observed source receipts and cleaned runtime",
-  { timeout: 240000 },
+  { timeout: 300000 },
   async () => {
     const url = process.env.TEST_DATABASE_URL;
     assert.ok(url && new URL(url).pathname.endsWith("_test"));
@@ -53,6 +53,15 @@ test(
       const f = source,
         work = new WorkspaceService(db, engineRegistry()),
         processor = new RunProcessor(work);
+      const projectId = randomUUID();
+      await db.pool.query(
+        "INSERT INTO cw_projects(id,workspace_id,name) VALUES($1,$2,'Synthetic private link target')",
+        [projectId, f.actor.workspaceId],
+      );
+      await db.pool.query(
+        "INSERT INTO cw_conversations(id,workspace_id,project_id) VALUES($1,$2,$3)",
+        [randomUUID(), f.actor.workspaceId, projectId],
+      );
       const profile = await work.saveModel(f.actor, {
         name: "Synthetic native calendar",
         provider: "openai-compatible",
@@ -173,6 +182,38 @@ test(
         assert.ok(
           availabilityRun.result.receipts[0].availability.candidates.length > 0,
         );
+        const saved = await f.service.get(f.actor, command.id);
+        const event = {
+          calendarId: saved.calendarId,
+          objectId: saved.objectId,
+          etag: saved.sourceEtag!,
+        };
+        const link = await work.startCalendarRun(f.actor, {
+          ...input,
+          idempotencyKey: randomUUID(),
+          plan: {
+            operation: "link",
+            change: {
+              event,
+              target: { kind: "project", projectId },
+              linked: true,
+              idempotencyKey: randomUUID(),
+              confirmed: true,
+            },
+          },
+        });
+        const sourceWrites = f.source.writes;
+        await processor.process(link.id);
+        const linkResult = await work.getRun(f.actor, link.id);
+        assert.equal(linkResult.state, "succeeded", linkResult.error);
+        assert.equal(linkResult.result.receipts[0].link.linked, true);
+        assert.deepEqual(await f.service.links(f.actor, event), [
+          {
+            target: { kind: "project", projectId },
+            label: "Synthetic private link target",
+          },
+        ]);
+        assert.equal(f.source.writes, sourceWrites);
         const recurring = f.create();
         const rejectedCommand = await f.service.prepare(f.actor, {
           ...recurring,
@@ -238,7 +279,7 @@ test(
         f.source.objects.delete(fixtureKey);
       }
       assert.equal(f.source.writes, 4);
-      assert.equal(model.calls(), 10);
+      assert.equal(model.calls(), 12);
       assert.equal(
         (
           await db.pool.query(

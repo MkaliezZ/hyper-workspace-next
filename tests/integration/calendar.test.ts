@@ -130,6 +130,99 @@ test("Calendar preparation is private and idempotent; concurrent apply performs 
   assert.equal((await service.history(actor("bob"))).length, 0);
 });
 
+test("Calendar project and task links remain private, versioned and replay-safe without writing to CalDAV", async () => {
+  const projectId = randomUUID(),
+    otherProject = randomUUID(),
+    taskId = randomUUID();
+  await db.pool.query(
+    "INSERT INTO cw_projects(id,workspace_id,name) VALUES ($1,$3,'Calendar project'),($2,$3,'Another project')",
+    [projectId, otherProject, workspaceId],
+  );
+  await db.pool.query(
+    "INSERT INTO cw_conversations(id,workspace_id,project_id) VALUES ($1,$3,$2)",
+    [randomUUID(), projectId, workspaceId],
+  );
+  await db.pool.query(
+    "INSERT INTO cw_tasks(id,workspace_id,project_id,title,created_by) VALUES($1,$2,$3,'Schedule task',$4)",
+    [taskId, workspaceId, projectId, actor().id],
+  );
+  const created = await service.apply(
+    actor(),
+    (await service.prepare(actor(), create())).id,
+  );
+  const event = {
+    calendarId: created.calendarId,
+    objectId: created.objectId,
+    etag: created.sourceEtag!,
+  };
+  const input = {
+    event,
+    target: { kind: "task" as const, projectId, taskId, taskVersion: 1 },
+    linked: true,
+    idempotencyKey: randomUUID(),
+    confirmed: true,
+  };
+  const copy = "bob/personal/" + event.objectId;
+  fixture.objects.set(copy, {
+    ...fixture.objects.get("alice/personal/" + event.objectId)!,
+  });
+  const writes = fixture.writes;
+  const change = (patch: Record<string, unknown>) =>
+    service.changeLink(actor(), {
+      ...input,
+      idempotencyKey: randomUUID(),
+      ...patch,
+    });
+  try {
+    await assert.rejects(change({ confirmed: false }), /true/);
+    await assert.rejects(
+      change({ target: { ...input.target, projectId: otherProject } }),
+      /待办不存在/,
+    );
+    await assert.rejects(
+      change({ target: { ...input.target, taskVersion: 2 } }),
+      /待办版本/,
+    );
+    await assert.rejects(
+      change({ event: { ...event, etag: '"stale"' } }),
+      /日程已更新/,
+    );
+    const [one, two] = await Promise.all([
+      service.changeLink(actor(), input),
+      service.changeLink(actor(), input),
+    ]);
+    assert.deepEqual(one, two);
+    assert.deepEqual(await service.links(actor(), event), [
+      { target: input.target, label: "Schedule task" },
+    ]);
+    assert.deepEqual(await service.links(actor("bob"), event), []);
+    await assert.rejects(
+      service.changeLink(actor(), { ...input, linked: false }),
+      /同一关联操作键/,
+    );
+    fixture.people.get("alice")!.read = false;
+    try {
+      const denied = (e: unknown) =>
+        e instanceof Error &&
+        "getStatus" in e &&
+        typeof e.getStatus === "function" &&
+        e.getStatus() === 404;
+      await assert.rejects(service.links(actor(), event), denied);
+      await assert.rejects(change({ linked: false }), denied);
+    } finally {
+      fixture.people.get("alice")!.read = true;
+    }
+    const removed = await change({ linked: false });
+    assert.equal(removed.linked, false);
+    assert.deepEqual(await service.changeLink(actor(), input), one);
+    assert.deepEqual(await service.links(actor(), event), []);
+    assert.equal(fixture.writes, writes);
+  } finally {
+    fixture.objects.delete(copy);
+    fixture.objects.delete("alice/personal/" + event.objectId);
+  }
+});
+
 test("Calendar update preserves unedited properties and rejects stale ETags; delete confirms absence", async () => {
   const input = create();
   const created = await service.apply(

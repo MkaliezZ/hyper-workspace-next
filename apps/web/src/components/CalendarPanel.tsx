@@ -30,6 +30,7 @@ import {
   CalendarMeetingFacts,
 } from "./CalendarInvitees";
 import { CalendarAvailabilityPanel } from "./CalendarAvailabilityPanel";
+import { CalendarLinkDialog } from "./CalendarLinkDialog";
 import { api, mutation, ApiError } from "../api";
 import { Dialog } from "./Dialog";
 
@@ -244,10 +245,12 @@ function CalendarPreview({ receipt }: { receipt: CalendarCommandReceipt }) {
 }
 export function CalendarPanel({
   engines,
+  view,
   run,
   onRun,
 }: {
   engines: WorkspaceView["engines"];
+  view: WorkspaceView;
   run: { id: string; state: string } | null;
   onRun: (run: any) => void;
 }) {
@@ -268,6 +271,7 @@ export function CalendarPanel({
   const [history, setHistory] = useState<CalendarCommandReceipt[]>([]),
     [error, setError] = useState("");
   const [runHistory, setRunHistory] = useState<CalendarRunSummary[]>([]);
+  const [linkEvent, setLinkEvent] = useState<CalendarOccurrence | null>(null);
   const [listLoading, setListLoading] = useState(true),
     [queryLoading, setQueryLoading] = useState(false),
     [busy, setBusy] = useState(false),
@@ -314,6 +318,7 @@ export function CalendarPanel({
     setEvents([]);
     setHistory([]);
     setRunHistory([]);
+    setLinkEvent(null);
     setMode(null);
     setSelected(null);
     setIntent(null);
@@ -992,6 +997,15 @@ export function CalendarPanel({
                         <span>已取消</span>
                       ) : null}
                       <div className="calendar-event-actions">
+                        {event.status !== "cancelled" ? (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => setLinkEvent(event)}
+                          >
+                            关联项目与待办
+                          </button>
+                        ) : null}
                         {event.meeting ? (
                           <button
                             type="button"
@@ -1194,7 +1208,9 @@ export function CalendarPanel({
                     ? "核对日历窗口"
                     : r.operation === "availability"
                       ? "核对忙闲与候选时段"
-                      : "执行确认的日历操作"}{" "}
+                      : r.operation === "link"
+                        ? "保存私人日程关联"
+                        : "执行确认的日历操作"}{" "}
                   · {r.engine === "dsh" ? "DSH" : "Hermes"}
                 </strong>
                 <span>
@@ -1219,6 +1235,20 @@ export function CalendarPanel({
           <p className="muted">尚无可访问的日历 AI 执行。</p>
         )}
       </section>
+      {linkEvent ? (
+        <CalendarLinkDialog
+          event={linkEvent}
+          view={view}
+          onClose={() => setLinkEvent(null)}
+          onUnavailable={failure}
+          onAi={
+            executor !== "manual"
+              ? (change) => ai({ operation: "link", change })
+              : undefined
+          }
+          aiUnavailable={executor !== "manual" && !aiReady}
+        />
+      ) : null}
       {mode ? (
         <Dialog
           title={

@@ -743,6 +743,7 @@ export function App() {
           <CalendarPanel
             key={view.user.id + view.user.workspaceId}
             engines={view.engines}
+            view={view}
             run={run}
             onRun={(value) => {
               setRun(value);

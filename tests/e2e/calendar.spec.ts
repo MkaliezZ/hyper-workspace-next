@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import type {
   CalendarCommandInput,
   CalendarCommandReceipt,
+  CalendarLinkChange,
   CalendarOccurrence,
 } from "@hyper/contracts/calendar";
 async function start(
@@ -1073,4 +1074,110 @@ test("Candidate booking keeps the confirmed slot and guides a requery when the s
     editor.getByRole("button", { name: "确认预约并复核时段", exact: true }),
   ).toBeDisabled();
   expect(applies).toBe(1);
+});
+
+test("Calendar links a task on mobile, retries a lost receipt and removes the private link", async ({
+  page,
+}) => {
+  const event = {
+    calendarId: "personal",
+    objectId: "synthetic-link.ics",
+    etag: '"v3"',
+  };
+  const taskId = "79000000-0000-4000-8000-000000000001";
+  const requests: CalendarLinkChange[] = [];
+  let current: CalendarLinkChange | null = null;
+  await page.route("**/api/calendar/calendars", (route) =>
+    route.fulfill({
+      json: [{ id: "personal", name: "合成日历", canRead: true }],
+    }),
+  );
+  await page.route("**/api/calendar/commands", (route) =>
+    route.fulfill({ json: [] }),
+  );
+  await page.route("**/api/calendar/query", (route) =>
+    route.fulfill({
+      json: [
+        {
+          ...event,
+          uid: "synthetic-link",
+          recurrenceId: null,
+          title: "项目里程碑排期",
+          description: "",
+          location: "",
+          start: { kind: "date", value: "2026-11-04" },
+          end: { kind: "date", value: "2026-11-05" },
+          status: "confirmed",
+          transparency: "opaque",
+          truncatedFields: [],
+        } satisfies CalendarOccurrence,
+      ],
+    }),
+  );
+  await page.route("**/api/calendar/links/query", (route) => {
+    expect(route.request().postDataJSON()).toEqual(event);
+    return route.fulfill({
+      json: current?.linked
+        ? [{ target: current.target, label: "核对里程碑" }]
+        : [],
+    });
+  });
+  await page.route("**/api/calendar/links/change", (route) => {
+    const input = route.request().postDataJSON() as CalendarLinkChange;
+    expect(input).toMatchObject({
+      event,
+      confirmed: true,
+      target: { kind: "task", taskId, taskVersion: 2 },
+    });
+    requests.push(input);
+    current = input;
+    if (requests.length === 1)
+      return route.fulfill({
+        status: 502,
+        json: { message: "暂时无法取得操作回执。" },
+      });
+    return route.fulfill({
+      json: {
+        id: input.idempotencyKey,
+        linked: input.linked,
+        target: input.target,
+        sourceEtag: event.etag,
+        recordedAt: "2026-11-04T00:00:00Z",
+      },
+    });
+  });
+  const panel = await start(page, (view) => {
+    view.tasks = [
+      { id: taskId, title: "核对里程碑", version: 2, status: "open" },
+    ];
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await panel.getByLabel("起始日期", { exact: true }).fill("2026-11-04");
+  await panel
+    .getByRole("button", { name: "关联项目与待办", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "关联项目与待办",
+    exact: true,
+  });
+  await dialog.getByRole("combobox").nth(1).selectOption(taskId);
+  const save = dialog.getByRole("button", {
+    name: "确认保存关联",
+    exact: true,
+  });
+  await save.click();
+  await expect(dialog.getByRole("alert")).toContainText("暂时无法取得操作回执");
+  await save.click();
+  await expect(dialog.getByRole("status")).toHaveText("关联已保存");
+  await expect(
+    dialog.getByText("待办 · 核对里程碑", { exact: true }),
+  ).toBeVisible();
+  expect(requests[0]).toEqual(requests[1]);
+  await page.screenshot({ path: "/tmp/hyper-next-calendar-link-mobile.png" });
+  await dialog.getByRole("button", { name: "确认移除", exact: true }).click();
+  await expect(dialog.getByRole("status")).toHaveText("关联已移除");
+  await expect(
+    dialog.getByText("暂无可访问的关联。", { exact: true }),
+  ).toBeVisible();
+  expect(requests[2]?.idempotencyKey).not.toBe(requests[0]?.idempotencyKey);
 });
