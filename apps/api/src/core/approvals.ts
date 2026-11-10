@@ -17,10 +17,12 @@ import {
   type ApprovalStage,
   type ApprovalState,
   type ApprovalStep,
+  type ApprovalRunPlan,
 } from "@hyper/contracts/approvals";
 import type { Database } from "../db/database.js";
 import { stableDigest } from "./credentials.js";
 import { assertMember } from "./security.js";
+import { ExecutionPolicyService } from "./execution-policy.js";
 
 interface RequestRow {
   id: string;
@@ -36,7 +38,7 @@ interface RequestRow {
   visible_reviewers: string[];
 }
 
-function plan(
+function compilePlan(
   definition: ApprovalDefinition,
   form: ApprovalForm,
 ): ApprovalStage[] {
@@ -149,6 +151,14 @@ type OperationResult = {
   audit: unknown;
   receipt: object;
 };
+interface ApprovalExecution {
+  runId: string;
+  lease: string;
+  plan: ApprovalRunPlan;
+  contextBytes: number;
+  actionCount: number;
+  signal?: AbortSignal;
+}
 
 export class ApprovalService {
   constructor(private readonly db: Database) {}
@@ -160,10 +170,37 @@ export class ApprovalService {
     params: unknown,
     admin: boolean,
     change: (c: PoolClient) => Promise<T>,
+    execution?: ApprovalExecution,
   ): Promise<T["receipt"]> {
     await assertMember(this.db, s);
     const hash = stableDigest({ action, params });
     return this.db.tx(async (c) => {
+      if (execution) {
+        execution.signal?.throwIfAborted();
+        await ExecutionPolicyService.lock(c, s.workspaceId);
+        const run = (
+          await c.query(
+            `SELECT * FROM cw_runs WHERE id=$1 AND workspace_id=$2 AND actor_id=$3
+             AND state='running' AND lease_owner=$4 AND lease_expires_at>clock_timestamp()
+             AND workflow='manage_approval' AND approval_plan=$5::jsonb FOR UPDATE`,
+            [
+              execution.runId,
+              s.workspaceId,
+              s.id,
+              execution.lease,
+              execution.plan,
+            ],
+          )
+        ).rows[0];
+        if (!run) throw new ConflictException("审批执行已停止或租约失效。");
+        await new ExecutionPolicyService(this.db).check(
+          c,
+          s,
+          run,
+          execution.contextBytes,
+          execution.actionCount,
+        );
+      }
       const member = (
         await c.query(
           "SELECT role FROM cw_members WHERE workspace_id=$1 AND user_id=$2 FOR SHARE",
@@ -203,9 +240,10 @@ export class ApprovalService {
         return previous.receipt;
       }
       const result = await change(c);
+      execution?.signal?.throwIfAborted();
       await c.query(
-        `INSERT INTO cw_approval_operations(id,workspace_id,actor_id,request_id,flow_id,action,idempotency_key,params_hash,audit,receipt)
-          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        `INSERT INTO cw_approval_operations(id,workspace_id,actor_id,request_id,flow_id,action,idempotency_key,params_hash,audit,receipt,source_run_id)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
         [
           randomUUID(),
           s.workspaceId,
@@ -217,6 +255,7 @@ export class ApprovalService {
           hash,
           result.audit,
           result.receipt,
+          execution?.runId ?? null,
         ],
       );
       return result.receipt;
@@ -445,8 +484,86 @@ export class ApprovalService {
     ).rows[0]?.definition;
     return ApprovalDefinition.parse(definition);
   }
-  async action(s: Subject, id: string, raw: unknown) {
+  async runScope(
+    s: Subject,
+    plan: ApprovalRunPlan,
+    current: boolean,
+    runId?: string,
+  ) {
+    await assertMember(this.db, s);
+    let row: RequestRow;
+    try {
+      row = await this.request(this.db.pool, s, plan.requestId);
+    } catch (error) {
+      if (
+        !current &&
+        error instanceof NotFoundException &&
+        runId &&
+        plan.operation === "apply" &&
+        plan.action.operation === "transfer"
+      ) {
+        const receipt = (
+          await this.db.pool.query(
+            `SELECT receipt FROM cw_approval_operations WHERE source_run_id=$1 AND workspace_id=$2
+             AND actor_id=$3 AND request_id=$4 AND action='transfer'`,
+            [runId, s.workspaceId, s.id, plan.requestId],
+          )
+        ).rows[0]?.receipt;
+        if (receipt) return receipt as ReturnType<typeof summary>;
+      }
+      throw error;
+    }
+    if (current && plan.operation === "apply") {
+      const input = plan.action;
+      if (input.operation === "submit" || input.operation === "withdraw") {
+        if (row.applicant_id !== s.id)
+          throw new ForbiddenException("仅申请人可以提交或撤回。");
+        if (row.revision !== input.expectedRevision)
+          throw new ConflictException("申请版本已变化，请刷新。");
+        if (input.operation === "submit") {
+          if (row.state !== "draft" && row.state !== "returned")
+            throw new ConflictException("申请当前不能提交。");
+          const stages = compilePlan(
+            await this.definition(this.db.pool, s.workspaceId, row),
+            input.form,
+          );
+          if (stages.flatMap(reviewers).includes(s.id))
+            throw new BadRequestException("申请人不能审批本人申请。");
+        } else if (!["draft", "returned", "active"].includes(row.state))
+          throw new ConflictException("审批已结束。");
+      } else {
+        if (row.state !== "active" || row.attempt !== input.attempt)
+          throw new ConflictException("此轮审批已结束，请刷新。");
+        const step = row.stages[row.stage]?.steps.find(
+          (item) => item.key === input.step,
+        );
+        if (!step) throw new ForbiddenException("仅当前阶段的步骤可以处理。");
+        if (input.operation === "remind" && row.applicant_id !== s.id)
+          throw new ForbiddenException("仅申请人可以催办。");
+        pendingAssignment(
+          step,
+          input.operation === "remind" ? input.recipientId : s.id,
+          input.assignmentVersion,
+        );
+      }
+    }
+    return summary(row);
+  }
+  async action(
+    s: Subject,
+    id: string,
+    raw: unknown,
+    execution?: ApprovalExecution,
+  ) {
     const input = ApprovalAction.parse(raw);
+    if (
+      execution &&
+      (input.operation === "review" ||
+        execution.plan.operation !== "apply" ||
+        execution.plan.requestId !== id ||
+        stableDigest(execution.plan.action) !== stableDigest(input))
+    )
+      throw new ForbiddenException("审批执行计划不能更换操作或目标。");
     return this.mutate(
       s,
       input.operation,
@@ -546,7 +663,7 @@ export class ApprovalService {
           } else {
             if (row.state !== "draft" && row.state !== "returned")
               throw new ConflictException("申请当前不能提交。");
-            const stages = plan(
+            const stages = compilePlan(
               await this.definition(c, s.workspaceId, row),
               input.form,
             );
@@ -563,6 +680,7 @@ export class ApprovalService {
           }
         }
         row.revision += 1;
+        execution?.signal?.throwIfAborted();
         await c.query(
           `UPDATE cw_approval_requests SET state=$2,revision=$3,attempt=$4,stage=$5,form=$6,stages=$7,
           visible_reviewers=$8,updated_at=clock_timestamp() WHERE id=$1`,
@@ -584,6 +702,7 @@ export class ApprovalService {
           receipt: summary(row),
         };
       },
+      execution,
     );
   }
 }

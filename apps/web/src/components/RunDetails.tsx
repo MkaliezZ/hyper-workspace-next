@@ -63,6 +63,7 @@ const actionLabels: Record<PlannedAction["tool"], string> = {
   "organization.manage": "管理组织",
   "communication.manage": "管理会话",
   "calendar.manage": "核对日历操作",
+  "approval.manage": "核对审批操作",
   "attachment.share": "分享文件附件",
   "decision.write": "保存项目决定",
   "decision.manage": "管理项目决定",
@@ -71,6 +72,17 @@ const actionLabels: Record<PlannedAction["tool"], string> = {
   "file.reading.save": "保存文档解读",
 };
 function receiptLabel(receipt: Record<string, unknown>) {
+  if (receipt.tool === "approval.manage") {
+    const labels: Record<string, string> = {
+      read: "核对审批状态",
+      submit: "提交审批申请",
+      withdraw: "撤回审批申请",
+      transfer: "转交审批分派",
+      remind: "记录审批催办",
+    };
+    if (typeof receipt.operation === "string" && labels[receipt.operation])
+      return labels[receipt.operation];
+  }
   if (receipt.tool === "calendar.manage") {
     if (receipt.operation === "link") {
       const link = receipt.link as { linked?: boolean } | undefined;
@@ -110,6 +122,31 @@ const receiptStateLabels: Record<string, string> = {
   published: "已发布",
   withdrawn: "已撤回",
 };
+const approvalStateLabels: Record<string, string> = {
+  draft: "草稿",
+  active: "审批中",
+  returned: "已退回",
+  approved: "已通过",
+  rejected: "已拒绝",
+  withdrawn: "已撤回",
+};
+function approvalReceipt(value: unknown) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    !("state" in value) ||
+    typeof value.state !== "string" ||
+    !("revision" in value) ||
+    typeof value.revision !== "number"
+  )
+    return null;
+  return (
+    <span>
+      {approvalStateLabels[value.state] ?? value.state} · 申请版本{" "}
+      {value.revision}
+    </span>
+  );
+}
 const eventLabels: Record<RunEvent["kind"], string> = {
   "run.started": "开始执行",
   "message.delta": "更新执行说明",
@@ -282,6 +319,9 @@ export function RunDetails({
                         ? " · " + receipt.title
                         : ""}
                     </strong>
+                    {receipt.tool === "approval.manage"
+                      ? approvalReceipt(receipt.approval)
+                      : null}
                     {receipt.tool === "calendar.manage" &&
                     receipt.operation === "availability" &&
                     typeof receipt.availability === "object" &&

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import type { Subject } from "@hyper/contracts";
+import type { RunState, Subject, WorkspaceView } from "@hyper/contracts";
+import type { ModelSummary } from "./ModelSettings";
 import {
   type ApprovalAction,
   type ApprovalDetail,
@@ -9,6 +10,7 @@ import {
   type ApprovalSummary,
 } from "@hyper/contracts/approvals";
 import { api, ApiError, mutation } from "../api";
+import { runStateLabels } from "./RunDetails";
 import { Dialog } from "./Dialog";
 import { ApprovalMemberLookup } from "./ApprovalMemberLookup";
 import { ApprovalFlowEditor } from "./ApprovalFlowEditor";
@@ -38,6 +40,12 @@ type Summary = ApprovalSummary & { title: string };
 type Reminder = { requestId: string; step: string; recordedAt: string };
 type WithoutKey<T> = T extends unknown ? Omit<T, "idempotencyKey"> : never;
 type Action = WithoutKey<ApprovalAction>;
+type ApprovalRun = { id: string; state: RunState };
+type ApprovalRunSummary = ApprovalRun & {
+  engine: "dsh" | "hermes";
+  operation: string;
+  createdAt: string;
+};
 type PendingAction = Exclude<
   Action,
   { operation: "submit" } | { operation: "remind" }
@@ -371,7 +379,17 @@ function ApprovalCase({
   );
 }
 
-export function ApprovalPanel({ user }: { user: Subject }) {
+export function ApprovalPanel({
+  user,
+  engines,
+  run,
+  onRun,
+}: {
+  user: Subject;
+  engines: WorkspaceView["engines"];
+  run: ApprovalRun | null;
+  onRun: (value: ApprovalRun) => void;
+}) {
   const [flows, setFlows] = useState<ApprovalFlow[]>([]);
   const [items, setItems] = useState<Summary[]>([]);
   const [reminders, setReminders] = useState<Reminder[]>([]);
@@ -385,6 +403,15 @@ export function ApprovalPanel({ user }: { user: Subject }) {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [reload, setReload] = useState(0);
+  const [history, setHistory] = useState<ApprovalRunSummary[]>([]);
+  const [executor, setExecutor] = useState<"manual" | "dsh" | "hermes">(
+    "manual",
+  );
+  const [models, setModels] = useState<ModelSummary[]>([]);
+  const [modelId, setModelId] = useState("");
+  const [approvalRunId, setApprovalRunId] = useState("");
+  const runState = run?.id === approvalRunId ? run.state : undefined;
+  const running = runState === "queued" || runState === "running";
   const pending = useRef<{ fingerprint: string; key: string } | null>(null);
 
   useEffect(() => {
@@ -430,6 +457,53 @@ export function ApprovalPanel({ user }: { user: Subject }) {
     return () => controller.abort();
   }, [selected, reload]);
 
+  useEffect(() => {
+    if (user.demo) return;
+    const controller = new AbortController();
+    void api<ApprovalRunSummary[]>("/approvals/runs", {
+      signal: controller.signal,
+    })
+      .then((rows) => {
+        if (!controller.signal.aborted) setHistory(rows);
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted) {
+          setHistory([]);
+          setError(e.message);
+        }
+      });
+    return () => controller.abort();
+  }, [reload, user.demo]);
+
+  useEffect(() => {
+    if (user.demo || executor === "manual") return;
+    const controller = new AbortController();
+    void api<ModelSummary[]>("/models", { signal: controller.signal })
+      .then((rows) => {
+        if (!controller.signal.aborted) setModels(rows);
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted) setError(e.message);
+      });
+    return () => controller.abort();
+  }, [executor, user.demo]);
+
+  useEffect(() => {
+    if (runState && runState !== "queued" && runState !== "running")
+      setReload((version) => version + 1);
+  }, [approvalRunId, runState]);
+
+  const engine = executor === "manual" ? undefined : engines[executor];
+  const compatibleModels = models.filter(
+    (model) =>
+      model.purpose === "chat" &&
+      (!engine?.modelProviders ||
+        engine.modelProviders.includes(model.provider)),
+  );
+  const aiReady =
+    engine?.configured &&
+    compatibleModels.some((model) => model.id === modelId);
+
   function select(id: string) {
     if (selected !== id) setEntry(null);
     setSelected(id);
@@ -441,6 +515,7 @@ export function ApprovalPanel({ user }: { user: Subject }) {
     path: string,
     body: object,
     success: string,
+    withKey?: (key: string) => object,
   ): Promise<T | undefined> {
     const fingerprint = JSON.stringify([path, body]);
     if (pending.current?.fingerprint !== fingerprint)
@@ -449,9 +524,10 @@ export function ApprovalPanel({ user }: { user: Subject }) {
     setError("");
     setNotice("");
     try {
+      const key = pending.current.key;
       const result = await mutation<T>(path, {
-        ...body,
-        idempotencyKey: pending.current.key,
+        ...(withKey?.(key) ?? body),
+        idempotencyKey: key,
       });
       pending.current = null;
       setReload((version) => version + 1);
@@ -466,6 +542,36 @@ export function ApprovalPanel({ user }: { user: Subject }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function assist(
+    requestId: string,
+    action?: Exclude<Action, { operation: "review" }>,
+  ) {
+    if (executor === "manual" || !aiReady) {
+      setError("请选择可用的执行器和模型连接。");
+      return false;
+    }
+    const plan = action
+      ? { operation: "apply", requestId, action }
+      : { operation: "read", requestId };
+    const body = { plan, engine: executor, modelProfileId: modelId };
+    const result = await save<ApprovalRun>(
+      "/approvals/runs",
+      body,
+      "已提交审批助手。请在执行详情核对回执。",
+      (key) =>
+        action
+          ? {
+              ...body,
+              plan: { ...plan, action: { ...action, idempotencyKey: key } },
+            }
+          : body,
+    );
+    if (!result) return false;
+    setApprovalRunId(result.id);
+    onRun(result);
+    return true;
   }
 
   const flow = flows.find((item) => item.id === flowId);
@@ -558,6 +664,84 @@ export function ApprovalPanel({ user }: { user: Subject }) {
           </ul>
         </section>
       ) : null}
+      {history.length ? (
+        <details className="approval-audit">
+          <summary>我的审批助手执行（{history.length}）</summary>
+          <ul>
+            {history.map((item) => (
+              <li key={item.id}>
+                <button
+                  type="button"
+                  disabled={running}
+                  onClick={() => {
+                    void api<ApprovalRun>("/runs/" + item.id)
+                      .then((value) => {
+                        setApprovalRunId(value.id);
+                        onRun(value);
+                      })
+                      .catch((e) => setError(e.message));
+                  }}
+                >
+                  {actions[item.operation] ?? "核对审批状态"} ·{" "}
+                  {item.engine === "dsh" ? "DSH" : "Hermes"} ·{" "}
+                  {runStateLabels[item.state]} ·{" "}
+                  {new Date(item.createdAt).toLocaleString("zh-CN")}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+      {!user.demo && entry?.id === selected ? (
+        <div className="approval-intake" aria-label="审批助手">
+          <label>
+            审批操作方式
+            <select
+              value={executor}
+              disabled={busy || running}
+              onChange={(e) => {
+                setExecutor(e.target.value as typeof executor);
+                setModelId("");
+              }}
+            >
+              <option value="manual">人工操作</option>
+              <option value="dsh" disabled={!engines.dsh?.configured}>
+                DSH
+              </option>
+              <option value="hermes" disabled={!engines.hermes?.configured}>
+                Hermes
+              </option>
+            </select>
+          </label>
+          {executor !== "manual" ? (
+            <>
+              <label>
+                审批模型连接
+                <select
+                  value={modelId}
+                  disabled={busy || running}
+                  onChange={(e) => setModelId(e.target.value)}
+                >
+                  <option value="">选择 chat 连接</option>
+                  {compatibleModels.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.name} · {model.model}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                disabled={!aiReady || busy || running}
+                onClick={() => void assist(selected)}
+              >
+                AI 核对审批状态
+              </button>
+              <p className="muted">同意、拒绝和退回由当前审批人直接确认。</p>
+            </>
+          ) : null}
+        </div>
+      ) : null}
       <div className="approval-workspace">
         <nav aria-label="我的审批申请" className="approval-list">
           <h3>我的申请与待审</h3>
@@ -581,16 +765,18 @@ export function ApprovalPanel({ user }: { user: Subject }) {
             key={entry.id + ":" + entry.revision}
             entry={entry}
             user={user}
-            busy={busy}
+            busy={busy || running}
             error={error}
             send={async (body) =>
-              !!(await save(
-                "/approvals/requests/" + entry.id + "/actions",
-                body,
-                body.operation === "remind"
-                  ? "催办已记录。"
-                  : "审批操作已保存。",
-              ))
+              executor !== "manual" && body.operation !== "review"
+                ? assist(entry.id, body)
+                : !!(await save(
+                    "/approvals/requests/" + entry.id + "/actions",
+                    body,
+                    body.operation === "remind"
+                      ? "催办已记录。"
+                      : "审批操作已保存。",
+                  ))
             }
           />
         ) : (

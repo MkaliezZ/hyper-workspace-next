@@ -1,3 +1,4 @@
+import { ApprovalRunService } from "./approval-runs.js";
 import { NotificationPolicyService } from "./notification-policy.js";
 import { CalendarRunService } from "./calendar-runs.js";
 import { isOrganizationBudgetPlan } from "@hyper/contracts";
@@ -33,6 +34,12 @@ export async function assertRunScope(
   run: any,
 ) {
   await assertScheduledRun(service.db.pool, run);
+  if (run.workflow === "manage_approval")
+    return new ApprovalRunService(service.db).scope(
+      s,
+      run.approval_plan,
+      run.id,
+    );
   if (run.workflow === "manage_calendar")
     return new CalendarRunService(service.db).assertRunScope(s, run);
   if (run.workflow === "manage_communication")
@@ -96,6 +103,8 @@ async function baseRunContext(
   subject: Subject,
   run: any,
 ) {
+  if (run.workflow === "manage_approval")
+    return new ApprovalRunService(service.db).context(subject, run);
   if (run.workflow === "manage_calendar")
     return new CalendarRunService(service.db).context(subject, run);
   if (run.workflow === "manage_communication") {

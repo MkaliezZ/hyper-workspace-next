@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { Agent, get } from "node:http";
 import { randomUUID } from "node:crypto";
 import type { BrowserContext } from "@playwright/test";
+import { modelFixture } from "../runtime/business-contract";
 const db = new Database(process.env.TEST_DATABASE_URL);
 if (!source || !password || !process.env.TEST_DATABASE_URL?.endsWith("_test"))
   throw new Error(
@@ -298,8 +299,16 @@ test("Upstream admin status does not grant product admin; flow endpoints enforce
 test("An approval assignment requires current real Nextcloud membership at the moment of signing", async ({
   browser,
 }) => {
-  test.setTimeout(180000);
+  test.setTimeout(240000);
   const reviewerUid = "calendar-bob";
+  const modelKey = randomUUID();
+  const model = modelFixture([modelKey], undefined, () => ({
+    text: "Synthetic approval response",
+    actions: [{ tool: "approval.manage", args: {} }],
+  }));
+  await new Promise<void>((resolve) =>
+    model.server.listen(0, "127.0.0.1", resolve),
+  );
   const contexts: BrowserContext[] = [];
   let revoked = false;
   async function employee(uid: string) {
@@ -309,7 +318,7 @@ test("An approval assignment requires current real Nextcloud membership at the m
       .poll(async () => (await view(loginResult.context)).status())
       .toBe(200);
     const workspace = await (await view(loginResult.context)).json();
-    return { context: loginResult.context, user: workspace.user };
+    return { ...loginResult, user: workspace.user };
   }
   const post = (context: BrowserContext, path: string, data: object) =>
     context.request.post(origin + "/api/approvals/" + path, {
@@ -350,14 +359,59 @@ test("An approval assignment requires current real Nextcloud membership at the m
     await expect(created).toBeOK();
     const draft = await created.json();
     const actions = "requests/" + draft.id + "/actions";
-    const submitted = await post(applicant.context, actions, {
-      operation: "submit",
-      expectedRevision: draft.revision,
-      form: { reason: "Synthetic scenario" },
-      confirmed: true,
+    const connection = await applicant.context.request.post(
+      origin + "/api/models",
+      {
+        headers: { Origin: origin },
+        data: {
+          name: "Synthetic approval UI model",
+          provider: "openai-compatible",
+          endpoint:
+            "http://127.0.0.1:" +
+            (model.server.address() as { port: number }).port +
+            "/v1",
+          model: "native-test-model",
+          scope: "personal",
+          purpose: "chat",
+          apiKey: modelKey,
+        },
+      },
+    );
+    await expect(connection).toBeOK();
+    const { id: profileId } = await connection.json();
+    await applicant.page
+      .getByRole("navigation", { name: "工作区导航" })
+      .getByRole("button", { name: "审批", exact: true })
+      .click();
+    const panel = applicant.page.getByRole("region", { name: "企业审批" });
+    await panel
+      .getByRole("button", { name: /Synthetic approval source boundary/ })
+      .click();
+    await panel.getByLabel("审批操作方式").selectOption("dsh");
+    await panel.getByLabel("审批模型连接").selectOption(profileId);
+    await panel
+      .getByRole("textbox", { name: "Reason", exact: true })
+      .fill("Synthetic scenario");
+    await panel
+      .getByRole("button", { name: "确认提交申请", exact: true })
+      .click();
+    const detail = applicant.page.getByRole("dialog", {
+      name: "执行详情",
+      exact: true,
     });
+    await expect(detail.getByText("提交审批申请", { exact: true })).toBeVisible(
+      { timeout: 60000 },
+    );
+    expect(model.calls()).toBe(1);
+    const submitted = await applicant.context.request.get(
+      origin + "/api/approvals/requests/" + draft.id,
+    );
     await expect(submitted).toBeOK();
     const active = await submitted.json();
+    expect(active).toMatchObject({
+      state: "active",
+      revision: draft.revision + 1,
+    });
     await expect(
       await reviewer.context.request.get(
         origin + "/api/approvals/requests/" + draft.id,
@@ -406,7 +460,12 @@ test("An approval assignment requires current real Nextcloud membership at the m
       revision: active.revision + 1,
     });
   } finally {
-    if (revoked) await group("POST", reviewerUid);
-    await Promise.all(contexts.map((context) => context.close()));
+    try {
+      if (revoked) await group("POST", reviewerUid);
+    } finally {
+      await Promise.all(contexts.map((context) => context.close()));
+      model.server.closeAllConnections();
+      await new Promise<void>((resolve) => model.server.close(() => resolve()));
+    }
   }
 });

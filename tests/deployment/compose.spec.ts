@@ -21,10 +21,37 @@ function compose(...command: string[]) {
     stdio: ["ignore", "pipe", "pipe"],
   });
 }
-function restartStack() {
+async function restartStack() {
   compose("stop", "api", "worker");
   compose("stop", "db");
-  compose("start", "--wait", "--wait-timeout", "90", "db");
+  compose("start", "db");
+  await expect
+    .poll(
+      () => {
+        try {
+          compose(
+            "exec",
+            "-T",
+            "db",
+            "pg_isready",
+            "-h",
+            "127.0.0.1",
+            "-U",
+            "hyper",
+            "-d",
+            "hyper",
+          );
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      {
+        timeout: 60000,
+        message: "PostgreSQL accepts connections after restart",
+      },
+    )
+    .toBe(true);
   compose("up", "-d", "--no-build", "--wait", "--wait-timeout", "110");
 }
 test("Optional source database initialization is idempotent, cannot read product data and refuses credential rotation", async () => {
@@ -687,7 +714,7 @@ test("Built containers serve only the compiled web app and preserve native DSH/H
       "-e",
       seedCommand,
     );
-    restartStack();
+    await restartStack();
     await expect
       .poll(
         async () => {
@@ -1025,7 +1052,7 @@ test("Built containers serve only the compiled web app and preserve native DSH/H
     const deliveredBaseline = noticeBaseline();
     expect(deliveredBaseline.last_notification_at).toBeTruthy();
     expect(deliveredBaseline.last_run_id).toBe(final.lastRunId);
-    restartStack();
+    await restartStack();
     expect(noticeBaseline()).toEqual(deliveredBaseline);
   } finally {
     await context.close();
@@ -1218,7 +1245,7 @@ test("Restricted containers persist active company quotas and independent financ
       estimate: "0",
       currency: "USD",
     });
-    restartStack();
+    await restartStack();
     await expect
       .poll(
         async () => {

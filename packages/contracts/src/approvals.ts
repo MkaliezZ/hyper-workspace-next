@@ -244,3 +244,27 @@ export interface ApprovalDetail extends ApprovalSummary {
     recordedAt: string;
   }[];
 }
+
+export const ApprovalRunPlan = z.discriminatedUnion("operation", [
+  z.object({ operation: z.literal("read"), requestId: id }).strict(),
+  z
+    .object({
+      operation: z.literal("apply"),
+      requestId: id,
+      action: ApprovalAction.refine(
+        (action) => action.operation !== "review",
+        "审批票由获分派员工在审批界面确认。",
+      ),
+    })
+    .strict(),
+]);
+export type ApprovalRunPlan = z.infer<typeof ApprovalRunPlan>;
+export const ApprovalRunInput = z
+  .object({
+    plan: ApprovalRunPlan,
+    engine: z.enum(["dsh", "hermes"]).default("dsh"),
+    modelProfileId: id,
+    idempotencyKey: id,
+  })
+  .strict();
+export type ApprovalRunInput = z.infer<typeof ApprovalRunInput>;

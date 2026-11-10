@@ -21,7 +21,7 @@
 
 ## 复杂审批开发进展
 
-审批工作台已支持发布版本化流程、填写表单、条件分支、串行阶段、并行步骤与多人会签。管理员可视化配置字段、阶段、审批人和条件，也可导入 JSON。员工可以确认提交、同意、拒绝、退回重提、撤回、转交或发起站内催办，结果可在申请详情中核对。双执行器入口继续开发。 [审批能力与接口](docs/APPROVALS.md) · [桌面工作台](docs/images/approvals-desktop.png) · [手机确认审批](docs/images/approvals-mobile.png)（合成资料）
+审批工作台已支持发布版本化流程、填写表单、条件分支、串行阶段、并行步骤与多人会签。管理员可视化配置字段、阶段、审批人和条件，也可导入 JSON。员工可以确认提交、同意、拒绝、退回重提、撤回、转交或发起站内催办，结果可在申请详情中核对。DSH 和 Hermes 可核对状态，也可执行员工已确认的提交、撤回、转交和催办。审批票由当前审批人本人确认。两套执行器均通过 DeepSeek Flash 的真实提交与回读验证，使用合成申请。 [审批能力与接口](docs/APPROVALS.md) · [桌面工作台](docs/images/approvals-desktop.png) · [手机确认审批](docs/images/approvals-mobile.png)（合成资料）
 
 ![可视化审批流程设计器，合成资料](docs/images/approval-builder.png)
 

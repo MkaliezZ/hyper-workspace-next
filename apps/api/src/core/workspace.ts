@@ -1,3 +1,5 @@
+import { ApprovalRunInput } from "@hyper/contracts/approvals";
+import { ApprovalRunService } from "./approval-runs.js";
 import { NotificationPolicyService } from "./notification-policy.js";
 import { CalendarRunService } from "./calendar-runs.js";
 import { CalendarRunInput } from "@hyper/contracts/calendar";
@@ -523,6 +525,70 @@ export class WorkspaceService {
     if (result.rowCount) return { ...result.rows[0], created: true };
     return replay((await lookup()).rows[0]);
   }
+  async startApprovalRun(s: Subject, raw: ApprovalRunInput) {
+    if (s.demo || !s.identityCredentialId)
+      throw new ForbiddenException("请使用企业账号发起审批助手。");
+    const input = ApprovalRunInput.parse(raw);
+    const approvals = new ApprovalRunService(this.db);
+    const hash = stableDigest({ ...input, idempotencyKey: undefined });
+    const lookup = async () =>
+      (
+        await this.db.pool.query(
+          "SELECT id,state,workflow,input_hash,approval_plan FROM cw_runs WHERE workspace_id=$1 AND actor_id=$2 AND idempotency_key=$3",
+          [s.workspaceId, s.id, input.idempotencyKey],
+        )
+      ).rows[0];
+    const replay = async (row: any) => {
+      if (!row || row.workflow !== "manage_approval" || row.input_hash !== hash)
+        throw new ConflictException("同一执行键不能更换审批计划。");
+      await approvals.scope(s, row.approval_plan, row.id);
+      return { id: row.id, state: row.state, created: false };
+    };
+    const old = await lookup();
+    if (old) return replay(old);
+    const plan = await approvals.prepare(s, input.plan);
+    if (
+      !this.engines
+        .get(input.engine)
+        ?.describeCapabilities()
+        .operations.includes("manage_approval")
+    )
+      throw new BadRequestException("执行器尚未声明审批能力。");
+    const model = await this.runModel(s, input.engine, input.modelProfileId);
+    const inserted = await this.db.tx(async (c) => {
+      await ExecutionPolicyService.lock(c, s.workspaceId);
+      const member = await c.query(
+        "SELECT user_id FROM cw_members WHERE workspace_id=$1 AND user_id=$2 FOR SHARE",
+        [s.workspaceId, s.id],
+      );
+      const identity = await c.query(
+        "SELECT c.id FROM cw_identity_credentials c JOIN cw_external_identities i ON i.id=c.identity_id WHERE c.id=$1 AND i.workspace_id=$2 AND i.user_id=$3 AND c.disabled_at IS NULL FOR SHARE OF c,i",
+        [s.identityCredentialId, s.workspaceId, s.id],
+      );
+      if (!member.rowCount || !identity.rowCount)
+        throw new ForbiddenException("当前员工或登录已失效。");
+      return (
+        await c.query(
+          `INSERT INTO cw_runs(id,workspace_id,actor_id,conversation_id,engine,workflow,instruction,
+          idempotency_key,input_hash,demo,model_profile_id,identity_credential_id,approval_plan)
+          VALUES($1,$2,$3,NULL,$4,'manage_approval','按员工已选的审批范围核对状态。',$5,$6,false,$7,$8,$9)
+          ON CONFLICT(workspace_id,actor_id,idempotency_key) DO NOTHING RETURNING id,state`,
+          [
+            randomUUID(),
+            s.workspaceId,
+            s.id,
+            input.engine,
+            input.idempotencyKey,
+            hash,
+            model?.id,
+            s.identityCredentialId,
+            plan,
+          ],
+        )
+      ).rows[0];
+    });
+    return inserted ? { ...inserted, created: true } : replay(await lookup());
+  }
   async startCalendarRun(s: Subject, raw: CalendarRunInput) {
     const input = CalendarRunInput.parse(raw),
       calendars = new CalendarRunService(this.db);
@@ -750,6 +816,8 @@ export class WorkspaceService {
     });
   }
   async startRun(s: Subject, input: RunInput) {
+    if (input.workflow === "manage_approval")
+      throw new BadRequestException("请从审批专用入口发起。");
     if (input.workflow === "manage_calendar")
       throw new BadRequestException("请从日历专用入口发起。");
     if (input.workflow === "manage_communication")
@@ -1424,7 +1492,7 @@ export class WorkspaceService {
     await assertMember(this.db, s);
     const target = (
       await this.db.pool.query(
-        "SELECT conversation_id,source_file_asset_id,expected_file_version,knowledge_plan,room_management_plan,room_management_provider_key,calendar_plan,calendar_binding,(instruction='') AS source_redacted FROM cw_runs WHERE id=$1 AND workspace_id=$2 AND actor_id=$3",
+        "SELECT conversation_id,source_file_asset_id,expected_file_version,knowledge_plan,room_management_plan,room_management_provider_key,calendar_plan,calendar_binding,approval_plan,(instruction='') AS source_redacted FROM cw_runs WHERE id=$1 AND workspace_id=$2 AND actor_id=$3",
         [id, s.workspaceId, s.id],
       )
     ).rows[0];
@@ -1437,6 +1505,8 @@ export class WorkspaceService {
         target.source_file_asset_id,
         target.expected_file_version,
       );
+    else if (target.approval_plan)
+      await new ApprovalRunService(this.db).scope(s, target.approval_plan, id);
     else if (target.calendar_plan)
       await new CalendarRunService(this.db).assertRunScope(s, {
         ...target,
@@ -1489,6 +1559,10 @@ export class WorkspaceService {
         id,
         knowledge_plan: target.knowledge_plan,
       });
+    }
+    if (target.approval_plan && !r.rows[0].result?.receipts?.length) {
+      const receipt = await new ApprovalRunService(this.db).recordedReceipt(s, id);
+      if (receipt) r.rows[0].result = { ...r.rows[0].result, receipts: [receipt] };
     }
     if (target.room_management_plan)
       r.rows[0].result = await new RoomManagementService(

@@ -1,6 +1,8 @@
+import { ApprovalRunInput } from "@hyper/contracts/approvals";
 import { NotificationPolicyService } from "./core/notification-policy.js";
 import { CalendarService } from "./core/calendar.js";
 import { CalendarRunService } from "./core/calendar-runs.js";
+import { ApprovalRunService } from "./core/approval-runs.js";
 import { ApprovalService } from "./core/approvals.js";
 import {
   CalendarCommandInput,
@@ -186,6 +188,20 @@ class ApiController {
     const run = await service.startCalendarRun(
       await subject(req),
       CalendarRunInput.parse(body),
+    );
+    await queue.enqueue(run.id);
+    return run;
+  }
+  @Get("approvals/runs") async approvalRunHistory(@Req() req: Request) {
+    return new ApprovalRunService(db).history(await subject(req));
+  }
+  @Post("approvals/runs") async startApprovalRun(
+    @Req() req: Request,
+    @Body() body: unknown,
+  ) {
+    const run = await service.startApprovalRun(
+      await subject(req),
+      ApprovalRunInput.parse(body),
     );
     await queue.enqueue(run.id);
     return run;

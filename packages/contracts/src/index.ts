@@ -57,6 +57,7 @@ export const Workflow = z.enum([
   "manage_organization",
   "manage_communication",
   "manage_calendar",
+  "manage_approval",
   "share_attachment",
   "manage_decision",
   "query_knowledge",
@@ -750,6 +751,7 @@ export interface PlannedAction {
     | "organization.manage"
     | "communication.manage"
     | "calendar.manage"
+    | "approval.manage"
     | "attachment.share"
     | "decision.write"
     | "decision.manage"
@@ -817,6 +819,8 @@ export function toolsForWorkflow(
       return ["task.assign"];
     case "manage_communication":
       return ["communication.manage"];
+    case "manage_approval":
+      return ["approval.manage"];
     case "manage_calendar":
       return ["calendar.manage"];
     case "manage_organization":

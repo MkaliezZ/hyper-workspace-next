@@ -765,6 +765,12 @@ export function App() {
           <ApprovalPanel
             key={view.user.id + view.user.workspaceId}
             user={view.user}
+            engines={view.engines}
+            run={run}
+            onRun={(value) => {
+              setRun(value);
+              setDetailsRunId(value.id);
+            }}
           />
         ) : null}
         {section === "organization" ? (
