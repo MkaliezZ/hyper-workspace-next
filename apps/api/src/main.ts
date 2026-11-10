@@ -1,3 +1,5 @@
+import { OcrCorrection, OcrRecognition, OcrSource } from "@hyper/contracts/ocr";
+import { OcrService } from "./core/ocr.js";
 import { ApprovalRunInput } from "@hyper/contracts/approvals";
 import { NotificationPolicyService } from "./core/notification-policy.js";
 import { CalendarService } from "./core/calendar.js";
@@ -750,6 +752,27 @@ class ApiController {
     await queue.enqueue(r.id);
     return r;
   }
+  @Post("ocr/lookup") async lookupOcr(@Req() req: Request, @Body() body: unknown) {
+    return { result: await new OcrService(db).lookup(await subject(req), OcrSource.parse(body)) };
+  }
+  @Post("ocr/recognitions") async recognizeOcr(@Req() req: Request, @Body() body: unknown) {
+    return new OcrService(db).recognize(await subject(req), OcrRecognition.parse(body));
+  }
+  @Get("ocr/documents/:id") async getOcr(
+    @Req() req: Request,
+    @Param("id") id: string,
+    @Query("revision") revision?: string,
+  ) {
+    return new OcrService(db).detail(await subject(req), uuid(id),
+      revision === undefined ? undefined : z.coerce.number().int().min(1).max(2147483647).parse(revision));
+  }
+  @Post("ocr/documents/:id/confirm") async confirmOcr(
+    @Req() req: Request,
+    @Param("id") id: string,
+    @Body() body: unknown,
+  ) {
+    return new OcrService(db).confirm(await subject(req), uuid(id), OcrCorrection.parse(body));
+  }
   @Post("files/list") async sourceFiles(
     @Req() req: Request,
     @Body() body: unknown,
@@ -1365,6 +1388,14 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Cache-Control", "no-store");
   next();
+});
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.method !== "POST" || !/^\/api\/ocr\/documents\/[0-9a-f-]+\/confirm$/.test(req.path))
+    return next();
+  express.json({ limit: "1mb", inflate: false })(req, res, (error?: unknown) => {
+    if (error) res.status(400).json({ message: "校对内容过大或请求不完整。" });
+    else next();
+  });
 });
 // Binary input is scoped to this one authenticated endpoint; JSON limits remain unchanged.
 app.use(async (req: Request, res: Response, next: NextFunction) => {

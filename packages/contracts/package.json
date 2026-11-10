@@ -8,7 +8,8 @@
     "./room-management": "./src/room-management.ts",
     "./notifications": "./src/notifications.ts",
     "./calendar": "./src/calendar.ts",
-    "./approvals": "./src/approvals.ts"
+    "./approvals": "./src/approvals.ts",
+    "./ocr": "./src/ocr.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

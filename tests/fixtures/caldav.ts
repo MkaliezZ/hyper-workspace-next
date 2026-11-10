@@ -1,8 +1,10 @@
+import { DavFixture } from "./dav.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 const xml = (s: string) =>
   s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll('"', "&quot;");
 export class CalDavFixture {
+  readonly files = new DavFixture();
   people = new Map<
     string,
     { password: string; member: boolean; read: boolean; write: boolean }
@@ -43,6 +45,7 @@ export class CalDavFixture {
       });
     if (url.pathname.endsWith("/groups"))
       return json({ groups: person.member ? ["members"] : [] });
+    if (this.files.handle(req, res, uid)) return;
     const home = "/remote.php/dav/calendars/" + encodeURIComponent(uid) + "/";
     const calendarId =
       url.pathname.slice(home.length).split("/")[0] || "personal";

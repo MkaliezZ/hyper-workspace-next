@@ -86,6 +86,14 @@ export async function revokeMappedMembership(
       [config.workspaceId, identity.user_id],
     );
     await c.query(
+      `WITH revoked AS (
+         UPDATE cw_ocr_documents SET invalidated_at=clock_timestamp()
+         WHERE workspace_id=$1 AND actor_id=$2 AND invalidated_at IS NULL RETURNING id
+       )
+       UPDATE cw_ocr_revisions v SET content=NULL FROM revoked r WHERE v.document_id=r.id`,
+      [config.workspaceId, identity.user_id],
+    );
+    await c.query(
       "DELETE FROM cw_sessions WHERE workspace_id=$1 AND user_id=$2",
       [config.workspaceId, identity.user_id],
     );

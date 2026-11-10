@@ -25,7 +25,9 @@
 
 ![可视化审批流程设计器，合成资料](docs/images/approval-builder.png)
 
-图片 OCR 已核对 OXR 的硬件要求与代码、权重许可证，并用合成扫描件验证中英文字、表格和坐标。内网识别服务继续开发。 [OCR 评估与实测](docs/OCR.md)
+## 图片与扫描件 OCR
+
+企业文件已加入图片及 PDF 选页的 OCR 工作台。可定位文字和表格块、校对、确认版本；来源撤权后清理内容。已用合成协议响应验证桌面与手机链路。主线优先验证轻量 CPU 方案，OXR 作为 GPU 备选。 [OCR 选型、内网协议与实测](docs/OCR.md) · [校对界面](docs/images/ocr-confirmed-desktop.png)（合成资料）
 
 [![CI](https://github.com/MkaliezZ/hyper-workspace-next/actions/workflows/ci.yml/badge.svg)](https://github.com/MkaliezZ/hyper-workspace-next/actions/workflows/ci.yml)
 

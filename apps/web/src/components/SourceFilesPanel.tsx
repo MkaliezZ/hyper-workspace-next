@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Folder, FileText, RefreshCw } from "lucide-react";
 import type { SourceFile } from "@hyper/contracts";
+import { supportsOcr } from "@hyper/contracts/ocr";
+import { OcrPanel } from "./OcrPanel";
 import { FileReaderPanel } from "./FileReaderPanel";
 import { api, mutation } from "../api";
 interface Imported {
@@ -35,6 +37,7 @@ export function SourceFilesPanel({
     [entries, setEntries] = useState<SourceFile[]>([]),
     [imports, setImports] = useState<Imported[]>([]),
     [preview, setPreview] = useState<Preview>(),
+    [ocrFile, setOcrFile] = useState<SourceFile>(),
     [notice, setNotice] = useState(""),
     [error, setError] = useState(""),
     [loading, setLoading] = useState(false);
@@ -152,8 +155,7 @@ export function SourceFilesPanel({
       <h3>选择文件，加入个人资料</h3>
       <p className="muted">
         从你有权限的文件中显式选择。支持短文本/Markdown（64 KiB），以及
-        PDF、DOCX、XLSX、PPTX（8 MiB）。提取文本上限 180000 字符；扫描件不执行
-        OCR，不支持加密文件或宏。副本仅你可见，不自动加入项目 AI 上下文。
+        PDF、DOCX、XLSX、PPTX（8 MiB）。文本提取上限 180000 字符。图片和扫描 PDF 可另选 OCR。副本仅你可见，不自动加入项目 AI 上下文。
       </p>
       <form
         className="source-folder-form"
@@ -244,6 +246,11 @@ export function SourceFilesPanel({
                   {file.importable ? "导入个人资料" : "暂不支持导入"}
                 </button>
               )}
+              {supportsOcr(file) ? (
+                <button type="button" disabled={busy} onClick={() => setOcrFile(file)}>
+                  图片与扫描件 OCR
+                </button>
+              ) : null}
             </article>
           ))}
           {!entries.length ? (
@@ -251,6 +258,7 @@ export function SourceFilesPanel({
           ) : null}
         </div>
       )}
+      {ocrFile ? <OcrPanel file={ocrFile} onClose={() => setOcrFile(undefined)} /> : null}
       <header className="source-import-heading">
         <h3>已选择的个人文件</h3>
         <button
