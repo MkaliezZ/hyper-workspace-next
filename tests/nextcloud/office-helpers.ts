@@ -89,6 +89,19 @@ export async function observeOffice(
       record(page, { kind: "request-failed", route: routeKind(request.url()) }),
     );
     page.on("pageerror", () => record(page, { kind: "page-error" }));
+    page.on("console", (message) => {
+      // CODE's close diagnostic has a free-form reason. Retain only its numeric
+      // code and clean-close flag, never the reason or the complete console text.
+      const close = message
+        .text()
+        .match(/^_onSocketClose: code=(\d{1,4}) wasClean=(true|false) reason=/);
+      if (close)
+        record(page, {
+          kind: "socket-close-status",
+          code: Number(close[1]),
+          clean: close[2] === "true",
+        });
+    });
     page.on("websocket", (socket) => {
       const route = routeKind(socket.url());
       record(page, { kind: "socket-created", route });
@@ -96,6 +109,58 @@ export async function observeOffice(
         record(page, { kind: "socket-error", route }),
       );
       socket.on("close", () => record(page, { kind: "socket-closed", route }));
+      socket.on("framereceived", ({ payload }) => {
+        if (typeof payload !== "string") return;
+        if (payload.startsWith("close: ")) {
+          const reason = payload.slice(7);
+          const known = [
+            "ownertermination",
+            "idle",
+            "oom",
+            "shuttingdown",
+            "docdisconnected",
+            "recycling",
+            "documentconflict",
+            "versionrestore: prerestore_ack",
+            "reloadafterrename",
+          ];
+          record(page, {
+            kind: "socket-protocol-close",
+            route,
+            reason: known.includes(reason) ? reason : "other",
+          });
+        } else if (payload.startsWith("error:")) {
+          const command = payload.match(/\bcmd=([a-z]+)(?:\s|$)/)?.[1];
+          const reason = payload.match(/\bkind=([a-z]+)(?:\s|$)/)?.[1];
+          record(page, {
+            kind: "socket-protocol-error",
+            route,
+            command: ["internal", "storage", "load", "socket"].includes(
+              command ?? "",
+            )
+              ? command
+              : "other",
+            reason: [
+              "unauthorized",
+              "loadfailed",
+              "invalid",
+              "diskfull",
+              "accessrevoked",
+              "accessdowngraded",
+              "accessunverified",
+              "wrongpassword",
+              "notallowed",
+              "hardlimitreached",
+              "serviceunavailable",
+              "limitreached",
+              "restricted",
+              "locked",
+            ].includes(reason ?? "")
+              ? reason
+              : "other",
+          });
+        }
+      });
     });
   });
   await context.exposeBinding(

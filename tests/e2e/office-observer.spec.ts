@@ -87,6 +87,9 @@ test("Office loading observation rejects unrelated messages and sees the real ed
         setTimeout(() => {
           throw new Error(token);
         }, 0);
+        console.debug(
+          "_onSocketClose: code=1008 wasClean=true reason=" + token,
+        );
       },
       { token: secret },
     );
@@ -96,6 +99,7 @@ test("Office loading observation rejects unrelated messages and sees the real ed
         expect.arrayContaining([
           { kind: "http-error", route: "editor-session", status: 503 },
           { kind: "page-error" },
+          { kind: "socket-close-status", code: 1008, clean: true },
         ]),
       );
     expect(JSON.stringify(await office.diagnostics(page))).not.toContain(

@@ -20,6 +20,8 @@ GitHub Actions 加入固定版本的真实编辑器检查。隔离运行器验�
 
 浏览器探针被动监听当前来源页面及其子 frame，仅接受来自配置的编辑器 origin、且发送窗口确为该页面 Office iframe 的消息。成功仍要求 `App_LoadingStatus / Document_Loaded` 和对应 iframe 可见；探针不替来源发送握手。失败日志只记录白名单加载状态、来源类别、HTTP 状态和 WebSocket 状态，省略登录、WOPI token、URL 参数和正文。真实加载、保存与多人编辑的结果按修正提交的运行分别记录。
 
+`70faedf` 的 [独立 Office 检查](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42913643698) 仍失败。探针确认 Nextcloud 收到 `Initialized`、`Frame_Ready` 和成功加载响应，但没有 `Document_Loaded`，编辑器 WebSocket 反复建立和关闭。此结果排除了本次失败只是顶层标记观测遗漏的解释。下一轮补充关闭码、白名单协议原因及 CODE 服务端错误分类计数，不发布原始服务日志。断言语义保持不变，继续定位真实会话中断原因。
+
 ## 公司内网安装方案
 
 在 [内网部署](DEPLOYMENT-INTRANET.md) 的固定 IP 与内部 CA 配置上叠加 `deploy/compose.office.yaml`。办公室编辑器使用独立的 HTTPS 8444 端口，Nextcloud 继续使用 8443。下面用示例内网 IP，实际配置以公司分配地址为准。容器镜像和连接器版本见 `runtime/nextcloud/office.lock.json`。真实编辑器 CI 使用隔离的明文回环环境。本机已用临时 CA 验证 Office 代理保留主机、升级 WebSocket、拒绝外部调用内部转换路由。实际公司 HTTPS 组合在目标网络另行复验。
