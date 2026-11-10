@@ -22,6 +22,10 @@ GitHub Actions 加入固定版本的真实编辑器检查。隔离运行器验�
 
 `70faedf` 的 [独立 Office 检查](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42913643698) 仍失败。探针确认 Nextcloud 收到 `Initialized`、`Frame_Ready` 和成功加载响应，但没有 `Document_Loaded`，编辑器 WebSocket 反复建立和关闭。此结果排除了本次失败只是顶层标记观测遗漏的解释。下一轮补充关闭码、白名单协议原因及 CODE 服务端错误分类计数，不发布原始服务日志。断言语义保持不变，继续定位真实会话中断原因。
 
+真实复现随后定位到 `docunloading`：连接器设置响应里的预设文件 URL 被 Nextcloud 公共地址覆盖。CI 的 `127.0.0.1:8090` 在 Collabora 容器内不可达；公司公共 HTTPS 也不能代替隔离网络里的服务器回调。新增配置生成器仅对**直接来自指定 Collabora IP、Host 为 nextcloud、精确匹配设置接口**的请求生成内部 HTTP URL。其余请求保持公开地址，签名连接器未修改。镜像默认出站 TLS 校验为关闭，Compose 现在显式启用；不通过关闭证书校验获取预设。
+
+修复连接循环后，欢迎页的无关子 iframe 导航暴露了探针的竞态。现仅比较实际发送 frame 和接收 frame 的导航代际，保留来源、发送窗口和真实 `Document_Loaded` 条件。新增回归在旧探针上失败、修复后通过。WSL 真实 Nextcloud/Collabora 的 DOCX、XLSX、PPTX 加载循环已通过；受限配置的 31 项 PHP 边界检查、连接器完整性与开启 TLS 校验后的独立启动检查通过。当前提交的完整 CI、协作保存与格式往返继续分别验收。
+
 ## 公司内网安装方案
 
 在 [内网部署](DEPLOYMENT-INTRANET.md) 的固定 IP 与内部 CA 配置上叠加 `deploy/compose.office.yaml`。办公室编辑器使用独立的 HTTPS 8444 端口，Nextcloud 继续使用 8443。下面用示例内网 IP，实际配置以公司分配地址为准。容器镜像和连接器版本见 `runtime/nextcloud/office.lock.json`。真实编辑器 CI 使用隔离的明文回环环境。本机已用临时 CA 验证 Office 代理保留主机、升级 WebSocket、拒绝外部调用内部转换路由。实际公司 HTTPS 组合在目标网络另行复验。
@@ -60,8 +64,12 @@ office_install_connector
 editor_ip="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$editor_container")"
 test -n "$editor_ip"
 office_occ config:app:set richdocuments wopi_allowlist --value="$editor_ip"
+python3 runtime/nextcloud/office-settings.py "$editor_ip"
+docker cp .runtime/nextcloud/zz-hyper-office-settings.config.php "$source_container":/var/www/html/config/
+docker exec --user root "$source_container" chmod 644 /var/www/html/config/zz-hyper-office-settings.config.php
+docker exec -i "$source_container" php /dev/stdin /var/www/html/config/zz-hyper-office-settings.config.php "$editor_ip" < tests/fixtures/office-settings.php
 office_occ richdocuments:activate-config --wopi-url=http://collabora:9980 --callback-url=http://nextcloud
 office_occ config:app:get richdocuments public_wopi_url
 ```
 
-公开编辑器地址应为公司固定 IP 上的 `https://192.168.10.50:8444`。安装 [Office Nginx 模板](../deploy/nginx.office.intranet.conf.example)，替换监听 IP、证书路径和回环端口，执行 `nginx -t` 后再重载。通过受信任的公司根证书访问 `/hosting/discovery`，再从员工浏览器打开 DOCX、XLSX 和 PPTX。应用容器内的 Collabora 地址只供 Nextcloud 查询发现和功能，回调只走隔离容器网络。若重建 Collabora 后容器地址变化，重新设置 WOPI 白名单并复核连通性。确认来源连接器和编辑器都可用后，以同一 Compose 文件组合重建 API 和 Worker 让入口启用。
+公开编辑器地址应为公司固定 IP 上的 `https://192.168.10.50:8444`。安装 [Office Nginx 模板](../deploy/nginx.office.intranet.conf.example)，替换监听 IP、证书路径和回环端口，执行 `nginx -t` 后再重载。通过受信任的公司根证书访问 `/hosting/discovery`，再从员工浏览器打开 DOCX、XLSX 和 PPTX。应用容器内的 Collabora 地址只供 Nextcloud 查询发现和功能；文件回调和设置预设均走隔离容器网络。若重建 Collabora 后容器地址变化，重新设置 WOPI 白名单、重新生成并复制设置片段，再复核实际文档加载。片段只包含容器 IP，不含凭据；回退时删除该片段并恢复经过验证的应用组合。若另行接入 HTTPS 来源，需要为其配置可信 CA，保留 `ssl.ssl_verification=true`。确认来源连接器和编辑器都可用后，以同一 Compose 文件组合重建 API 和 Worker 让入口启用。

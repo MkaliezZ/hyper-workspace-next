@@ -11,7 +11,7 @@ docker network connect --alias nextcloud hyper-office-ci hyper-nextcloud-test
 docker run --detach --name hyper-collabora-test --network hyper-office-ci --network-alias collabora \
   --publish 127.0.0.1:9980:9980 --cap-add MKNOD \
   --env 'aliasgroup1=http://nextcloud:80' \
-  --env 'extra_params=--o:ssl.enable=false --o:ssl.termination=false --o:server_name=127.0.0.1:9980' \
+  --env 'extra_params=--o:ssl.enable=false --o:ssl.termination=false --o:ssl.ssl_verification=true --o:server_name=127.0.0.1:9980' \
   "$image"
 
 for attempt in $(seq 1 60); do
@@ -33,6 +33,10 @@ PY
 occ() { docker exec --user www-data hyper-nextcloud-test php occ "$@"; }
 office_ip="$(docker inspect --format '{{(index .NetworkSettings.Networks "hyper-office-ci").IPAddress}}' hyper-collabora-test)"
 test -n "$office_ip"
+python3 runtime/nextcloud/office-settings.py "$office_ip"
+docker cp .runtime/nextcloud/zz-hyper-office-settings.config.php hyper-nextcloud-test:/var/www/html/config/
+docker exec --user root hyper-nextcloud-test chmod 644 /var/www/html/config/zz-hyper-office-settings.config.php
+docker exec -i hyper-nextcloud-test php /dev/stdin /var/www/html/config/zz-hyper-office-settings.config.php "$office_ip" < tests/fixtures/office-settings.php
 occ config:system:set trusted_domains 9 --value=nextcloud
 occ app:enable richdocuments
 occ config:app:set richdocuments wopi_allowlist --value="$office_ip"

@@ -25,7 +25,7 @@ export async function observeOffice(
     Page,
     Map<Frame, { receiver: Frame; loaded: boolean; sequence: number }>
   >();
-  const navigations = new Map<Page, number>();
+  const navigations = new Map<Frame, number>();
   const network = new Map<Page, object[]>();
   function record(page: Page, event: object) {
     const entries = network.get(page) ?? [];
@@ -61,6 +61,10 @@ export async function observeOffice(
         if (url.pathname.endsWith("/richdocuments/token"))
           return "source-token";
         if (url.pathname.includes("/richdocuments/")) return "source-office";
+        if (/\.(?:js|css|woff2?)$/.test(url.pathname)) return "source-assets";
+        if (url.pathname.includes("/core/preview")) return "source-preview";
+        if (url.pathname.includes("/avatar/")) return "source-avatar";
+        if (url.pathname.includes("/ocs/")) return "source-ocs";
       }
       return origin + "-other";
     } catch {
@@ -70,17 +74,26 @@ export async function observeOffice(
   // URL queries, encoded WOPI paths, response bodies and socket payloads can
   // contain credentials. Diagnostics retain only fixed categories and numbers.
   context.on("page", (page) => {
+    page.on("request", (request) => {
+      const route = routeKind(request.url());
+      if (request.resourceType() === "document" || route === "source-token")
+        record(page, { kind: "document-request", route });
+    });
     page.on("framenavigated", (frame) => {
-      navigations.set(page, (navigations.get(page) ?? 0) + 1);
+      navigations.set(frame, (navigations.get(frame) ?? 0) + 1);
       for (const [sender, state] of current.get(page) ?? []) {
         if (sender === frame || state.receiver === frame)
           current.get(page)!.delete(sender);
       }
     });
     page.on("response", (response) => {
-      if (response.status() >= 400)
+      if (
+        response.status() >= 400 ||
+        response.request().resourceType() === "document" ||
+        routeKind(response.url()) === "source-token"
+      )
         record(page, {
-          kind: "http-error",
+          kind: response.status() >= 400 ? "http-error" : "document-response",
           route: routeKind(response.url()),
           status: response.status(),
         });
@@ -90,6 +103,21 @@ export async function observeOffice(
     );
     page.on("pageerror", () => record(page, { kind: "page-error" }));
     page.on("console", (message) => {
+      if (
+        /Content Security Policy|content security policy/.test(message.text())
+      )
+        record(page, {
+          kind: "browser-policy",
+          reason: "content-security-policy",
+        });
+      if (/Mixed Content|mixed content/.test(message.text()))
+        record(page, { kind: "browser-policy", reason: "mixed-content" });
+      if (
+        /ERR_CONNECTION_REFUSED|ERR_NAME_NOT_RESOLVED|ERR_CONNECTION_TIMED_OUT/.test(
+          message.text(),
+        )
+      )
+        record(page, { kind: "browser-policy", reason: "connection-failed" });
       // CODE's close diagnostic has a free-form reason. Retain only its numeric
       // code and clean-close flag, never the reason or the complete console text.
       const close = message
@@ -131,7 +159,7 @@ export async function observeOffice(
           });
         } else if (payload.startsWith("error:")) {
           const command = payload.match(/\bcmd=([a-z]+)(?:\s|$)/)?.[1];
-          const reason = payload.match(/\bkind=([a-z]+)(?:\s|$)/)?.[1];
+          const reason = payload.match(/\bkind=([a-z:-]+)(?:\s|$)/)?.[1];
           record(page, {
             kind: "socket-protocol-error",
             route,
@@ -143,6 +171,17 @@ export async function observeOffice(
             reason: [
               "unauthorized",
               "loadfailed",
+              "faileddocloading",
+              "docloadtimeout",
+              "docunloading",
+              "docalreadyloaded",
+              "syntax",
+              "noexport",
+              "uriinvalid",
+              "docexpired",
+              "recycling",
+              "passwordrequired:to-view",
+              "passwordrequired:to-modify",
               "invalid",
               "diskfull",
               "accessrevoked",
@@ -201,7 +240,14 @@ export async function observeOffice(
           iframeIndex: value.iframeIndex,
         };
       else return;
-      const navigation = navigations.get(page) ?? 0;
+      // An unrelated child (for example the editor's welcome page) may navigate
+      // while this binding resolves the sender. Only receiver/sender navigation
+      // can invalidate this message's document generation.
+      const generations = new Map(
+        page
+          .frames()
+          .map((candidate) => [candidate, navigations.get(candidate) ?? 0]),
+      );
       const element = await frame
         .evaluateHandle(
           (marker) =>
@@ -220,7 +266,9 @@ export async function observeOffice(
         !sender ||
         sender.isDetached() ||
         originKind(sender.url()) !== "editor" ||
-        navigation !== (navigations.get(page) ?? 0)
+        !generations.has(sender) ||
+        (generations.get(frame) ?? 0) !== (navigations.get(frame) ?? 0) ||
+        (generations.get(sender) ?? 0) !== (navigations.get(sender) ?? 0)
       )
         return;
       const states = current.get(page) ?? new Map();

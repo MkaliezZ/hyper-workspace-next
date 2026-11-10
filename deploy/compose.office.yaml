@@ -6,7 +6,7 @@ services:
     environment:
       aliasgroup1: http://nextcloud:80
       extra_params: >-
-        --o:ssl.enable=false --o:ssl.termination=true
+        --o:ssl.enable=false --o:ssl.termination=true --o:ssl.ssl_verification=true
         --o:server_name=${HYPER_OFFICE_PUBLIC_HOST:?Set the HTTPS Office hostname and port without a scheme}
     ports: ["127.0.0.1:${HYPER_OFFICE_PORT:-8091}:9980"]
     networks: [office]

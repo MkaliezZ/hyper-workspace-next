@@ -79,6 +79,18 @@ test("Office loading observation rejects unrelated messages and sees the real ed
       status: "Document_Loaded",
     });
 
+    // A real welcome/auxiliary iframe navigation can overlap the asynchronous
+    // sender lookup. It must not discard the editor's Document_Loaded event.
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await status(correct, "Frame_Ready");
+      await expect.poll(() => office.hasLoaded(page)).toBe(false);
+      await Promise.all([
+        status(correct, "Document_Loaded"),
+        unrelated.goto(editorOrigin + "/welcome?attempt=" + attempt),
+      ]);
+      await office.waitForLoaded(page, 5000);
+    }
+
     await correct.evaluate(
       async ({ token }) => {
         await fetch(

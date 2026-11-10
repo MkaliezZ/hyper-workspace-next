@@ -63,6 +63,7 @@ test("The real Nextcloud Office editor opens DOCX, XLSX and PPTX from the author
       const editor = await editorPromise;
       try {
         await office.waitForLoaded(editor);
+        console.info("Office Document_Loaded:", format);
       } catch (error) {
         console.error(
           "Office loading diagnostics:",

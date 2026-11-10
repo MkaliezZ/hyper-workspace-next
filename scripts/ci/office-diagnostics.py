@@ -19,13 +19,26 @@ PATTERNS = {
 
 def summarize(lines):
     counts = Counter()
+    sites = Counter()
     total = 0
     for line in lines:
         total += 1
         for category, pattern in PATTERNS.items():
             if re.search(pattern, line, re.IGNORECASE):
                 counts[category] += 1
-    return {"lines": total, "categories": dict(sorted(counts.items()))}
+        if re.search(PATTERNS["error_severity"], line):
+            # CODE appends its own compile-time location. No message substring
+            # or arbitrary filesystem path is retained; filenames are fixed.
+            site = re.search(
+                r"\|\s*((?:wsd|kit|common|net)/(?:ClientSession|DocumentBroker|"
+                r"ClientRequestDispatcher|Storage|StorageBase|COOLWSD|FileServer|"
+                r"ChildSession|Kit|Document|Log|Socket|WebSocketHandler)"
+                r"\.(?:cpp|hpp|hxx):\d{1,6})\s*$", line,
+            )
+            if site:
+                sites[site.group(1)] += 1
+    return {"lines": total, "categories": dict(sorted(counts.items())),
+            "source_sites": dict(sorted(sites.items()))}
 
 
 if __name__ == "__main__":
