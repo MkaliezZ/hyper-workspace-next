@@ -5,7 +5,7 @@ import {
   NextcloudCalendarProvider,
   CalendarSourceRejected,
 } from "../../apps/api/src/providers/nextcloud-calendar.js";
-import { source, password, login, origin } from "./helpers.js";
+import { source, password, login, origin, view } from "./helpers.js";
 
 test("Real CalDAV and product UI preserve source permissions, versions, recurring instances and private command receipts", async ({
   browser,
@@ -207,7 +207,9 @@ test("Real CalDAV and product UI preserve source permissions, versions, recurrin
         .getByRole("button", { name: "确认移除", exact: true })
         .click();
       await expect(linkDialog.getByRole("status")).toHaveText("关联已移除");
-      await linkDialog.getByRole("button", { name: "关闭", exact: true }).click();
+      await linkDialog
+        .getByRole("button", { name: "关闭", exact: true })
+        .click();
       const availability = await actor.context.request.post(
         origin + "/api/calendar/availability",
         {
@@ -505,6 +507,80 @@ test("Real CalDAV and product UI preserve source permissions, versions, recurrin
     await expect(
       alice.remove(calendarId, objectId, saved.etag),
     ).rejects.toMatchObject({ status: 412 });
+    const share = async (operation: "set" | "remove") => {
+      const response = await fetch(url, {
+        method: "POST",
+        redirect: "error",
+        headers: {
+          Authorization: authorization,
+          "Content-Type": "application/xml",
+        },
+        body: `<oc:share xmlns:oc="http://owncloud.org/ns" xmlns:d="DAV:">
+          <oc:${operation}><d:href>principal:principals/users/${encodeURIComponent(bobUid)}</d:href></oc:${operation}>
+        </oc:share>`,
+      });
+      expect(response.status).toBe(200);
+      await response.body?.cancel();
+    };
+    await share("set");
+    const sharedId = calendarId + "_shared_by_" + aliceUid;
+    const invited = await login(browser, bobUid);
+    try {
+      await expect
+        .poll(async () => (await view(invited.context)).status())
+        .toBe(200);
+      const list = async () => {
+        const response = await invited.context.request.get(
+          origin + "/api/calendar/calendars",
+        );
+        await expect(response).toBeOK();
+        return (await response.json()) as { id: string; canInvite?: boolean }[];
+      };
+      const shared = (await list()).find((item) => item.id === sharedId);
+      expect(shared).toMatchObject({
+        canRead: true,
+        canCreate: false,
+        canUpdate: false,
+        canDelete: false,
+      });
+      expect(shared?.canInvite).toBeUndefined();
+      const query = () =>
+        invited.context.request.post(origin + "/api/calendar/query", {
+          headers: { Origin: origin },
+          data: {
+            calendarId: sharedId,
+            start: "2026-11-01T00:00:00Z",
+            end: "2026-12-01T00:00:00Z",
+          },
+        });
+      const visible = await query();
+      await expect(visible).toBeOK();
+      expect(await visible.json()).toEqual(
+        expect.arrayContaining([expect.objectContaining({ uid })]),
+      );
+      const edit = await invited.context.request.post(
+        origin + "/api/calendar/commands",
+        {
+          headers: { Origin: origin },
+          data: {
+            operation: "update",
+            scope: "series",
+            calendarId: sharedId,
+            objectId,
+            etag: updated.etag,
+            patch: { title: "Synthetic read-only rejection" },
+            idempotencyKey: randomUUID(),
+          },
+        },
+      );
+      expect(edit.status()).toBe(403);
+      expect((await alice.read(calendarId, objectId)).etag).toBe(updated.etag);
+      await share("remove");
+      expect((await list()).some((item) => item.id === sharedId)).toBe(false);
+      expect((await query()).status()).toBe(404);
+    } finally {
+      await invited.context.close();
+    }
     await alice.remove(calendarId, objectId, updated.etag);
     await expect(alice.read(calendarId, objectId)).rejects.toMatchObject({
       status: 404,

@@ -1,6 +1,6 @@
 # 日历排期：开发中
 
-当前已接后端 Provider、产品意图/回执及人工蓝白黑界面；完整日历阶段仍在开发。扩展范围见 [v2.0 基线](PHASE2-BASELINE.md)；完整验收仍包括邀请、重复事件编辑、忙闲排期、项目/任务关联、产品回执、人工界面与 DSH/Hermes。
+当前支持来源日历、重复日程与例外、候选预约、会议邀请与回复、单次会议改期及私人项目关联。真实来源和真实模型仍分开验收。 [v2.0 基线](PHASE2-BASELINE.md)
 
 ## 来源边界
 
@@ -12,13 +12,13 @@ GET 要求 ETag。创建使用 If-None-Match:*，替换/删除要求确切强 ET
 
 此 Provider 不自动重试写入。网络中断、重定向/5xx、非预期成功状态标记 CalendarDeliveryUnknown；调用方必须先持久化意图并按 UID/源版本/操作标记回读和对账，再形成业务回执。PUT 201/204 只代表来源接受，不能宣称完整动作成功。CalendarService 已接持久意图与回读；人工写接口与固定计划的AI业务入口已接通。
 
-普通对象 PUT 暂拒绝 METHOD/ATTENDEE/ORGANIZER，避免绕过明确授权隐式发邀请；后续必须实现专用排期服务和真实邀请/取消/状态验收，这项保护不构成邀请功能已完成或永久取消。
+普通对象 PUT 拒绝 METHOD、ATTENDEE 和 ORGANIZER。会议邀请与回复经下文的专用排期服务提交。
 
 ## 验证与未完成项
 
 协议用例 `tests/calendar-provider.test.ts` 覆盖权限、UID 与登录名不同、命名空间、多 propstat、限定时间范围、完整重复/时区内容、路径/DTD/大响应、条件写入、撤权/版本冲突、不明结果与不自动重放。首次用例发现 XML 换行规范化与 iCalendar CRLF 的差异，已在 REPORT 读取时恢复规范换行，保持主事件和例外内容；实际命令结果随提交更新。
 
-尚未完成：项目/任务关系、整组重复规则调整、候选时段提交前复核、邀请与回复/取消、真实模型验收。新增迁移在隔离环境和 CI 验证。
+下列早期验证记录保留当时的结果，后续功能与证据见对应小节。
 
 技术依据：[RFC4791 CalDAV](https://www.rfc-editor.org/rfc/rfc4791.html)、[ICAL.js](https://github.com/kewisch/ical.js)。依赖锁定 ical.js 2.2.1，MPL-2.0，许可证清单随 lock 更新。
 
@@ -120,3 +120,8 @@ GET `/api/calendar/runs` 返回本人当前授权来源下最近20次日历Run�
 - 人工通过日历关联 API，AI 经私人 `manage_calendar` Run 调用同一业务服务。模型只提交空参数 `calendar.manage`，项目、待办、来源对象和操作由员工确认并由宿主绑定。Run 回执保存关联结果，重新打开时仍核对对象与项目。结果未知时先从原日程核对当前关联。
 - 本批对应 P02/P04/P07/P08、C02/C03/C04/C05、A01/A02/A06/A08/A10 与 E01/E04/E07/E08/E09/E10 子场景。升级前停止旧 Worker 并备份，再运行 `npm run migrate` 后启动同版本 API/Worker。回退前归档关联记录和待核对回执。删除产品记录不会修改来源日历或项目待办。
 - 本地 279 项 PostgreSQL/HTTP、99 项单元、9 项日历 Chromium 用例通过，类型检查和构建通过。原生 DSH/Hermes 在同一合成场景各保存一次关联，未增加 CalDAV 写入。真实来源用例核对关联保存、移除和来源 ETag/内容保持，结果以相应提交的 Actions 为准。 [手机关联，合成测试资料](images/calendar-link-mobile.png)
+
+## 来源与模型验收边界
+
+- 共享用例使用 Nextcloud 33.0.10 的私有共享协议，在两个合成账号之间给日历授予只读访问。检查接收人通过自己的日历根读取、产品写入返回拒绝，以及撤销后原地址失效。以实际 Actions 结果记录兼容性。 [Nextcloud 33.0.10 共享处理](https://github.com/nextcloud/server/blob/v33.0.10/apps/dav/lib/DAV/Sharing/Plugin.php) · [共享日历挂载规则](https://github.com/nextcloud/server/blob/v33.0.10/apps/dav/lib/CalDAV/CalDavBackend.php)
+- 真实模型验收需在隔离工作区使用已核准的 chat 连接。每个执行器单独确认员工选定的合成日历计划，检查实际供应商请求、用量状态、宿主回读、来源写入次数和私有 Run。协议模型回归、真实来源 CI、实际供应商调用分别记录。公司内网安装待目标机就绪后另验。
