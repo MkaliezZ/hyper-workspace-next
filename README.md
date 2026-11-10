@@ -31,7 +31,7 @@
 
 ## 复杂表格与 Office 协作
 
-企业文件已加入 DOCX、XLSX 和 PPTX 的统一 Office 入口。服务核对员工权限和所选版本，再通过 Nextcloud 打开。桌面和手机入口已通过合成来源验证，当前推进真实编辑器、协作保存与双执行器操作。 [Office 接入与验证范围](docs/OFFICE.md) · [手机入口](docs/images/office-source-link-mobile.png)
+企业文件已加入 DOCX、XLSX 和 PPTX 的统一 Office 入口。服务核对员工权限和所选版本，再通过 Nextcloud 打开。返回后可核对来源是否已有新版本。桌面和手机入口已通过合成来源验证，当前推进真实编辑器、协作保存与双执行器操作。 [Office 接入与验证范围](docs/OFFICE.md) · [手机入口](docs/images/office-source-link-mobile.png)
 
 [![CI](https://github.com/MkaliezZ/hyper-workspace-next/actions/workflows/ci.yml/badge.svg)](https://github.com/MkaliezZ/hyper-workspace-next/actions/workflows/ci.yml)
 

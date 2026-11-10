@@ -1,0 +1,41 @@
+# Add alongside nginx.intranet.conf. Use the reserved LAN IP and its IP SAN.
+map $http_upgrade $hyper_office_connection {
+    default upgrade;
+    '' close;
+}
+
+server {
+    listen 192.168.10.50:8444 ssl;
+    server_name 192.168.10.50;
+    ssl_certificate /etc/hyper-workspace/tls/server-chain.pem;
+    ssl_certificate_key /etc/hyper-workspace/tls/server.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    # Editor requests can carry WOPI credentials.
+    access_log off;
+    error_log /dev/null crit;
+    client_max_body_size 16m;
+
+    location ~ ^/browser/[^/]+/admin(?:[./-]|$) {
+        return 404;
+    }
+    location = /cool/adminws {
+        return 404;
+    }
+    location ~ ^/(?:cool|lool)/(?:convert-to|extract-document-structure|transform-document-structure|extract-link-targets)(?:/|$) {
+        return 404;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8091;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $hyper_office_connection;
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_next_upstream off;
+    }
+}

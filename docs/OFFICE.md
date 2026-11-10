@@ -1,6 +1,6 @@
 # 复杂表格与 Office 协作
 
-企业文件中的 DOCX、XLSX 和 PPTX 使用同一 Nextcloud 办公入口。Hyper Workspace 先用当前员工的来源连接核对路径、文件 ID、ETag 与实际读取权限，再提供 Nextcloud 文件短链接。链接不包含凭据，浏览器通过自己的 Nextcloud 会话打开文件，编辑、分享和版本由来源系统授权。入口核对记录反映打开前看到的版本。编辑中的协作与最终保存要到来源系统另行核对。 [Nextcloud 文件短链接](https://github.com/nextcloud/office)
+企业文件中的 DOCX、XLSX 和 PPTX 使用同一 Nextcloud 办公入口。Hyper Workspace 先用当前员工的来源连接核对路径、文件 ID、ETag 与实际读取权限，再提供 Nextcloud 文件短链接。链接不包含凭据，浏览器通过自己的 Nextcloud 会话打开文件，编辑、分享和版本由来源系统授权。入口核对记录反映打开前看到的版本。返回工作台后，可选择“核对来源版本”。产品使用当前员工权限重新读取同一文件并对比 ETag。发现换版时要求刷新目录后重新打开。版本变化仅证明来源发生变化，保存归属和具体修改以来源编辑历史为准。 [Nextcloud 文件短链接](https://github.com/nextcloud/office)
 
 ## 办公内核评估
 
@@ -13,3 +13,47 @@
 PostgreSQL 与合成 WebDAV 来源覆盖了功能开关、员工本人、同工作区管理员无文件权限、共享后打开、撤销读取后拒绝、文件 ID 或 ETag 变化，以及不支持的格式。Chromium 在桌面和手机尺寸下验证了入口、链接和撤权提示。编辑器连接、真实往返与并发保存、复杂工作簿及双执行器工具属于后续验收。 [合成表格的手机入口](images/office-source-link-mobile.png)
 
 GitHub Actions 加入固定版本的真实编辑器检查。隔离运行器验证公开组件的镜像和安装包、Nextcloud 的 WOPI 连接，并等待 Collabora 报告三种合成文档加载完成。这个检查验证实际打开，协作保存和格式往返另行验收。
+
+## 公司内网安装方案
+
+在 [内网部署](DEPLOYMENT-INTRANET.md) 的固定 IP 与内部 CA 配置上叠加 `deploy/compose.office.yaml`。办公室编辑器使用独立的 HTTPS 8444 端口，Nextcloud 继续使用 8443。下面用示例内网 IP，实际配置以公司分配地址为准。容器镜像和连接器版本见 `runtime/nextcloud/office.lock.json`。真实编辑器 CI 使用隔离的明文回环环境。本机已用临时 CA 验证 Office 代理保留主机、升级 WebSocket、拒绝外部调用内部转换路由。实际公司 HTTPS 组合在目标网络另行复验。
+
+在私有 Compose 环境文件追加：
+
+```dotenv
+NEXTCLOUD_FILES_ENABLED=true
+NEXTCLOUD_OFFICE_ENABLED=true
+HYPER_OFFICE_PUBLIC_HOST=192.168.10.50:8444
+HYPER_OFFICE_PORT=8091
+```
+
+使用 Python 3.12 或更新版本准备签名连接器和容器。以下命令用于首次安装连接器，已有应用时使用 Nextcloud 的升级与备份流程。已有 OCR 等叠加文件应继续保留在命令中。
+
+```sh
+office_compose() {
+  docker compose --env-file .env.compose -f compose.yaml \
+    -f deploy/compose.source.yaml -f deploy/compose.intranet.yaml \
+    -f deploy/compose.office.yaml "$@"
+}
+office_compose config --quiet
+python3 runtime/nextcloud/install-office.py
+office_compose up -d --wait nextcloud collabora
+source_container="$(office_compose ps -q nextcloud)"
+editor_container="$(office_compose ps -q collabora)"
+office_occ() { docker exec --user www-data "$source_container" php occ "$@"; }
+office_install_connector() {
+  docker exec "$source_container" test ! -e /var/www/html/custom_apps/richdocuments &&
+    docker cp .runtime/nextcloud/richdocuments "$source_container":/var/www/html/custom_apps/ &&
+    docker exec --user root "$source_container" chown -R www-data:www-data /var/www/html/custom_apps/richdocuments &&
+    office_occ app:enable richdocuments &&
+    office_occ integrity:check-app richdocuments
+}
+office_install_connector
+editor_ip="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$editor_container")"
+test -n "$editor_ip"
+office_occ config:app:set richdocuments wopi_allowlist --value="$editor_ip"
+office_occ richdocuments:activate-config --wopi-url=http://collabora:9980 --callback-url=http://nextcloud
+office_occ config:app:get richdocuments public_wopi_url
+```
+
+公开编辑器地址应为公司固定 IP 上的 `https://192.168.10.50:8444`。安装 [Office Nginx 模板](../deploy/nginx.office.intranet.conf.example)，替换监听 IP、证书路径和回环端口，执行 `nginx -t` 后再重载。通过受信任的公司根证书访问 `/hosting/discovery`，再从员工浏览器打开 DOCX、XLSX 和 PPTX。应用容器内的 Collabora 地址只供 Nextcloud 查询发现和功能，回调只走隔离容器网络。若重建 Collabora 后容器地址变化，重新设置 WOPI 白名单并复核连通性。确认来源连接器和编辑器都可用后，以同一 Compose 文件组合重建 API 和 Worker 让入口启用。

@@ -806,6 +806,15 @@ class ApiController {
   ) {
     return new SourceFileService(db).officeLink(await subject(req), OfficeSource.parse(body));
   }
+  @Post("files/office-version") async officeVersion(
+    @Req() req: Request,
+    @Body() body: unknown,
+  ) {
+    return new SourceFileService(db).officeVersion(
+      await subject(req),
+      OfficeSource.parse(body),
+    );
+  }
   @Post("files/import") async importFile(
     @Req() req: Request,
     @Body() body: unknown,

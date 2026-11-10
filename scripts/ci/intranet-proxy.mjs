@@ -39,6 +39,15 @@ const upstream = createServer(async (req, res) => {
     }),
   );
 });
+upstream.on("upgrade", (req, socket) => {
+  socket.end(
+    "HTTP/1.1 101 Switching Protocols\r\n" +
+      "Upgrade: websocket\r\nConnection: Upgrade\r\n" +
+      "X-Office-Upstream-Host: " +
+      req.headers.host +
+      "\r\n\r\n",
+  );
+});
 try {
   ssl(
     "req",
@@ -96,7 +105,8 @@ try {
   await new Promise((r) => upstream.listen(0, "127.0.0.1", r));
   const backend = upstream.address().port,
     httpsPort = await port(),
-    sourcePort = await port();
+    sourcePort = await port(),
+    officePort = await port();
   let template = await readFile(
     new URL("../../deploy/nginx.intranet.conf.example", import.meta.url),
     "utf8",
@@ -111,6 +121,22 @@ try {
     .replaceAll("/etc/hyper-workspace/tls/server.key", join(dir, "server.key"))
     .replaceAll("http://127.0.0.1:8180", "http://127.0.0.1:" + backend)
     .replaceAll("http://127.0.0.1:8090", "http://127.0.0.1:" + backend);
+  const office = (
+    await readFile(
+      new URL(
+        "../../deploy/nginx.office.intranet.conf.example",
+        import.meta.url,
+      ),
+      "utf8",
+    )
+  )
+    .replaceAll(ip + ":8444 ssl", "127.0.0.1:" + officePort + " ssl")
+    .replaceAll(
+      "/etc/hyper-workspace/tls/server-chain.pem",
+      join(dir, "server.pem"),
+    )
+    .replaceAll("/etc/hyper-workspace/tls/server.key", join(dir, "server.key"))
+    .replaceAll("http://127.0.0.1:8091", "http://127.0.0.1:" + backend);
   const config = join(dir, "nginx.conf");
   await writeFile(
     config,
@@ -124,6 +150,8 @@ try {
       join(dir, "proxy") +
       ";\n" +
       template +
+      "\n" +
+      office +
       "\n}\n",
   );
   execFileSync("nginx", ["-t", "-c", config, "-p", dir], { stdio: "pipe" });
@@ -190,8 +218,53 @@ try {
     body: "synthetic",
   });
   assert.equal(await get(httpsPort, "/events"), "data: ready\n\n");
+  const officeHost = ip + ":8444";
+  const discovery = await get(officePort, "/hosting/discovery", {
+    headers: { Host: officeHost },
+  });
+  assert.equal(discovery.status, 200);
+  assert.equal(JSON.parse(discovery.body).host, officeHost);
+  const internal = await get(officePort, "/cool/transform-document-structure", {
+    headers: { Host: officeHost },
+  });
+  assert.equal(internal.status, 404);
+  await new Promise((resolve, reject) => {
+    const req = request({
+      hostname: "127.0.0.1",
+      port: officePort,
+      path: "/cool/synthetic/ws",
+      ca,
+      rejectUnauthorized: true,
+      servername: "",
+      checkServerIdentity: (_h, cert) => checkServerIdentity(ip, cert),
+      headers: {
+        Host: officeHost,
+        Connection: "Upgrade",
+        Upgrade: "websocket",
+      },
+    });
+    req.on("upgrade", (res, socket) => {
+      socket.destroy();
+      try {
+        assert.equal(res.statusCode, 101);
+        assert.equal(res.headers["x-office-upstream-host"], officeHost);
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    });
+    req.on("response", (res) => {
+      res.resume();
+      reject(Error("Office proxy did not upgrade the connection"));
+    });
+    req.setTimeout(5000, () =>
+      req.destroy(Error("Office WebSocket proxy timed out")),
+    );
+    req.on("error", reject);
+    req.end();
+  });
   console.log(
-    "4 isolated TLS/proxy checks passed: IP SAN trust, source port, Origin/body, immediate event stream. Not company deployment acceptance.",
+    "7 isolated TLS/proxy checks passed, including Office host preservation, private route rejection and WebSocket upgrade.",
   );
 } finally {
   if (proxy && proxy.exitCode === null) {

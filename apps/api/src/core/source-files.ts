@@ -10,6 +10,7 @@ import {
   officeFormat,
   type OfficeLink,
   type OfficeSource,
+  type OfficeVersion,
   type Subject,
   type SourceFile,
 } from "@hyper/contracts";
@@ -49,24 +50,37 @@ export class SourceFileService {
   async list(s: Subject, path: string[]) {
     return (await this.connection(s)).provider.list(FilePath.parse(path));
   }
-  async officeLink(s: Subject, selection: OfficeSource): Promise<OfficeLink> {
+  private async officeSource(s: Subject, selection: OfficeSource) {
     if (process.env.NEXTCLOUD_OFFICE_ENABLED !== "true")
       throw new ServiceUnavailableException("企业 Office 协作尚未启用。");
     const source = await this.connection(s);
     const file = await source.provider.stat(selection.path);
-    if (
-      file.id !== selection.expectedId ||
-      file.etag !== selection.expectedEtag
-    )
+    if (file.id !== selection.expectedId)
       throw new ConflictException("所选文件已变化，请刷新文件夹后重试。");
     const format = officeFormat(file);
     if (!format)
       throw new BadRequestException("Office 协作支持 DOCX、XLSX 和 PPTX。");
     await source.provider.assertReadable(file);
+    return { file, format, publicUrl: source.config.publicUrl };
+  }
+  async officeLink(s: Subject, selection: OfficeSource): Promise<OfficeLink> {
+    const { file, format, publicUrl } = await this.officeSource(s, selection);
+    if (file.etag !== selection.expectedEtag)
+      throw new ConflictException("所选文件已变化，请刷新文件夹后重试。");
     return {
-      url: source.config.publicUrl + "/index.php/f/" + file.id,
+      url: publicUrl + "/index.php/f/" + file.id,
       format,
       checkedEtag: file.etag,
+    };
+  }
+  async officeVersion(
+    s: Subject,
+    selection: OfficeSource,
+  ): Promise<OfficeVersion> {
+    const { file } = await this.officeSource(s, selection);
+    return {
+      checkedEtag: file.etag,
+      changed: file.etag !== selection.expectedEtag,
     };
   }
   private rows(s: Subject, ids?: string[]) {

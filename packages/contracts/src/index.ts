@@ -1101,6 +1101,11 @@ export interface OfficeLink {
   checkedEtag: string;
 }
 
+export interface OfficeVersion {
+  checkedEtag: string;
+  changed: boolean;
+}
+
 export const FileReadingInput = z
   .object({
     engine: z.enum(["dsh", "hermes"]).default("dsh"),

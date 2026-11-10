@@ -45,6 +45,10 @@ test("Office link binds to the selected source version and each employee's live 
     format: "xlsx",
   };
   assert.deepEqual(await service.officeLink(f.actor, selection), expectLink);
+  assert.deepEqual(await service.officeVersion(f.actor, selection), {
+    checkedEtag: selection.expectedEtag,
+    changed: false,
+  });
   await assert.rejects(service.officeLink(f.peer, selection), /文件来源拒绝/);
   file.readers.add("bob");
   assert.deepEqual(await service.officeLink(f.peer, selection), expectLink);
@@ -56,6 +60,23 @@ test("Office link binds to the selected source version and each employee's live 
   );
   await assert.rejects(
     service.officeLink(f.actor, { ...selection, expectedEtag: '"stale"' }),
+    /所选文件已变化/,
+  );
+  file.etag = '"v2"';
+  assert.deepEqual(await service.officeVersion(f.actor, selection), {
+    checkedEtag: file.etag,
+    changed: true,
+  });
+  await assert.rejects(
+    service.officeLink(f.actor, selection),
+    /所选文件已变化/,
+  );
+  await assert.rejects(
+    service.officeVersion(f.peer, selection),
+    /文件来源拒绝/,
+  );
+  await assert.rejects(
+    service.officeVersion(f.actor, { ...selection, expectedId: "9999" }),
     /所选文件已变化/,
   );
   const txt = f.source.files.add(

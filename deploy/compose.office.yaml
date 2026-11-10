@@ -1,0 +1,19 @@
+services:
+  collabora:
+    image: collabora/code:26.04.6.1.1@sha256:95f29f1c0a1778999125f53f058d968fe0afb37c95e32ebfb9f3444140faebd2
+    init: true
+    cap_add: [MKNOD]
+    environment:
+      aliasgroup1: http://nextcloud:80
+      extra_params: >-
+        --o:ssl.enable=false --o:ssl.termination=true
+        --o:server_name=${HYPER_OFFICE_PUBLIC_HOST:?Set the HTTPS Office hostname and port without a scheme}
+    ports: ["127.0.0.1:${HYPER_OFFICE_PORT:-8091}:9980"]
+    networks: [office]
+    stop_grace_period: 45s
+    restart: unless-stopped
+  nextcloud:
+    networks: [default, office]
+networks:
+  office:
+    internal: true
