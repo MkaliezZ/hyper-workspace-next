@@ -170,7 +170,8 @@ export class OfficeRunService {
     ).rows[0];
     if (!row) return;
     const result = await this.office.get(s, row.id);
-    if (result.sourceStatus !== "current") return;
+    if (result.sourceStatus !== "current")
+      throw new NotFoundException("Office 来源已失效，私人执行内容已清理。");
     const observed =
       row.kind === "apply" &&
       result.applyRunId === runId &&

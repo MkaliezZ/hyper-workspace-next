@@ -27,6 +27,12 @@ const stateLabels: Record<OfficeProposalResult["state"], string> = {
   cancelled: "已取消",
   recovery_required: "保存结果待核对",
 };
+const failureLabels: Record<string, string> = {
+  generation_failed: "文件生成未完成。",
+  generation_interrupted: "文件生成中断。",
+  target_conflict: "目标位置已有文件，请另建方案。",
+  source_unavailable: "来源权限或版本已变化，请重新选择文件。",
+};
 function positionLabel(key: string, inspected?: OfficeInspectionResult) {
   const paragraph = /^paragraph:(\d+)$/.exec(key);
   if (paragraph) return `段落 ${Number(paragraph[1]) + 1}`;
@@ -802,6 +808,14 @@ export function OfficeToolsDialog({
               >
                 核对实际保存结果
               </button>
+            ) : null}
+            {proposal?.state === "failed" ? (
+              <p role="alert" className="error-text">
+                {failureLabels[proposal.error ?? ""] ?? "此方案尚未完成。"}
+                {proposal.retryable
+                  ? "可以重新校验并保存方案，再确认生成副本。"
+                  : "请核对来源和方案记录后另建方案。"}
+              </p>
             ) : null}
             {proposal?.state === "recovery_required" ? (
               <p role="status">
