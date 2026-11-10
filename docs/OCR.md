@@ -62,3 +62,5 @@ docker compose --env-file .env.compose -f compose.yaml -f deploy/compose.local-o
 2026-11-10 用 DeepSeek Flash 与本机 Tesseract.js 7.0.0 做独立链路验证。DSH 与 Hermes 各触发一次合成 PNG 识别，聊天模型均返回 HTTP 200，输入和输出用量分别为 3,085 / 49 和 3,781 / 287 token。CPU OCR 各返回 3 个正文块，标题与样张相符，两个草稿均保持待校对。运行不写入项目对话，完成后清理临时目录。Tesseract 在这里用于证明真实 CPU 识别链路，结构化表格主选引擎另行测试。
 
 容器部署使用专用的 `hyper_runtime` 数据库角色。[部署流水线 42860445370](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42860445370) 发现该角色缺少 OCR 来源视图的读取权限，导致加载带资产的助手任务返回 500。初始化脚本现为这一个视图授予只读权限。本机以受限角色复验了来源视图读取、禁止写入和既有角色初始化，相关集成测试通过。修复提交的 [Linux 容器部署 job](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42861753511) 已通过。
+
+[CPU 服务首轮 Linux 容器检查 42863084490](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42863084490) 通过既有产品容器用例后发现，RapidTable 首次导入会创建包内目录，导致只读 OCR 容器启动失败。现已在镜像构建时完成首次导入，运行时保持只读。

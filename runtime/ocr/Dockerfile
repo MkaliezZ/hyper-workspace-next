@@ -8,7 +8,8 @@ RUN apt-get update \
 COPY runtime/ocr/requirements.txt ./
 RUN pip install --no-cache-dir --only-binary=:all: -r requirements.txt && pip check
 COPY runtime/ocr/prepare_models.py ./
-RUN python prepare_models.py /models
+# RapidTable creates its package model directory at first import, even with an explicit model path.
+RUN python -c "import rapid_table" && python prepare_models.py /models
 COPY runtime/ocr/page.py runtime/ocr/recognizer.py runtime/ocr/service.py ./
 COPY docs/OCR.md /app/OCR.md
 USER 10001:10001
