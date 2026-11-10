@@ -1,22 +1,32 @@
 import { expect, type Frame, type Page } from "@playwright/test";
 
 /** Interact through the visible editor UI after the strict load observer passes. */
-export async function dismissOfficeOnboarding(frame: Frame) {
+export async function installOfficeOnboardingHandler(frame: Frame) {
   const welcome = frame.locator(".iframe-welcome-wrap");
-  await welcome.waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
-  if (await welcome.isVisible()) {
-    const welcomeFrame = frame
-      .childFrames()
-      .find((child) => child.name() === "iframe-welcome-form");
-    if (!welcomeFrame)
-      throw new Error("The visible Office welcome frame is unavailable");
-    await welcomeFrame.locator("body").press("Escape");
-    await expect.poll(() => welcome.isVisible()).toBe(false);
-  }
   const tour = frame.locator("#modal-dialog-onboarding-tour-overlay");
-  await tour.waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
-  if (await tour.isVisible())
-    await tour.getByText("Skip", { exact: true }).click();
+  // A welcome frame can appear after Document_Loaded, including while another
+  // collaborator opens the file. Check before each actionability retry rather
+  // than assuming that a one-time absence means onboarding has finished.
+  const page = frame.page();
+  await page.addLocatorHandler(
+    page.locator("body"),
+    async () => {
+      if (await welcome.isVisible()) {
+        const welcomeFrame = frame
+          .childFrames()
+          .find((child) => child.name() === "iframe-welcome-form");
+        if (!welcomeFrame)
+          throw new Error("The visible Office welcome frame is unavailable");
+        await welcomeFrame.locator("body").press("Escape");
+        await expect.poll(() => welcome.isVisible()).toBe(false);
+      }
+      if (await tour.isVisible()) {
+        await tour.getByText("Skip", { exact: true }).click();
+        await expect.poll(() => tour.isVisible()).toBe(false);
+      }
+    },
+    { noWaitAfter: true },
+  );
 }
 
 export async function replaceOfficeText(

@@ -5,7 +5,7 @@ import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { login, password, source } from "./helpers";
 import { observeOffice } from "./office-helpers";
-import { dismissOfficeOnboarding, replaceOfficeText } from "./office-ui";
+import { installOfficeOnboardingHandler, replaceOfficeText } from "./office-ui";
 
 const editorOrigin = "http://127.0.0.1:9980";
 const formats = {
@@ -71,7 +71,7 @@ test("The real Office editor saves DOCX, XLSX and PPTX edits and the workspace d
         if (!main)
           throw new Error("The loaded editor frame became unavailable");
 
-        await dismissOfficeOnboarding(main);
+        await installOfficeOnboardingHandler(main);
         await main
           .locator("#document-container")
           .click({ position: { x: 300, y: 300 } });

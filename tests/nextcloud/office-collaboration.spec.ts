@@ -5,7 +5,7 @@ import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { login, password, source } from "./helpers";
 import { observeOffice } from "./office-helpers";
-import { dismissOfficeOnboarding, replaceOfficeText } from "./office-ui";
+import { installOfficeOnboardingHandler, replaceOfficeText } from "./office-ui";
 
 const editorOrigin = "http://127.0.0.1:9980";
 const python = resolve(".runtime/documents/bin/python");
@@ -104,7 +104,7 @@ test("Two real Office users preserve simultaneous edits and shared authored comm
     actor.frame = actor.office.loadedFrame(actor.editor);
     if (!actor.frame)
       throw new Error("The loaded collaborative editor is unavailable");
-    await dismissOfficeOnboarding(actor.frame);
+    await installOfficeOnboardingHandler(actor.frame);
     return actor as Actor & { editor: Page; frame: Frame };
   }
   async function verify(expected: object) {
