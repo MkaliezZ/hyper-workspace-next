@@ -172,7 +172,7 @@ jobs:
           ocr_compose config --quiet
           ocr_compose build ocr
           ocr_compose up -d --no-build --wait --wait-timeout 180
-          ocr_compose exec -T api node --input-type=module -e '
+          ocr_compose exec -T api node --import tsx --input-type=module -e '
             import assert from "node:assert/strict";
             import { OcrProvider } from "./dist/core/ocr-provider.js";
             const parts = [];

@@ -64,3 +64,5 @@ docker compose --env-file .env.compose -f compose.yaml -f deploy/compose.local-o
 容器部署使用专用的 `hyper_runtime` 数据库角色。[部署流水线 42860445370](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42860445370) 发现该角色缺少 OCR 来源视图的读取权限，导致加载带资产的助手任务返回 500。初始化脚本现为这一个视图授予只读权限。本机以受限角色复验了来源视图读取、禁止写入和既有角色初始化，相关集成测试通过。修复提交的 [Linux 容器部署 job](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42861753511) 已通过。
 
 [CPU 服务首轮 Linux 容器检查 42863084490](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42863084490) 通过既有产品容器用例后发现，RapidTable 首次导入会创建包内目录，导致只读 OCR 容器启动失败。现已在镜像构建时完成首次导入，运行时保持只读。
+
+[只读启动复验 42864784410](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42864784410) 中 OCR、API 和 Worker 容器均达到健康状态。其后的识别探针漏加载产品运行时使用的 `tsx`，已补齐加载参数。
