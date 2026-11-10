@@ -35,6 +35,8 @@
 
 企业文件已加入 DOCX、XLSX 和 PPTX 的统一 Office 入口。服务核对员工权限和所选版本，再通过 Nextcloud 打开。返回后可核对来源是否已有新版本。桌面和手机入口已通过合成来源验证，当前推进真实编辑器、协作保存与双执行器操作。 [Office 接入与验证范围](docs/OFFICE.md) · [手机入口](docs/images/office-source-link-mobile.png)
 
+Windows 端已接续开发。已定位并修复设置预设回调地址导致的文档会话循环，以及加载探针被无关 iframe 导航干扰的问题。WSL 真实 Nextcloud/Collabora 已通过 DOCX、XLSX、PPTX 加载；Office 独立 CI、多人保存和复杂表格继续按对应提交逐项验收。 [接续记录](docs/IMPLEMENTATION.md)
+
 [![CI](https://github.com/MkaliezZ/hyper-workspace-next/actions/workflows/ci.yml/badge.svg)](https://github.com/MkaliezZ/hyper-workspace-next/actions/workflows/ci.yml)
 
 面向企业内部的 AI 协作 IM：讨论有沉淀，行动有回执，成果能修改，经验能复用。蓝、白、黑配色；拥有自己的业务核心与企业资产服务。

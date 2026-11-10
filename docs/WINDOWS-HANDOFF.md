@@ -27,6 +27,8 @@
 
 本机最后完成的相关检查包括类型检查/构建、Office 和 OCR 的 5 项数据库集成、桌面/手机入口及撤权浏览器流程、7 项临时 CA/TLS/代理检查、固定连接器摘要校验、首阶段冻结包校验。原始临时运行日志位于被忽略的 .runtime，公开交接保留此摘要和可重跑测试，其他历史证据在各模块说明中。
 
+Windows 接收端后续已定位设置预设的绝对 URL 被公共地址覆盖，引起 Collabora `docunloading` 循环，并修复加载探针被无关 iframe 导航打断的竞态。三格式 WSL 真实加载已通过，新的完整 CI 与后续保存协作结果见 [Office 当前记录](OFFICE.md)。部署时须采用新增受限设置片段及显式 TLS 校验配置，原交接失败记录保留为历史证据。
+
 ## Windows 环境与获取源码
 
 建议使用 WSL2 Ubuntu，在 Linux 文件系统中放置仓库，例如 ~/src/hyper-workspace-next。Docker Desktop 使用 Linux containers 并启用对应 WSL 集成。Linux 容器、shell 脚本及 Python 虚拟环境路径是目前主要验证路径。
@@ -44,6 +46,8 @@ git switch -c codex/windows-office
 ```
 
 保持源码 LF 换行和冻结包字节校验，首次 clone 显式关闭自动 CRLF 转换。
+
+Windows 接收端已加入 `.gitattributes`：普通源码统一 LF，冻结包保持 Git 原始字节。已有 clone 如受全局自动 CRLF 设置影响，先保留工作区修改，再恢复冻结包的原始字节并运行校验，不修改摘要清单来接受换行差异。本机 Windows 原生类型检查通过，但 POSIX 文件权限及可执行脚本用例不兼容；完整开发验证继续在 WSL 中运行。
 
 要固定到交接版本，先从 Release 记录取得 tag，再执行 git checkout -b codex/windows-office TAG。GitHub 归档没有 .git 时，建议用 clone 接续提交。
 

@@ -1,1 +1,4 @@
+* text=auto eol=lf
+# Frozen handoff manifests verify the original bytes on every platform.
+docs/handoff-v1/** -text
 docs/dependencies/license-texts/* -text

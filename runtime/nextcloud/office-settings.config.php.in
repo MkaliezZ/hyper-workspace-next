@@ -1,0 +1,19 @@
+<?php
+// Loaded after reverse-proxy.config.php by Nextcloud's natural config ordering.
+// richdocuments 10.3.3 generates preset file URLs in its settings response via
+// the absolute URL generator. Keep those server-to-server fetches on the
+// isolated Office network, while all browser/WOPI responses keep public HTTPS.
+// Regenerate this file whenever the directly connected Collabora IP changes.
+$CONFIG = [];
+$hyperOfficeSettingsPath = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
+if (($_SERVER['REMOTE_ADDR'] ?? '') === '@COLLABORA_IP@'
+    && in_array($_SERVER['HTTP_HOST'] ?? '', ['nextcloud', 'nextcloud:80'], true)
+    && in_array($hyperOfficeSettingsPath, [
+        '/index.php/apps/richdocuments/wopi/settings',
+        '/apps/richdocuments/wopi/settings',
+    ], true)) {
+    $CONFIG['overwritehost'] = 'nextcloud';
+    $CONFIG['overwriteprotocol'] = 'http';
+    $CONFIG['overwritecondaddr'] = '';
+}
+unset($hyperOfficeSettingsPath);
