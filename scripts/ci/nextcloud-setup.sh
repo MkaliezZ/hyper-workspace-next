@@ -25,6 +25,8 @@ for employee in employee-one employee-two org-reader talk-alice talk-bob talk-ou
   occ group:adduser hyper-members "$employee"
 done
 # Synthetic addresses scoped to the disposable calendar source for scheduling tests.
+# Keep real local CalDAV scheduling enabled. This fixture has no mail transport.
+occ config:app:set dav sendInvitations --value=no
 for employee in calendar-alice calendar-bob; do
   occ user:setting "$employee" settings email "$employee@example.invalid"
 done

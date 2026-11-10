@@ -1,7 +1,9 @@
 import { test, expect, type BrowserContext } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import ICAL from "ical.js";
 import type { CalendarOccurrence } from "@hyper/contracts/calendar";
-import { login, origin, view } from "./helpers.js";
+import { NextcloudCalendarProvider } from "../../apps/api/src/providers/nextcloud-calendar.js";
+import { login, origin, password, source, view } from "./helpers.js";
 
 test("Nextcloud delivers an internal invitation, propagates a reply and processes organizer cancellation", async ({
   browser,
@@ -118,7 +120,33 @@ test("Nextcloud delivers an internal invitation, propagates a reply and processe
     expect(event?.meeting).toBe(true);
     const uid = event!.uid;
     const organizer = await post(alice.context, "meeting", address(event!));
-    expect(organizer).toMatchObject({
+    const fixtureProvider = new NextcloudCalendarProvider(
+      {
+        publicUrl: source,
+        transportUrl: source,
+        providerKey: "nextcloud:scheduling-ci",
+        workspaceId: process.env.NEXTCLOUD_WORKSPACE_ID!,
+        memberGroup: process.env.NEXTCLOUD_MEMBER_GROUP ?? "hyper-members",
+        bootstrapAdminIds: [],
+      },
+      { loginName: aliceUid, appPassword: password },
+      aliceUid,
+    );
+    const sourceCopy = await fixtureProvider.read(
+      event!.calendarId,
+      event!.objectId,
+    );
+    const sourceStatus = new ICAL.Component(ICAL.parse(sourceCopy.ical))
+      .getFirstSubcomponent("vevent")
+      ?.getFirstProperty("attendee")
+      ?.getParameter("schedule-status");
+    const statusCode = String(sourceStatus ?? "").match(
+      /^[1-5]\.\d+(?=;|$)/u,
+    )?.[0];
+    expect(
+      organizer,
+      "Source attendee SCHEDULE-STATUS " + (statusCode ?? "unreported"),
+    ).toMatchObject({
       role: "organizer",
       invitations: [
         {

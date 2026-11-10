@@ -125,7 +125,10 @@ jobs:
       - run: python3 -m venv .runtime/documents && .runtime/documents/bin/python -m pip install --require-hashes -r runtime/documents/requirements.lock --index-url https://pypi.org/simple
       - run: npm run migrate && npm run workspace:init
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:nextcloud
+      - name: Verify real CalDAV and local scheduling
+        run: npm run test:nextcloud -- calendar-meeting.spec.ts calendar.spec.ts
+      - name: Verify other real Nextcloud workflows
+        run: npm run test:nextcloud -- files.spec.ts login.spec.ts notifications.spec.ts search.spec.ts talk.spec.ts
       - if: failure()
         run: |
           if docker inspect hyper-nextcloud-test >/dev/null 2>&1; then

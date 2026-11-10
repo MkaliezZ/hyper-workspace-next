@@ -125,3 +125,5 @@ GET `/api/calendar/runs` 返回本人当前授权来源下最近20次日历Run�
 
 - 共享用例使用 Nextcloud 33.0.10 的私有共享协议，在两个合成账号之间给日历授予只读访问。检查接收人通过自己的日历根读取、产品写入返回拒绝，以及撤销后原地址失效。以实际 Actions 结果记录兼容性。 [Nextcloud 33.0.10 共享处理](https://github.com/nextcloud/server/blob/v33.0.10/apps/dav/lib/DAV/Sharing/Plugin.php) · [共享日历挂载规则](https://github.com/nextcloud/server/blob/v33.0.10/apps/dav/lib/CalDAV/CalDavBackend.php)
 - 真实模型验收需在隔离工作区使用已核准的 chat 连接。每个执行器单独确认员工选定的合成日历计划，检查实际供应商请求、用量状态、宿主回读、来源写入次数和私有 Run。协议模型回归、真实来源 CI、实际供应商调用分别记录。公司内网安装待目标机就绪后另验。
+- `c9a7cf1` 的 verify 与 deployment 已通过，真实 Nextcloud 19 项通过。会议测试已完成两名员工登录和组织者保存，但来源将参会邀请标记为拒绝。Nextcloud 会另行启用邮件邀请插件，而隔离 CI 没有 SMTP。下一轮仅在合成测试容器关闭该插件，保留本地 CalDAV 调度，仍要求参会人实际收到日程、回复回传、改期及取消。失败时报告来源数值状态码，邮件路径与内部日历交付分开验证。 [本轮 Actions](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42779801563) · [Nextcloud 邮件插件开关](https://github.com/nextcloud/server/blob/v33.0.10/apps/dav/lib/Server.php#L326-L339)
+- 新增待办版本与来源对象替换用例后，本地 PostgreSQL/HTTP 280 项通过。手机关联表单按可访问名称操作，无横向溢出。
