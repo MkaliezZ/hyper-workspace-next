@@ -60,6 +60,18 @@ test("DAV resolves namespace-qualified identities and encoded personal paths, th
   assert.equal(file.fullReads, 1);
   assert.equal(file.probes, 1);
 });
+test("DAV new-copy destinations require current create permission on a directory", async () => {
+  await provider.assertWritableDirectory([]);
+  await provider.assertWritableDirectory(["资料 & 约定"]);
+  await assert.rejects(provider.assertWritableDirectory(file.path));
+  for (const permissions of ["R", "", "RW"]) {
+    dav.directoryPermissions.set("employee@example.com", permissions);
+    await assert.rejects(provider.assertWritableDirectory([]));
+  }
+  dav.directoryPermissions.set("employee@example.com", "RCK");
+  await provider.assertWritableDirectory([]);
+  dav.directoryPermissions.delete("employee@example.com");
+});
 test("DAV rejects traversal, foreign hrefs, namespace spoofing and DTD before trusting a source response", async () => {
   await assert.rejects(provider.list([".."]));
   const original = dav.maliciousXml;

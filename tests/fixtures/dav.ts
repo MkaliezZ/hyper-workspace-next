@@ -20,6 +20,7 @@ export const escapeXml = (value: string) =>
     .replaceAll("'", "&apos;");
 export class DavFixture {
   files: DavFile[] = [];
+  directoryPermissions = new Map<string, string>();
   next = 1000;
   outage = false;
   maliciousXml: string | undefined;
@@ -98,7 +99,7 @@ export class DavFixture {
         },
         folder = false,
       ) =>
-        `<x:response><x:href>${escapeXml(root + item.path.map(encodeURIComponent).join("/") + (folder && item.path.length ? "/" : ""))}</x:href><x:propstat><x:prop><f:fileid>${item.id}</f:fileid><x:getetag>${escapeXml(item.etag ?? '"directory"')}</x:getetag><x:getcontentlength>${item.content?.length ?? 0}</x:getcontentlength><x:getcontenttype>${folder ? "httpd/unix-directory" : item.mime}</x:getcontenttype><x:resourcetype>${folder ? "<x:collection/>" : ""}</x:resourcetype></x:prop><x:status>HTTP/1.1 200 OK</x:status></x:propstat></x:response>`;
+        `<x:response><x:href>${escapeXml(root + item.path.map(encodeURIComponent).join("/") + (folder && item.path.length ? "/" : ""))}</x:href><x:propstat><x:prop><f:fileid>${item.id}</f:fileid><f:permissions>${folder ? escapeXml(this.directoryPermissions.get(uid) ?? "RCK") : "RW"}</f:permissions><x:getetag>${escapeXml(item.etag ?? '"directory"')}</x:getetag><x:getcontentlength>${item.content?.length ?? 0}</x:getcontentlength><x:getcontenttype>${folder ? "httpd/unix-directory" : item.mime}</x:getcontenttype><x:resourcetype>${folder ? "<x:collection/>" : ""}</x:resourcetype></x:prop><x:status>HTTP/1.1 200 OK</x:status></x:propstat></x:response>`;
       const output = [file ? entry(file) : entry(dir!, true)];
       if (req.headers.depth === "1" && dir) {
         for (const child of directories.values())
