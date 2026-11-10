@@ -110,6 +110,13 @@ test("Restricted deployment role supports product, vector and queue work but can
     ).rows[0].distance,
     0,
   );
+  await f.runtime.pool.query("SELECT asset_id FROM cw_source_bound_assets");
+  const {
+    rows: [viewPermissions],
+  } = await f.runtime.pool.query(
+    "SELECT has_table_privilege(current_user, 'cw_source_bound_assets', 'INSERT,UPDATE,DELETE') AS writable",
+  );
+  assert.equal(viewPermissions.writable, false);
   const queue = await f.queue();
   await queue.createQueue("restricted-work", { retryLimit: 0 });
   const id = await queue.send("restricted-work", { value: "synthetic" });

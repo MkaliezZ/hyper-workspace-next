@@ -200,12 +200,15 @@ export async function configureRuntimeDatabase(
     await client.query(
       `REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC, ${quote(role)}`,
     );
-    const { rows: tables } =
-      await client.query(`SELECT relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-      WHERE n.nspname='public' AND c.relkind IN ('r','p') AND starts_with(c.relname,'cw_')`);
-    for (const t of tables) {
+    const { rows: relations } =
+      await client.query(`SELECT relname,relkind FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+      WHERE n.nspname='public' AND (
+        (c.relkind IN ('r','p') AND starts_with(c.relname,'cw_'))
+        OR (c.relkind='v' AND c.relname='cw_source_bound_assets')
+      )`);
+    for (const t of relations) {
       const permissions =
-        t.relname === "cw_migrations"
+        t.relkind === "v" || t.relname === "cw_migrations"
           ? "SELECT"
           : "SELECT, INSERT, UPDATE, DELETE";
       await client.query(
