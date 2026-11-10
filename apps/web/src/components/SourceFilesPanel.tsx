@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Folder, FileText, RefreshCw } from "lucide-react";
-import type { SourceFile } from "@hyper/contracts";
+import type { RunState, SourceFile } from "@hyper/contracts";
 import { supportsOcr } from "@hyper/contracts/ocr";
 import { OcrPanel } from "./OcrPanel";
 import { FileReaderPanel } from "./FileReaderPanel";
@@ -25,8 +25,12 @@ export function SourceFilesPanel({
   busy,
   act,
   engines,
+  run,
+  onRun,
 }: {
   engines: Record<string, import("@hyper/contracts").EngineCapabilities>;
+  run: { id: string; state: RunState } | null;
+  onRun: (run: { id: string; state: RunState }) => void;
   enabled: boolean;
   demo: boolean;
   busy: boolean;
@@ -258,7 +262,10 @@ export function SourceFilesPanel({
           ) : null}
         </div>
       )}
-      {ocrFile ? <OcrPanel file={ocrFile} onClose={() => setOcrFile(undefined)} /> : null}
+      {ocrFile ? (
+        <OcrPanel file={ocrFile} engines={engines} run={run} onRun={onRun}
+          onClose={() => setOcrFile(undefined)} />
+      ) : null}
       <header className="source-import-heading">
         <h3>已选择的个人文件</h3>
         <button

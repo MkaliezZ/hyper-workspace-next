@@ -114,3 +114,18 @@ export function supportsOcr(file: {
     sourceMime[extension] === file.mime
   );
 }
+
+export const OcrRunPlan = OcrRecognition.omit({ idempotencyKey: true })
+  .extend({ confirmed: z.literal(true) })
+  .strict();
+export type OcrRunPlan = z.infer<typeof OcrRunPlan>;
+
+export const OcrRunInput = z
+  .object({
+    plan: OcrRunPlan,
+    engine: z.enum(["dsh", "hermes"]).default("dsh"),
+    modelProfileId: z.uuid(),
+    idempotencyKey: z.uuid(),
+  })
+  .strict();
+export type OcrRunInput = z.infer<typeof OcrRunInput>;

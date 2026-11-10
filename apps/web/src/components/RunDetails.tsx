@@ -64,6 +64,7 @@ const actionLabels: Record<PlannedAction["tool"], string> = {
   "communication.manage": "管理会话",
   "calendar.manage": "核对日历操作",
   "approval.manage": "核对审批操作",
+  "ocr.recognize": "保存识别草稿",
   "attachment.share": "分享文件附件",
   "decision.write": "保存项目决定",
   "decision.manage": "管理项目决定",
@@ -322,6 +323,14 @@ export function RunDetails({
                     {receipt.tool === "approval.manage"
                       ? approvalReceipt(receipt.approval)
                       : null}
+                    {receipt.tool === "ocr.recognize" &&
+                    typeof receipt.page === "number" &&
+                    typeof receipt.revision === "number" ? (
+                      <span>
+                        第 {receipt.page} 页 · 草稿版本 {receipt.revision}
+                      </span>
+                    ) : null}
+
                     {receipt.tool === "calendar.manage" &&
                     receipt.operation === "availability" &&
                     typeof receipt.availability === "object" &&

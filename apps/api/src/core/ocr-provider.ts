@@ -42,7 +42,12 @@ export function ocrEndpoint(value = process.env.HYPER_OCR_URL) {
 }
 
 export class OcrProvider {
-  async recognize(input: { bytes: Buffer; mime: string; page: number }) {
+  async recognize(input: {
+    bytes: Buffer;
+    mime: string;
+    page: number;
+    signal?: AbortSignal;
+  }) {
     const url = ocrEndpoint();
     const engine = process.env.HYPER_OCR_ENGINE;
     if (!url || !engine || !/^[a-zA-Z0-9][a-zA-Z0-9._/@-]{0,99}$/.test(engine))
@@ -62,7 +67,10 @@ export class OcrProvider {
           "X-OCR-Page": String(input.page),
         },
         body: new Uint8Array(input.bytes),
-        signal: AbortSignal.timeout(55000),
+        signal: AbortSignal.any([
+          AbortSignal.timeout(55000),
+          ...(input.signal ? [input.signal] : []),
+        ]),
         redirect: "error",
       });
       if (response.status === 422) {
@@ -105,6 +113,7 @@ export class OcrProvider {
         );
       return { engine, content };
     } catch (error) {
+      input.signal?.throwIfAborted();
       if (error instanceof BadRequestException) throw error;
       throw new ServiceUnavailableException(
         "内网 OCR 服务暂未返回可用结果，已保存版本可继续查看。",

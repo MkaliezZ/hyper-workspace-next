@@ -15,6 +15,7 @@ import {
   type OcrRecognition,
   type OcrResult,
   type OcrSource,
+  type OcrRunPlan,
 } from "@hyper/contracts/ocr";
 import type { Database } from "../db/database.js";
 import {
@@ -24,6 +25,7 @@ import {
 import { stableDigest } from "./credentials.js";
 import { sourceConnection } from "./source-connection.js";
 import { OcrProvider } from "./ocr-provider.js";
+import { ExecutionPolicyService } from "./execution-policy.js";
 
 type Source = {
   provider: NextcloudFilesProvider;
@@ -48,11 +50,21 @@ type OcrDocument = {
 type Revision = {
   revision: number;
   request_hash: string;
+  source_run_id: string | null;
   state: "draft" | "confirmed";
   engine: string;
   content: OcrPage;
   recorded_at: Date;
 };
+
+interface OcrExecution {
+  runId: string;
+  lease: string;
+  plan: OcrRunPlan & { binding: string };
+  contextBytes: number;
+  actionCount: number;
+  signal?: AbortSignal;
+}
 
 type Queryable = Pick<PoolClient, "query">;
 function sourceOf(document: OcrDocument): OcrSource {
@@ -62,6 +74,18 @@ function sourceOf(document: OcrDocument): OcrSource {
     expectedEtag: document.source_etag,
     page: document.page,
   };
+}
+
+function ocrBinding(source: Source, file: SourceFile) {
+  return stableDigest([
+    source.key,
+    source.uid,
+    file.id,
+    file.etag,
+    file.path,
+    file.mime,
+    file.size,
+  ]);
 }
 
 function matches(file: SourceFile, document: OcrDocument) {
@@ -251,6 +275,7 @@ export class OcrService {
     document: OcrDocument | undefined,
     key: string,
     hash: string,
+    runId?: string,
   ) {
     if (!document) return;
     const row = (
@@ -261,8 +286,8 @@ export class OcrService {
       )
     ).rows[0];
     if (!row) return;
-    if (row.request_hash !== hash)
-      throw new ConflictException("同一操作键不能更换识别参数。");
+    if (row.request_hash !== hash || row.source_run_id !== (runId ?? null))
+      throw new ConflictException("同一操作键不能更换识别参数或执行来源。");
     return this.result(document, row);
   }
 
@@ -275,6 +300,7 @@ export class OcrService {
       state: Revision["state"];
       engine: string;
       content: OcrPage;
+      runId?: string;
     },
   ) {
     const revision = document.revision + 1;
@@ -287,8 +313,8 @@ export class OcrService {
     if (!head.rowCount) throw new ConflictException("来源已变化，请重新选择。");
     const row = (
       await c.query<Revision>(
-        `INSERT INTO cw_ocr_revisions(document_id,revision,request_key,request_hash,state,engine,content)
-       VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+        `INSERT INTO cw_ocr_revisions(document_id,revision,request_key,request_hash,state,engine,content,source_run_id)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
         [
           document.id,
           revision,
@@ -297,6 +323,7 @@ export class OcrService {
           input.state,
           input.engine,
           input.content,
+          input.runId ?? null,
         ],
       )
     ).rows[0]!;
@@ -418,7 +445,7 @@ export class OcrService {
     return allowed;
   }
 
-  async lookup(s: Subject, selection: OcrSource) {
+  async inspect(s: Subject, selection: OcrSource) {
     const source = await this.connection(s);
     const known = await this.active(this.db.pool, s, source, selection);
     const file =
@@ -426,7 +453,7 @@ export class OcrService {
       JSON.stringify(known.source_path) === JSON.stringify(selection.path)
         ? (await this.checkDocument(s, known, source)).file
         : await this.sourceFile(source, selection);
-    return this.db.tx(async (c) => {
+    const result = await this.db.tx(async (c) => {
       await this.lock(c, s, source, selection);
       const document = await this.active(c, s, source, selection);
       if (!document) return null;
@@ -436,6 +463,11 @@ export class OcrService {
       }
       return this.load(c, document, document.revision);
     });
+    return { binding: ocrBinding(source, file), result };
+  }
+
+  async lookup(s: Subject, selection: OcrSource) {
+    return (await this.inspect(s, selection)).result;
   }
 
   async detail(s: Subject, id: string, revision?: number) {
@@ -444,12 +476,47 @@ export class OcrService {
     return this.load(this.db.pool, document, revision ?? document.revision);
   }
 
-  async recognize(s: Subject, input: OcrRecognition) {
+  private async verifyExecution(
+    c: PoolClient,
+    s: Subject,
+    execution: OcrExecution,
+  ) {
+    execution.signal?.throwIfAborted();
+    await ExecutionPolicyService.lock(c, s.workspaceId);
+    const run = (
+      await c.query(
+        `SELECT * FROM cw_runs WHERE id=$1 AND workspace_id=$2 AND actor_id=$3
+         AND workflow='recognize_ocr' AND state='running' AND lease_owner=$4
+         AND lease_expires_at>clock_timestamp() AND ocr_plan=$5::jsonb FOR UPDATE`,
+        [execution.runId, s.workspaceId, s.id, execution.lease, execution.plan],
+      )
+    ).rows[0];
+    if (!run) throw new ConflictException("OCR 执行已停止或租约失效。");
+    await new ExecutionPolicyService(this.db).check(
+      c,
+      s,
+      run,
+      execution.contextBytes,
+      execution.actionCount,
+    );
+  }
+
+  async recognize(s: Subject, input: OcrRecognition, execution?: OcrExecution) {
+    if (
+      execution &&
+      (input.idempotencyKey !== execution.runId ||
+        input.expectedRevision !== execution.plan.expectedRevision ||
+        stableDigest(input.source) !== stableDigest(execution.plan.source))
+    )
+      throw new ForbiddenException("OCR 执行计划不能更换来源页或版本。");
     const selection = input.source;
     const source = await this.connection(s);
     const file = await this.sourceFile(source, selection);
+    if (execution && ocrBinding(source, file) !== execution.plan.binding)
+      throw new ConflictException("OCR 的文件来源已变化。");
     const hash = stableDigest(input);
-    const plan = async (c: Queryable, firstRead: boolean) => {
+    const plan = async (c: PoolClient, firstRead: boolean) => {
+      if (execution) await this.verifyExecution(c, s, execution);
       await this.lock(c, s, source, selection);
       let document = await this.active(c, s, source, selection);
       if (document && !matches(file, document)) {
@@ -457,7 +524,13 @@ export class OcrService {
         await this.invalidate(c, document);
         document = undefined;
       }
-      const replay = await this.replay(c, document, input.idempotencyKey, hash);
+      const replay = await this.replay(
+        c,
+        document,
+        input.idempotencyKey,
+        hash,
+        execution?.runId,
+      );
       return { document, replay };
     };
     const previous = await this.db.tx((c) => plan(c, true));
@@ -479,12 +552,16 @@ export class OcrService {
       )
         throw new ConflictException("识别期间来源已变化，结果未保存。");
     };
+    execution?.signal?.throwIfAborted();
     const bytes = await source.provider.download(file);
     await verifyCurrent();
+    if (execution)
+      await this.db.tx((c) => this.verifyExecution(c, s, execution));
     const observed = await new OcrProvider().recognize({
       bytes,
       mime: file.mime,
       page: selection.page,
+      signal: execution?.signal,
     });
     await verifyCurrent();
     return this.db.tx(async (c) => {
@@ -516,8 +593,10 @@ export class OcrService {
             ],
           )
         ).rows[0]!;
+      execution?.signal?.throwIfAborted();
       return this.append(c, document, {
         ...observed,
+        runId: execution?.runId,
         key: input.idempotencyKey,
         hash,
         state: "draft",

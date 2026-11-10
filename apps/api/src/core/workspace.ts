@@ -1,3 +1,5 @@
+import { OcrRunInput } from "@hyper/contracts/ocr";
+import { OcrRunService } from "./ocr-runs.js";
 import { verifyKnowledgeSources } from "./knowledge-sources.js";
 import { ApprovalRunInput } from "@hyper/contracts/approvals";
 import { ApprovalRunService } from "./approval-runs.js";
@@ -525,6 +527,70 @@ export class WorkspaceService {
     if (result.rowCount) return { ...result.rows[0], created: true };
     return replay((await lookup()).rows[0]);
   }
+  async startOcrRun(s: Subject, raw: OcrRunInput) {
+    if (s.demo || !s.identityCredentialId)
+      throw new ForbiddenException("请使用企业账号发起OCR 助手。");
+    const input = OcrRunInput.parse(raw);
+    const ocr = new OcrRunService(this.db);
+    const hash = stableDigest({ ...input, idempotencyKey: undefined });
+    const lookup = async () =>
+      (
+        await this.db.pool.query(
+          "SELECT id,state,workflow,input_hash,ocr_plan FROM cw_runs WHERE workspace_id=$1 AND actor_id=$2 AND idempotency_key=$3",
+          [s.workspaceId, s.id, input.idempotencyKey],
+        )
+      ).rows[0];
+    const replay = async (row: any) => {
+      if (!row || row.workflow !== "recognize_ocr" || row.input_hash !== hash)
+        throw new ConflictException("同一执行键不能更换OCR 计划。");
+      await ocr.scope(s, row.ocr_plan);
+      return { id: row.id, state: row.state, created: false };
+    };
+    const old = await lookup();
+    if (old) return replay(old);
+    const plan = await ocr.prepare(s, input.plan);
+    if (
+      !this.engines
+        .get(input.engine)
+        ?.describeCapabilities()
+        .operations.includes("recognize_ocr")
+    )
+      throw new BadRequestException("执行器尚未声明OCR 能力。");
+    const model = await this.runModel(s, input.engine, input.modelProfileId);
+    const inserted = await this.db.tx(async (c) => {
+      await ExecutionPolicyService.lock(c, s.workspaceId);
+      const member = await c.query(
+        "SELECT user_id FROM cw_members WHERE workspace_id=$1 AND user_id=$2 FOR SHARE",
+        [s.workspaceId, s.id],
+      );
+      const identity = await c.query(
+        "SELECT c.id FROM cw_identity_credentials c JOIN cw_external_identities i ON i.id=c.identity_id WHERE c.id=$1 AND i.workspace_id=$2 AND i.user_id=$3 AND c.disabled_at IS NULL FOR SHARE OF c,i",
+        [s.identityCredentialId, s.workspaceId, s.id],
+      );
+      if (!member.rowCount || !identity.rowCount)
+        throw new ForbiddenException("当前员工或登录已失效。");
+      return (
+        await c.query(
+          `INSERT INTO cw_runs(id,workspace_id,actor_id,conversation_id,engine,workflow,instruction,
+          idempotency_key,input_hash,demo,model_profile_id,identity_credential_id,ocr_plan)
+          VALUES($1,$2,$3,NULL,$4,'recognize_ocr','识别员工确认的来源页，保存待校对草稿。',$5,$6,false,$7,$8,$9)
+          ON CONFLICT(workspace_id,actor_id,idempotency_key) DO NOTHING RETURNING id,state`,
+          [
+            randomUUID(),
+            s.workspaceId,
+            s.id,
+            input.engine,
+            input.idempotencyKey,
+            hash,
+            model?.id,
+            s.identityCredentialId,
+            plan,
+          ],
+        )
+      ).rows[0];
+    });
+    return inserted ? { ...inserted, created: true } : replay(await lookup());
+  }
   async startApprovalRun(s: Subject, raw: ApprovalRunInput) {
     if (s.demo || !s.identityCredentialId)
       throw new ForbiddenException("请使用企业账号发起审批助手。");
@@ -816,6 +882,8 @@ export class WorkspaceService {
     });
   }
   async startRun(s: Subject, input: RunInput) {
+    if (input.workflow === "recognize_ocr")
+      throw new BadRequestException("OCR 必须从员工选择的文件页发起。");
     if (input.workflow === "manage_approval")
       throw new BadRequestException("请从审批专用入口发起。");
     if (input.workflow === "manage_calendar")
@@ -1492,7 +1560,7 @@ export class WorkspaceService {
     await assertMember(this.db, s);
     const target = (
       await this.db.pool.query(
-        "SELECT conversation_id,source_file_asset_id,expected_file_version,knowledge_plan,room_management_plan,room_management_provider_key,calendar_plan,calendar_binding,approval_plan,(instruction='') AS source_redacted FROM cw_runs WHERE id=$1 AND workspace_id=$2 AND actor_id=$3",
+        "SELECT conversation_id,source_file_asset_id,expected_file_version,knowledge_plan,room_management_plan,room_management_provider_key,calendar_plan,calendar_binding,approval_plan,ocr_plan,(instruction='') AS source_redacted FROM cw_runs WHERE id=$1 AND workspace_id=$2 AND actor_id=$3",
         [id, s.workspaceId, s.id],
       )
     ).rows[0];
@@ -1505,6 +1573,8 @@ export class WorkspaceService {
         target.source_file_asset_id,
         target.expected_file_version,
       );
+    else if (target.ocr_plan)
+      await new OcrRunService(this.db).scope(s, target.ocr_plan);
     else if (target.approval_plan)
       await new ApprovalRunService(this.db).scope(s, target.approval_plan, id);
     else if (target.calendar_plan)
@@ -1559,6 +1629,10 @@ export class WorkspaceService {
         id,
         knowledge_plan: target.knowledge_plan,
       });
+    }
+    if (target.ocr_plan && !r.rows[0].result?.receipts?.length) {
+      const receipt = await new OcrRunService(this.db).recordedReceipt(s, id);
+      if (receipt) r.rows[0].result = { ...r.rows[0].result, receipts: [receipt] };
     }
     if (target.approval_plan && !r.rows[0].result?.receipts?.length) {
       const receipt = await new ApprovalRunService(this.db).recordedReceipt(s, id);

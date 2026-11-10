@@ -1,17 +1,28 @@
 import { useEffect, useRef, useState } from "react";
-import type { SourceFile } from "@hyper/contracts";
+import type { RunState, SourceFile, WorkspaceView } from "@hyper/contracts";
+import type { ModelSummary } from "./ModelSettings";
 import type { OcrResult } from "@hyper/contracts/ocr";
 import { api, ApiError, mutation } from "../api";
 import { Dialog } from "./Dialog";
+import { runStateLabels } from "./RunDetails";
 
 const kinds = { title: "标题", text: "正文", table: "表格", other: "其他" };
+
+type OcrRun = { id: string; state: RunState };
+type OcrHistory = OcrRun & { engine: "dsh" | "hermes"; createdAt: string };
 
 export function OcrPanel({
   file,
   onClose,
+  engines,
+  run,
+  onRun,
 }: {
   file: SourceFile;
   onClose: () => void;
+  engines: WorkspaceView["engines"];
+  run: OcrRun | null;
+  onRun: (run: OcrRun) => void;
 }) {
   const [page, setPage] = useState(1);
   const [pageNumber, setPageNumber] = useState("1");
@@ -23,6 +34,24 @@ export function OcrPanel({
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [reload, setReload] = useState(0);
+  const [executor, setExecutor] = useState<"manual" | "dsh" | "hermes">(
+    "manual",
+  );
+  const [models, setModels] = useState<ModelSummary[]>([]);
+  const [modelId, setModelId] = useState("");
+  const [runId, setRunId] = useState("");
+  const [history, setHistory] = useState<OcrHistory[]>([]);
+  const runState = run?.id === runId ? run.state : undefined;
+  const running = runState === "queued" || runState === "running";
+  const engine = executor === "manual" ? undefined : engines[executor];
+  const compatible = models.filter(
+    (model) =>
+      model.purpose === "chat" &&
+      (!engine?.modelProviders ||
+        engine.modelProviders.includes(model.provider)),
+  );
+  const aiReady =
+    !!engine?.configured && compatible.some((model) => model.id === modelId);
   const pending = useRef<{ key: string; fingerprint: string }>(null);
   const resultId = result?.id;
   const resultRevision = result?.revision;
@@ -39,19 +68,26 @@ export function OcrPanel({
     setLoading(true);
     setError("");
     show(null);
+    setHistory([]);
     const selection = {
       path: file.path,
       expectedId: file.id,
       expectedEtag: file.etag,
       page,
     };
-    void api<{ result: OcrResult | null }>("/ocr/lookup", {
-      method: "POST",
-      body: JSON.stringify(selection),
-      signal: controller.signal,
-    })
-      .then(({ result: next }) => {
-        if (!controller.signal.aborted) show(next);
+    void api<{ result: OcrResult | null; history: OcrHistory[] }>(
+      "/ocr/lookup",
+      {
+        method: "POST",
+        body: JSON.stringify(selection),
+        signal: controller.signal,
+      },
+    )
+      .then(({ result: next, history: runs }) => {
+        if (!controller.signal.aborted) {
+          show(next);
+          setHistory(runs);
+        }
       })
       .catch((e) => {
         if (!controller.signal.aborted) setError(e.message);
@@ -75,6 +111,7 @@ export function OcrPanel({
         .catch((e) => {
           if (!controller.signal.aborted) {
             show(null);
+            setHistory([]);
             setError(e.message);
           }
         })
@@ -88,19 +125,41 @@ export function OcrPanel({
     };
   }, [resultId, resultRevision]);
 
-  async function save(path: string, body: object) {
+  useEffect(() => {
+    if (executor === "manual") return;
+    const controller = new AbortController();
+    void api<ModelSummary[]>("/models", { signal: controller.signal })
+      .then((rows) => {
+        if (!controller.signal.aborted) setModels(rows);
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted) setError(e.message);
+      });
+    return () => controller.abort();
+  }, [executor]);
+
+  useEffect(() => {
+    if (runState && runState !== "queued" && runState !== "running")
+      setReload((value) => value + 1);
+  }, [runState, runId]);
+
+  async function save<T>(
+    path: string,
+    body: object,
+    success: (value: T) => void,
+  ) {
     const fingerprint = JSON.stringify([path, body]);
     if (pending.current?.fingerprint !== fingerprint)
       pending.current = { fingerprint, key: crypto.randomUUID() };
     setBusy(true);
     setError("");
     try {
-      const next = await mutation<OcrResult>(path, {
+      const next = await mutation<T>(path, {
         ...body,
         idempotencyKey: pending.current.key,
       });
       pending.current = null;
-      show(next);
+      success(next);
     } catch (e) {
       if (
         e instanceof ApiError &&
@@ -111,6 +170,46 @@ export function OcrPanel({
     } finally {
       setBusy(false);
     }
+  }
+
+  async function stopRun() {
+    setBusy(true);
+    setError("");
+    try {
+      onRun(await mutation<OcrRun>("/runs/" + runId + "/cancel", {}));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "请先核对执行详情。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function recognize() {
+    const selected = {
+      source: {
+        path: file.path,
+        expectedId: file.id,
+        expectedEtag: file.etag,
+        page,
+      },
+      expectedRevision: result?.revision ?? 0,
+    };
+    if (executor === "manual") {
+      void save<OcrResult>("/ocr/recognitions", selected, show);
+      return;
+    }
+    void save<OcrRun>(
+      "/ocr/runs",
+      {
+        plan: { ...selected, confirmed: true },
+        engine: executor,
+        modelProfileId: modelId,
+      },
+      (queued) => {
+        setRunId(queued.id);
+        onRun(queued);
+      },
+    );
   }
 
   const shown = previous ?? result;
@@ -135,7 +234,7 @@ export function OcrPanel({
       onClose={onClose}
       dismissible={!busy}
     >
-      <p className="muted">
+      <p className="muted ocr-source">
         {file.name} · 第 {page} 页 · 私人资料
       </p>
       <p className="muted">
@@ -157,32 +256,66 @@ export function OcrPanel({
                 max={50}
                 required
                 value={pageNumber}
-                disabled={busy}
+                disabled={busy || running}
                 onChange={(event) => setPageNumber(event.target.value)}
               />
             </label>
-            <button type="submit" disabled={busy || loading}>
+            <button type="submit" disabled={busy || loading || running}>
               查看这一页
             </button>
           </form>
         ) : null}
+        <label>
+          OCR 操作方式
+          <select
+            aria-label="OCR 操作方式"
+            disabled={busy || running}
+            value={executor}
+            onChange={(event) => {
+              setExecutor(event.target.value as typeof executor);
+              setModelId("");
+            }}
+          >
+            <option value="manual">人工操作</option>
+            <option value="dsh" disabled={!engines.dsh?.configured}>
+              DSH
+            </option>
+            <option value="hermes" disabled={!engines.hermes?.configured}>
+              Hermes
+            </option>
+          </select>
+        </label>
+        {executor !== "manual" ? (
+          <label>
+            OCR 模型连接
+            <select
+              aria-label="OCR 模型连接"
+              value={modelId}
+              disabled={busy || running}
+              onChange={(event) => setModelId(event.target.value)}
+            >
+              <option value="">选择 chat 连接</option>
+              {compatible.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name} · {model.model}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <button
           type="button"
           className="primary"
-          disabled={busy || loading}
-          onClick={() =>
-            void save("/ocr/recognitions", {
-              source: {
-                path: file.path,
-                expectedId: file.id,
-                expectedEtag: file.etag,
-                page,
-              },
-              expectedRevision: result?.revision ?? 0,
-            })
+          disabled={
+            busy || loading || running || (executor !== "manual" && !aiReady)
           }
+          onClick={recognize}
         >
-          {result ? "重新识别这一页" : "识别这一页"}
+          {executor === "manual"
+            ? result
+              ? "重新识别这一页"
+              : "识别这一页"
+            : "确认并交给助手识别"}
         </button>
         <button
           type="button"
@@ -192,6 +325,47 @@ export function OcrPanel({
           刷新已保存结果
         </button>
       </div>
+      {history.length ? (
+        <details className="approval-audit">
+          <summary>本页 OCR 执行记录（{history.length}）</summary>
+          <ul>
+            {history.map((item) => (
+              <li key={item.id}>
+                <button
+                  type="button"
+                  disabled={busy || running}
+                  onClick={() => {
+                    void api<OcrRun>("/runs/" + item.id)
+                      .then((saved) => {
+                        onRun(saved);
+                        onClose();
+                      })
+                      .catch((e) => setError(e.message));
+                  }}
+                >
+                  {item.engine === "dsh" ? "DSH" : "Hermes"} ·{" "}
+                  {runStateLabels[item.state]} ·{" "}
+                  {new Date(item.createdAt).toLocaleString("zh-CN")}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+      {running ? (
+        <button type="button" disabled={busy} onClick={() => void stopRun()}>
+          停止这次执行
+        </button>
+      ) : null}
+      {runState ? (
+        <p role="status">
+          {running
+            ? "OCR 助手正在处理所选页。"
+            : runState === "succeeded"
+              ? "助手已取得识别草稿回执。"
+              : "助手执行已结束，请核对已保存版本和执行详情。"}
+        </p>
+      ) : null}
       {loading || busy ? (
         <p role="status">
           {busy ? "正在核对操作回执…" : "正在核对文件与已保存版本…"}
@@ -199,7 +373,7 @@ export function OcrPanel({
       ) : null}
       {shown ? (
         <>
-          <p role="status">
+          <p role="status" className="ocr-source">
             版本 {shown.revision} ·{" "}
             {shown.state === "confirmed" ? "已确认" : "待校对"} · {shown.engine}
           </p>
@@ -333,10 +507,14 @@ export function OcrPanel({
               type="button"
               disabled={busy || loading}
               onClick={() =>
-                void save("/ocr/documents/" + result.id + "/confirm", {
-                  expectedRevision: result.revision,
-                  texts,
-                })
+                void save<OcrResult>(
+                  "/ocr/documents/" + result.id + "/confirm",
+                  {
+                    expectedRevision: result.revision,
+                    texts,
+                  },
+                  show,
+                )
               }
             >
               确认校对并保存版本

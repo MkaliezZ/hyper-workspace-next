@@ -166,6 +166,8 @@ export function KnowledgePanel({
           busy={busy}
           act={act}
           engines={engines}
+          run={run}
+          onRun={onRun}
         />
       ) : (
         <>

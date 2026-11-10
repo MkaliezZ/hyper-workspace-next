@@ -2897,7 +2897,16 @@ p {
 .ocr-actions label,
 .ocr-block label {
   display: grid;
+  min-width: 0;
+  max-width: 100%;
   gap: 5px;
+}
+.ocr-actions select {
+  min-width: 0;
+  max-width: 100%;
+}
+.ocr-source {
+  overflow-wrap: anywhere;
 }
 .ocr-actions input {
   width: 84px;

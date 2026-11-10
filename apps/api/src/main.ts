@@ -1,5 +1,6 @@
+import { OcrRunService } from "./core/ocr-runs.js";
 import { verifyKnowledgeSources } from "./core/knowledge-sources.js";
-import { OcrCorrection, OcrRecognition, OcrSource } from "@hyper/contracts/ocr";
+import { OcrCorrection, OcrRecognition, OcrRunInput, OcrSource } from "@hyper/contracts/ocr";
 import { OcrService } from "./core/ocr.js";
 import { ApprovalRunInput } from "@hyper/contracts/approvals";
 import { NotificationPolicyService } from "./core/notification-policy.js";
@@ -754,7 +755,12 @@ class ApiController {
     return r;
   }
   @Post("ocr/lookup") async lookupOcr(@Req() req: Request, @Body() body: unknown) {
-    return { result: await new OcrService(db).lookup(await subject(req), OcrSource.parse(body)) };
+    return new OcrRunService(db).review(await subject(req), OcrSource.parse(body));
+  }
+  @Post("ocr/runs") async startOcrRun(@Req() req: Request, @Body() body: unknown) {
+    const run = await service.startOcrRun(await subject(req), OcrRunInput.parse(body));
+    await queue.enqueue(run.id);
+    return run;
   }
   @Post("ocr/recognitions") async recognizeOcr(@Req() req: Request, @Body() body: unknown) {
     return new OcrService(db).recognize(await subject(req), OcrRecognition.parse(body));

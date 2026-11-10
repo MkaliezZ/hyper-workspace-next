@@ -1,3 +1,4 @@
+import { OcrRunService } from "./ocr-runs.js";
 import { ApprovalRunService } from "./approval-runs.js";
 import { isOrganizationBudgetPlan } from "@hyper/contracts";
 import { OrganizationBudgetService } from "./organization-budgets.js";
@@ -74,7 +75,7 @@ async function purgeFileRuntime(db: Database, id: string) {
     force: true,
   });
   await db.pool.query(
-    "UPDATE cw_runs SET runtime_cleaned_at=clock_timestamp() WHERE id=$1 AND (source_file_asset_id IS NOT NULL OR workflow IN ('query_knowledge','plan_work','manage_communication','manage_notifications','manage_calendar','manage_approval'))",
+    "UPDATE cw_runs SET runtime_cleaned_at=clock_timestamp() WHERE id=$1 AND (source_file_asset_id IS NOT NULL OR workflow IN ('query_knowledge','plan_work','manage_communication','manage_notifications','manage_calendar','manage_approval','recognize_ocr'))",
     [id],
   );
 }
@@ -142,7 +143,7 @@ export class RunProcessor {
       await this.enqueue(r.id);
     for (const r of (
       await db.pool.query(
-        "SELECT id FROM cw_runs WHERE (source_file_asset_id IS NOT NULL OR workflow IN ('query_knowledge','plan_work','manage_communication','manage_notifications','manage_calendar','manage_approval')) AND runtime_cleaned_at IS NULL AND state NOT IN ('queued','running') ORDER BY updated_at LIMIT 100",
+        "SELECT id FROM cw_runs WHERE (source_file_asset_id IS NOT NULL OR workflow IN ('query_knowledge','plan_work','manage_communication','manage_notifications','manage_calendar','manage_approval','recognize_ocr')) AND runtime_cleaned_at IS NULL AND state NOT IN ('queued','running') ORDER BY updated_at LIMIT 100",
       )
     ).rows)
       await purgeFileRuntime(db, r.id);
@@ -367,7 +368,9 @@ export class RunProcessor {
                             ? "正在核对已选资料并生成私人回答。"
                             : isFileWorkflow(run.workflow)
                               ? "正在阅读所选个人文件。"
-                              : text,
+                              : run.workflow === "recognize_ocr"
+                                ? "正在核对员工选定的文件页和 OCR 回执。"
+                                : text,
           }),
       });
       abort.signal.throwIfAborted();
@@ -471,7 +474,10 @@ export class RunProcessor {
                                                           run.workflow,
                                                         )
                                                       ? ["file.reading.save"]
-                                                      : [];
+                                                      : run.workflow ===
+                                                          "recognize_ocr"
+                                                        ? ["ocr.recognize"]
+                                                        : [];
       if (
         required.length &&
         !result.actions.some((action) => required.includes(action.tool))
@@ -495,6 +501,7 @@ export class RunProcessor {
           "manage_notifications",
           "manage_calendar",
           "manage_approval",
+          "recognize_ocr",
         ].includes(run.workflow) &&
         result.actions.length !== 1
       )
@@ -592,6 +599,7 @@ export class RunProcessor {
           run.workflow !== "manage_notifications" &&
           run.workflow !== "manage_calendar" &&
           run.workflow !== "manage_approval" &&
+          run.workflow !== "recognize_ocr" &&
           run.workflow !== "configure_policy" &&
           run.workflow !== "usage_report" &&
           run.workflow !== "manage_spending" &&
@@ -674,7 +682,10 @@ export class RunProcessor {
                                                               run.workflow,
                                                             )
                                                           ? "个人文件解读已保存。"
-                                                          : result.text,
+                                                          : run.workflow ===
+                                                              "recognize_ocr"
+                                                            ? "识别结果已保存为待校对草稿。"
+                                                            : result.text,
               receipts,
               evidence: result.evidence,
             },
@@ -719,7 +730,12 @@ export class RunProcessor {
                       "SELECT id FROM cw_room_commands WHERE source_run_id=$1 AND state<>'failed' LIMIT 1",
                       [runId],
                     )
-                  : { rowCount: 0 };
+                  : run.workflow === "recognize_ocr"
+                    ? await c.query(
+                        "SELECT document_id FROM cw_ocr_revisions WHERE source_run_id=$1 AND content IS NOT NULL LIMIT 1",
+                        [runId],
+                      )
+                    : { rowCount: 0 };
         const state =
           actions.rowCount || external.rowCount
             ? "recovery_required"
@@ -739,6 +755,7 @@ export class RunProcessor {
           "manage_notifications",
           "manage_calendar",
           "manage_approval",
+          "recognize_ocr",
         ].includes(run.workflow)
           ? failure instanceof ExecutionLimitError ||
             failure instanceof SpendLimitError ||
@@ -756,7 +773,9 @@ export class RunProcessor {
                       ? "组织操作未完成，请核对当前权限、组织版本和实际回执。"
                       : run.workflow === "plan_work"
                         ? "工作计划未完成，请核对来源、模型和当前权限。"
-                        : "资料问答未完成，请核对来源、模型和实际引用。"
+                        : run.workflow === "recognize_ocr"
+                          ? "OCR 执行未完成，请先核对已保存版本。"
+                          : "资料问答未完成，请核对来源、模型和实际引用。"
           : isFileWorkflow(run.workflow)
             ? failure instanceof ReadingVersionConflict ||
               failure instanceof ReadingInputLimit ||
@@ -792,6 +811,7 @@ export class RunProcessor {
           "manage_notifications",
           "manage_calendar",
           "manage_approval",
+          "recognize_ocr",
         ].includes(run.workflow)
       )
         await purgeFileRuntime(db, runId).catch(() =>
@@ -820,7 +840,8 @@ export class RunProcessor {
       action.tool === "attachment.share" ||
       action.tool === "communication.manage" ||
       action.tool === "calendar.manage" ||
-      action.tool === "approval.manage"
+      action.tool === "approval.manage" ||
+      action.tool === "ocr.recognize"
     ) {
       z.object({}).strict().parse(action.args);
       const result =
@@ -851,12 +872,19 @@ export class RunProcessor {
                     signal,
                   },
                 )
-              : await new AttachmentSendService(this.service.db).send(
-                  s,
-                  run.attachment_plan,
-                  run.id + ":" + index,
-                  { row: run, lease, contextBytes, actionCount },
-                );
+              : action.tool === "ocr.recognize"
+                ? await new OcrRunService(this.service.db).execute(s, run, {
+                    lease,
+                    contextBytes: contextBytes ?? 0,
+                    actionCount: actionCount ?? 1,
+                    signal,
+                  })
+                : await new AttachmentSendService(this.service.db).send(
+                    s,
+                    run.attachment_plan,
+                    run.id + ":" + index,
+                    { row: run, lease, contextBytes, actionCount },
+                  );
       if (result.state === "failed")
         throw new Error("来源在实际操作前拒绝了请求，请查看对应回执。");
       const actual = { ...result, tool: action.tool };

@@ -1,3 +1,4 @@
+import { OcrRunService } from "./ocr-runs.js";
 import { ApprovalRunService } from "./approval-runs.js";
 import { NotificationPolicyService } from "./notification-policy.js";
 import { CalendarRunService } from "./calendar-runs.js";
@@ -34,6 +35,8 @@ export async function assertRunScope(
   run: any,
 ) {
   await assertScheduledRun(service.db.pool, run);
+  if (run.workflow === "recognize_ocr")
+    return new OcrRunService(service.db).scope(s, run.ocr_plan);
   if (run.workflow === "manage_approval")
     return new ApprovalRunService(service.db).scope(
       s,
@@ -103,6 +106,8 @@ async function baseRunContext(
   subject: Subject,
   run: any,
 ) {
+  if (run.workflow === "recognize_ocr")
+    return new OcrRunService(service.db).context(subject, run.ocr_plan);
   if (run.workflow === "manage_approval")
     return new ApprovalRunService(service.db).context(subject, run);
   if (run.workflow === "manage_calendar")

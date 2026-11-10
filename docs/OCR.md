@@ -17,14 +17,18 @@
 
 对照候选 PaddleOCR PP-StructureV3 支持 CPU 推理，输出文本、位置和表格结构。其当前 PaddlePaddle 3.3.1 macOS 发布包为 arm64，本机 Intel 不能直接用该发布包验证。先为 Linux CPU 验证固定模型与依赖，再用同一套合成样本对比中文、英文、扫描和表格。 [PaddleOCR 官方说明](https://www.paddleocr.ai/latest/en/version3.x/algorithm/PP-StructureV3/PP-StructureV3.html) · [PaddlePaddle 3.3.1 发布文件](https://pypi.org/project/paddlepaddle/3.3.1/#files)
 
+本机已核对 RapidOCR 3.10.0 包中的 PP-OCRv6 Small 检测与识别模型和方向分类权重，以及 RapidTable 3.0.2 所指向的 SLANet Plus 权重。四个 ONNX 文件合计约 39.5 MB；该值是模型文件体积，实际峰值内存和每页耗时仍待测量。SLANet Plus 下载内容与发布包声明的 SHA-256 一致。 [PP-OCRv6 模型说明](https://www.paddleocr.ai/latest/en/version3.x/module_usage/text_recognition.html) · [SLANet Plus 说明](https://www.paddleocr.ai/latest/en/version3.x/pipeline_usage/table_recognition_v2.html)
+
 在 Intel Mac 上用 Tesseract.js 7.0.0 和本地中英词库完成 CPU 对照。清晰 PNG 的中英标题、编号、说明均可读，模型总体置信度 93，表格未提取。降质 JPEG 的正文仍可读，表格区域有误识别，总体置信度 78。此路线可作为纯文字对照，结构化表格需要版面模型。 [Tesseract.js v7](https://github.com/naptha/tesseract.js/tree/v7.0.0) · [固定中英词库](https://github.com/tesseract-ocr/tessdata_fast/tree/65727574dfcd264acbb0c3e07860e4e9e9b22185)
 
 ## 工作台与内网识别协议
 
 迁移 051 保存 OCR 草稿、版本和最后一次确认。知识库 → 企业文件中选择 PNG、JPEG 或 PDF（8 MiB 内），PDF 指定页码后选择“识别这一页”。版面图按返回坐标排列文字与表格块，置信度缺失或偏低时提示校对。表格预览以制表符分隔列，可在校对框修改后确认保存。较早的确认版本可在新草稿旁查看。
 
-后端以当前 Nextcloud 登录、文件 ID、ETag、路径和页码核对来源。只在二进制读取后仍可核验权限和版本时调用配置的内网识别端点，写入前再次校验。来源丢失或版本替换时，已识别内容清理，审计元数据保留。识别失败保留当前草稿和上次确认；同一操作键重试可取回已经保存的回执。迁移 052 让确认版进入个人知识库文字检索，语义索引须由员工另行选择建立。新草稿不覆盖上次确认，确认新版后旧索引失效。检索、索引和资料问答在使用前复核 Nextcloud 权限与版本，撤权时删除派生文字、向量和受影响的私人回答。双执行器直接触发识别的入口继续开发。
+后端以当前 Nextcloud 登录、文件 ID、ETag、路径和页码核对来源。只在二进制读取后仍可核验权限和版本时调用配置的内网识别端点，写入前再次校验。来源丢失或版本替换时，已识别内容清理，审计元数据保留。识别失败保留当前草稿和上次确认；同一操作键重试可取回已经保存的回执。迁移 052 让确认版进入个人知识库文字检索，语义索引须由员工另行选择建立。新草稿不覆盖上次确认，确认新版后旧索引失效。检索、索引和资料问答在使用前复核 Nextcloud 权限与版本，撤权时删除派生文字、向量和受影响的私人回答。迁移 053 将 OCR 接入独立 Worker。员工可选择 DSH 或 Hermes 并确认本页识别，宿主固定来源、页码与版本，聊天模型只收到操作说明。文件只由内网 OCR 服务处理，校对和确认仍由员工完成。单次操作回执可从本页历史恢复，取消会停止后续保存。
 
 部署者用 `HYPER_OCR_URL` 设置固定内网端点，用 `HYPER_OCR_ENGINE` 记录实际安装引擎版本。地址只接受回环、RFC 1918 IPv4 或 Compose 内部服务名，服务不能使用重定向。应用发送 POST，`Content-Type` 为文件类型，`X-OCR-Page` 为从 1 开始的选定页，请求体为原文件字节；内网服务只解析所选页。端点返回 JSON 对象 `{ width, height, blocks }`，每块包含 `kind`、`bounds`、`confidence`、`text`。坐标是页面像素 `[left, top, right, bottom]`，置信度为 0 到 1 或 `null`；表格用换行和制表符分隔行列。未配置识别端点时，已授权员工仍可打开已有结果。公司文件不发送到公共演示端点。
 
-首批使用合成协议响应通过 PostgreSQL 和 Chromium 验证选页、同键回读、并发确认、表格编辑、文件版本变化、撤权清理及手机布局。识别引擎与 Linux 内网的质量和资源测试分别记录。
+首批使用合成协议响应通过 PostgreSQL 和 Chromium 验证选页、同键回读、并发确认、表格编辑、文件版本变化、撤权清理及手机布局。原生 DSH 与 Hermes 各自通过合成 OCR 协议验证。助手只能处理选定页，改页参数被拒绝，取消期间保留原版本，重启后的回执来自数据库。识别引擎与 Linux 内网的质量和资源测试分别记录。
+
+2026-11-10 用 DeepSeek Flash 与本机 Tesseract.js 7.0.0 做独立链路验证。DSH 与 Hermes 各触发一次合成 PNG 识别，聊天模型均返回 HTTP 200，输入和输出用量分别为 3,085 / 49 和 3,781 / 287 token。CPU OCR 各返回 3 个正文块，标题与样张相符，两个草稿均保持待校对。运行不写入项目对话，完成后清理临时目录。Tesseract 在这里用于证明真实 CPU 识别链路，结构化表格主选引擎另行测试。
