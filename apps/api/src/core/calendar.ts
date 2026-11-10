@@ -288,18 +288,24 @@ export class CalendarService {
     await this.recheck(s, source, input.calendarId);
     return { source, event, bindingKey: this.bindingKey(source) };
   }
-  async assertLinkTarget(s: Subject, target: CalendarLinkTarget) {
+  private async assertLinkTarget(
+    s: Subject,
+    target: CalendarLinkTarget,
+    current = false,
+  ) {
     await new ProjectAccess(this.db).assert(s, target.projectId);
     if (target.kind === "task") {
       const task = await this.db.pool.query(
-        "SELECT id FROM cw_tasks WHERE id=$1 AND project_id=$2 AND workspace_id=$3",
+        "SELECT version FROM cw_tasks WHERE id=$1 AND project_id=$2 AND workspace_id=$3",
         [target.taskId, target.projectId, s.workspaceId],
       );
       if (!task.rowCount) throw new NotFoundException("待办不存在或无权访问。");
+      if (current && task.rows[0].version !== target.taskVersion)
+        throw new ConflictException("待办版本已更新，请刷新项目。");
     }
   }
   async linkScope(s: Subject, change: CalendarLinkChange, current: boolean) {
-    await this.assertLinkTarget(s, change.target);
+    await this.assertLinkTarget(s, change.target, current);
     const { event, bindingKey } = await this.linkEvent(s, change.event);
     if (current && event.etag !== change.event.etag)
       throw new ConflictException("来源日程已更新，请刷新日历。");

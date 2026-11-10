@@ -129,6 +129,7 @@ export function CalendarLinkDialog({
         <label>
           项目
           <select
+            aria-label="关联项目"
             value={projectId}
             disabled={busy}
             onChange={(e) => {
@@ -149,6 +150,7 @@ export function CalendarLinkDialog({
         <label>
           待办
           <select
+            aria-label="关联待办"
             value={taskId}
             onChange={(e) => setTaskId(e.target.value)}
             disabled={busy || loadingTasks}

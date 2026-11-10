@@ -144,6 +144,60 @@ test("Expired leases and current execution policy block calendar writes; source 
     await f.close();
   }
 });
+test("Calendar link admission checks task version and the private run cannot follow a replacement event", async () => {
+  const f = await setup();
+  try {
+    const saved = await f.service.calendars.apply(f.actor, f.command.id);
+    const projectId = randomUUID(),
+      taskId = randomUUID();
+    await db.pool.query(
+      "INSERT INTO cw_projects(id,workspace_id,name) VALUES($1,$2,'Synthetic project')",
+      [projectId, f.actor.workspaceId],
+    );
+    await db.pool.query(
+      "INSERT INTO cw_tasks(id,workspace_id,project_id,title,created_by,version) VALUES($1,$2,$3,'Synthetic task',$4,2)",
+      [taskId, f.actor.workspaceId, projectId, f.actor.id],
+    );
+    const change = {
+      event: {
+        calendarId: saved.calendarId,
+        objectId: saved.objectId,
+        etag: saved.sourceEtag!,
+      },
+      target: { kind: "task" as const, projectId, taskId, taskVersion: 1 },
+      linked: true,
+      confirmed: true as const,
+      idempotencyKey: randomUUID(),
+    };
+    const input = {
+      ...f.input,
+      plan: { operation: "link" as const, change },
+    };
+    await assert.rejects(f.work.startCalendarRun(f.actor, input), /待办版本/);
+    const current = {
+      ...input,
+      plan: {
+        ...input.plan,
+        change: { ...change, target: { ...change.target, taskVersion: 2 } },
+      },
+    };
+    const run = await f.work.startCalendarRun(f.actor, current);
+    assert.equal((await f.service.history(f.actor))[0]?.id, run.id);
+    const key = "alice/personal/" + saved.objectId;
+    const object = f.source.objects.get(key)!;
+    f.source.objects.set(key, {
+      ical: object.ical.replace(/^UID:.*$/mu, "UID:replacement-synthetic-uid"),
+      version: object.version + 1,
+    });
+    await assert.rejects(
+      f.work.getRun(f.actor, run.id),
+      /来源身份或连接已变化/,
+    );
+    assert.deepEqual(await f.service.history(f.actor), []);
+  } finally {
+    await f.close();
+  }
+});
 test("Stopping the linked command also cancels its run; effects already dispatched remain observed facts", async () => {
   const f = await setup();
   try {

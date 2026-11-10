@@ -1160,7 +1160,7 @@ test("Calendar links a task on mobile, retries a lost receipt and removes the pr
     name: "关联项目与待办",
     exact: true,
   });
-  await dialog.getByRole("combobox").nth(1).selectOption(taskId);
+  await dialog.getByRole("combobox", { name: "关联待办" }).selectOption(taskId);
   const save = dialog.getByRole("button", {
     name: "确认保存关联",
     exact: true,
@@ -1173,6 +1173,9 @@ test("Calendar links a task on mobile, retries a lost receipt and removes the pr
     dialog.getByText("待办 · 核对里程碑", { exact: true }),
   ).toBeVisible();
   expect(requests[0]).toEqual(requests[1]);
+  expect(
+    await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth),
+  ).toBe(true);
   await page.screenshot({ path: "/tmp/hyper-next-calendar-link-mobile.png" });
   await dialog.getByRole("button", { name: "确认移除", exact: true }).click();
   await expect(dialog.getByRole("status")).toHaveText("关联已移除");
