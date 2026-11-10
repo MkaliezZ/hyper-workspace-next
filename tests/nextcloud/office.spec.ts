@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { login, password, source } from "./helpers";
+import { observeOffice } from "./office-helpers";
 
 const editorOrigin = "http://127.0.0.1:9980";
 const formats = {
@@ -20,22 +21,11 @@ test("The real Nextcloud Office editor opens DOCX, XLSX and PPTX from the author
     "Basic " + Buffer.from(employee + ":" + password).toString("base64");
   const { context, page } = await login(browser, employee);
   try {
-    await context.addInitScript((origin) => {
-      window.addEventListener("message", (event) => {
-        if (event.origin !== origin || typeof event.data !== "string") return;
-        let message;
-        try {
-          message = JSON.parse(event.data);
-        } catch {
-          return;
-        }
-        if (
-          message?.MessageId === "App_LoadingStatus" &&
-          message.Values?.Status === "Document_Loaded"
-        )
-          document.documentElement.dataset.hyperOfficeLoaded = "yes";
-      });
-    }, editorOrigin);
+    const office = await observeOffice(
+      context,
+      editorOrigin,
+      new URL(source).origin,
+    );
     await expect(
       page.getByRole("navigation", { name: "工作区导航" }),
     ).toBeVisible();
@@ -72,11 +62,13 @@ test("The real Nextcloud Office editor opens DOCX, XLSX and PPTX from the author
         .click();
       const editor = await editorPromise;
       try {
-        await expect(editor.locator("html")).toHaveAttribute(
-          "data-hyper-office-loaded",
-          "yes",
-          { timeout: 60000 },
+        await office.waitForLoaded(editor);
+      } catch (error) {
+        console.error(
+          "Office loading diagnostics:",
+          JSON.stringify(await office.diagnostics(editor)),
         );
+        throw error;
       } finally {
         await editor.close();
       }

@@ -129,9 +129,59 @@ jobs:
         run: npm run test:nextcloud -- calendar-meeting.spec.ts calendar.spec.ts
       - name: Verify other real Nextcloud workflows
         run: npm run test:nextcloud -- files.spec.ts login.spec.ts notifications.spec.ts search.spec.ts talk.spec.ts
-      - name: Verify the real Nextcloud Office editor
+      - if: failure()
+        run: |
+          if docker inspect hyper-nextcloud-test >/dev/null 2>&1; then
+            docker inspect --format '{{.State.Status}} OOM={{.State.OOMKilled}}' hyper-nextcloud-test
+            docker logs --tail 80 hyper-nextcloud-test 2>&1 | python3 -c 'import sys,re; print("\n".join(line.strip() for line in sys.stdin if re.fullmatch(r"hyper_source status=\d{3} duration_us=\d+\n?",line)))'
+          fi
+
+  office:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d
         env:
-          NEXTCLOUD_OFFICE_ENABLED: "true"
+          POSTGRES_USER: hyper
+          POSTGRES_PASSWORD: hyper-ci-only
+          POSTGRES_DB: hyper_office_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U hyper -d hyper_office_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DATABASE_URL: postgres://hyper:hyper-ci-only@127.0.0.1:5432/hyper_office_test
+      TEST_DATABASE_URL: postgres://hyper:hyper-ci-only@127.0.0.1:5432/hyper_office_test
+      DEMO_MODE: "false"
+      APP_ORIGIN: http://127.0.0.1:5173
+      API_PORT: "3100"
+      CREDENTIAL_MASTER_KEY: "abababababababababababababababababababababababababababababababab"
+      NEXTCLOUD_URL: http://127.0.0.1:8090
+      NEXTCLOUD_WORKSPACE_ID: 10000000-0000-4000-8000-000000000001
+      NEXTCLOUD_MEMBER_GROUP: hyper-members
+      NEXTCLOUD_BOOTSTRAP_ADMIN_IDS: '["employee-one"]'
+      WORKSPACE_NAME: Synthetic Office CI Workspace
+      NC_TEST_PASSWORD: Hyper-CI-Fixture-Only-1234!
+      NEXTCLOUD_TALK_ENABLED: "false"
+      NEXTCLOUD_FILES_ENABLED: "true"
+      NEXTCLOUD_CALENDAR_ENABLED: "false"
+      NEXTCLOUD_OFFICE_ENABLED: "true"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24.14.1"
+          cache: npm
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14.6"
+      - run: npm ci
+      - run: bash scripts/ci/nextcloud-setup.sh
+      - run: python3 -m venv .runtime/documents && .runtime/documents/bin/python -m pip install --require-hashes -r runtime/documents/requirements.lock --index-url https://pypi.org/simple
+      - run: npm run migrate && npm run workspace:init
+      - run: npx playwright install --with-deps chromium
+      - name: Verify the real Nextcloud Office editor
         run: |
           bash scripts/ci/office-setup.sh
           npm run test:nextcloud -- office.spec.ts

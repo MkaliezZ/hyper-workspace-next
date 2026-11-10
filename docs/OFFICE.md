@@ -14,6 +14,12 @@ PostgreSQL 与合成 WebDAV 来源覆盖了功能开关、员工本人、同工�
 
 GitHub Actions 加入固定版本的真实编辑器检查。隔离运行器验证公开组件的镜像和安装包、Nextcloud 的 WOPI 连接，并等待 Collabora 报告三种合成文档加载完成。这个检查验证实际打开，协作保存和格式往返另行验收。
 
+### Windows 接续诊断
+
+交接版本 `bfbe060` 的上一轮 Office 失败只保留了顶层页面加载标记超时。连接器 discovery/capabilities 成功不足以证明文档已经打开。当前将 Office 拆为独立 CI job，使用独立产品库和真实 Nextcloud/Collabora，不占用日历与通信回归的时间预算。
+
+浏览器探针被动监听当前来源页面及其子 frame，仅接受来自配置的编辑器 origin、且发送窗口确为该页面 Office iframe 的消息。成功仍要求 `App_LoadingStatus / Document_Loaded` 和对应 iframe 可见；探针不替来源发送握手。失败日志只记录白名单加载状态、来源类别、HTTP 状态和 WebSocket 状态，省略登录、WOPI token、URL 参数和正文。真实加载、保存与多人编辑的结果按修正提交的运行分别记录。
+
 ## 公司内网安装方案
 
 在 [内网部署](DEPLOYMENT-INTRANET.md) 的固定 IP 与内部 CA 配置上叠加 `deploy/compose.office.yaml`。办公室编辑器使用独立的 HTTPS 8444 端口，Nextcloud 继续使用 8443。下面用示例内网 IP，实际配置以公司分配地址为准。容器镜像和连接器版本见 `runtime/nextcloud/office.lock.json`。真实编辑器 CI 使用隔离的明文回环环境。本机已用临时 CA 验证 Office 代理保留主机、升级 WebSocket、拒绝外部调用内部转换路由。实际公司 HTTPS 组合在目标网络另行复验。

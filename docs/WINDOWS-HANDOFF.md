@@ -45,6 +45,8 @@ git switch -c codex/windows-office
 
 保持源码 LF 换行和冻结包字节校验，首次 clone 显式关闭自动 CRLF 转换。
 
+Windows 接收端已加入 `.gitattributes`：普通源码统一 LF，冻结包保持 Git 原始字节。已有 clone 如受全局自动 CRLF 设置影响，先保留工作区修改，再恢复冻结包的原始字节并运行校验，不修改摘要清单来接受换行差异。本机 Windows 原生类型检查通过，但 POSIX 文件权限及可执行脚本用例不兼容；完整开发验证继续在 WSL 中运行。
+
 要固定到交接版本，先从 Release 记录取得 tag，再执行 git checkout -b codex/windows-office TAG。GitHub 归档没有 .git 时，建议用 clone 接续提交。
 
 准备 Node 24.14.1、npm、Git、Python 3.14.6、Docker Engine/Compose/Buildx。Hermes 要求 Python 3.14.6，文档解析器和连接器准备工具使用 Python 3.12+。具体固定依赖由 package-lock、runtime/hermes/lock.json、runtime/documents/requirements.lock、runtime/nextcloud/office.lock.json 等文件定义。
