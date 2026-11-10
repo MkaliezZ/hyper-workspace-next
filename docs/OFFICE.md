@@ -10,7 +10,9 @@
 
 ## 当前验证
 
-PostgreSQL 与合成 WebDAV 来源覆盖了功能开关、员工本人、同工作区管理员无文件权限、共享后打开、撤销读取后拒绝、文件 ID 或 ETag 变化，以及不支持的格式。Chromium 在桌面和手机尺寸下验证了入口、链接和撤权提示。编辑器连接、真实往返与并发保存、复杂工作簿及双执行器工具属于后续验收。 [合成表格的手机入口](images/office-source-link-mobile.png)
+加载修复 `fd616a8` 的[四项 CI 已通过](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42919022456)。后续正式测试在本机用真实 Collabora UI 修改并保存 DOCX/XLSX/PPTX，通过 WebDAV 下载、文件内容和保留断言复核，再回工作台确认源版本变化。已覆盖 DOCX 段落/加粗/表格，XLSX 公式缓存/跨表结果/筛选/数据验证/图表，PPTX 幻灯片/表格；这组夹具没有证明任意 OOXML 文件无损往返。
+
+PostgreSQL 与合成 WebDAV 来源覆盖功能开关、员工本人、同工作区管理员无文件权限、共享后打开、撤销读取后拒绝、文件 ID 或 ETag 变化，以及不支持的格式。桌面和手机入口已验证。新 [OfficeTools](OFFICE-TOOLS.md) 使用同版内核生成可编辑副本，人工/DSH/Hermes 共用权限、方案和回执。真实双人评论、修订/撤权、更多复杂工作簿和真实供应商模型继续专项验证。 [合成表格的手机入口](images/office-source-link-mobile.png)
 
 GitHub Actions 加入固定版本的真实编辑器检查。隔离运行器验证公开组件的镜像和安装包、Nextcloud 的 WOPI 连接，并等待 Collabora 报告三种合成文档加载完成。这个检查验证实际打开，协作保存和格式往返另行验收。
 

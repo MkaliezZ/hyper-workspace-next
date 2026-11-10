@@ -65,6 +65,8 @@ const actionLabels: Record<PlannedAction["tool"], string> = {
   "calendar.manage": "核对日历操作",
   "approval.manage": "核对审批操作",
   "ocr.recognize": "保存识别草稿",
+  "office.propose": "保存 Office 修改方案",
+  "office.apply": "生成 Office 副本",
   "attachment.share": "分享文件附件",
   "decision.write": "保存项目决定",
   "decision.manage": "管理项目决定",
@@ -328,6 +330,16 @@ export function RunDetails({
                     typeof receipt.revision === "number" ? (
                       <span>
                         第 {receipt.page} 页 · 草稿版本 {receipt.revision}
+                      </span>
+                    ) : null}
+                    {(receipt.tool === "office.propose" ||
+                      receipt.tool === "office.apply") &&
+                    typeof receipt.revision === "number" ? (
+                      <span>
+                        方案版本 {receipt.revision} ·{" "}
+                        {receipt.savedCopy === true
+                          ? "副本已保存并回读"
+                          : "请在 Office 助手查看方案与实际状态"}
                       </span>
                     ) : null}
 

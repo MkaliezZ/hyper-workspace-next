@@ -30,6 +30,7 @@ import {
 import { sourceConnection } from "./source-connection.js";
 import { stableDigest } from "./credentials.js";
 import { OfficeProvider, officeDigest } from "./office-provider.js";
+import { redactOfficeRuns } from "./office-privacy.js";
 
 export interface OfficeExecution {
   runId?: string;
@@ -201,6 +202,15 @@ export class OfficeService {
         "UPDATE cw_office_requests q SET response=NULL FROM cw_office_proposals p WHERE q.proposal_id=p.id AND p.invalidated_at IS NOT NULL AND q.workspace_id=$1 AND q.actor_id=$2",
         [s.workspaceId, s.id],
       );
+      const seed = (
+        await c.query(
+          "SELECT source_binding FROM cw_office_proposals WHERE id=$1 AND workspace_id=$2 AND actor_id=$3",
+          [id, s.workspaceId, s.id],
+        )
+      ).rows[0];
+      if (allActor) await redactOfficeRuns(c, s, { allActor: true });
+      else if (seed)
+        await redactOfficeRuns(c, s, { binding: seed.source_binding });
     });
   }
   private async authorized(s: Subject, id: string, bytes = false) {

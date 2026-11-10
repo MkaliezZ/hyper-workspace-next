@@ -60,6 +60,7 @@ jobs:
       - run: npm test
       - run: python3 -m unittest discover -s runtime/hermes -p 'test_*.py'
       - run: python3 -m unittest discover -s runtime/nextcloud -p 'test_*.py'
+      - run: python3 tests/office/test_protocol.py -v
       - run: python3 -m venv .runtime/documents
       - run: .runtime/documents/bin/python -m pip install --require-hashes -r runtime/documents/requirements.lock --index-url https://pypi.org/simple
       - run: .runtime/documents/bin/python -m unittest discover -s runtime/documents -p test_extract.py -v
@@ -185,7 +186,9 @@ jobs:
       - name: Verify the real Nextcloud Office editor
         run: |
           bash scripts/ci/office-setup.sh
-          npm run test:nextcloud -- office.spec.ts
+          npm run test:nextcloud -- office.spec.ts office-collaboration.spec.ts
+      - name: Verify the same Office core for editable copies
+        run: bash scripts/ci/office-batch.sh
       - if: failure()
         run: |
           if docker inspect hyper-collabora-test >/dev/null 2>&1; then
@@ -246,7 +249,29 @@ jobs:
             assert.equal(table?.text, "品名 Item\t数量 Qty\t金额 Amount\n白板笔\t3\t42.50\n便签纸\t7\t19.60\n合计 Total\t10\t62.10");
             assert.ok(result.content.blocks.some((block) => block.text === "合成采购记录"));
           ' < tests/fixtures/ocr-procurement.png
+      - name: Verify the private Office service from the application container
+        run: |
+          office_compose() {
+            docker compose --project-name hyper-deployment-ci --env-file .runtime/compose-ci.env -f compose.yaml -f deploy/compose.ci.yaml -f deploy/compose.local-ocr.yaml -f deploy/compose.office-tools.yaml "$@"
+          }
+          office_compose config --quiet
+          office_compose build office-batch
+          office_compose up -d --no-build --wait --wait-timeout 180
+          office_compose exec -T api /app/.runtime/documents/bin/python - create docx < tests/fixtures/office-roundtrip.py > .runtime/office-compose-seed.docx
+          office_compose exec -T api node --import tsx --input-type=module -e '
+            import assert from "node:assert/strict";
+            import { OfficeProvider } from "./dist/core/office-provider.js";
+            const parts = [];
+            for await (const part of process.stdin) parts.push(part);
+            const bytes = Buffer.concat(parts), provider = new OfficeProvider();
+            const observed = await provider.inspect({bytes,format:"docx"});
+            assert.ok(observed.inspection.paragraphs.length);
+            const result = await provider.transform({bytes,format:"docx",operations:[{kind:"writer.append",target:"document:end",text:"Private deployment copy verified"}]});
+            assert.equal(result.preview.reopenedVerified,true);
+            assert.equal(result.preview.operations[0].after,"Private deployment copy verified");
+            assert.notDeepEqual(result.bytes,bytes);
+          ' < .runtime/office-compose-seed.docx
       - if: failure()
         run: docker compose --project-name hyper-deployment-ci --env-file .runtime/compose-ci.env -f compose.yaml -f deploy/compose.ci.yaml -f deploy/compose.local-ocr.yaml logs --tail 100
       - if: always()
-        run: docker compose --project-name hyper-deployment-ci --env-file .runtime/compose-ci.env -f compose.yaml -f deploy/compose.ci.yaml -f deploy/compose.local-ocr.yaml down --volumes
+        run: docker compose --project-name hyper-deployment-ci --env-file .runtime/compose-ci.env -f compose.yaml -f deploy/compose.ci.yaml -f deploy/compose.local-ocr.yaml -f deploy/compose.office-tools.yaml down --volumes

@@ -1,3 +1,5 @@
+import { OfficeRunService } from "./office-runs.js";
+import { isOfficeWorkflow } from "@hyper/contracts/office-runs";
 import { OcrRunService } from "./ocr-runs.js";
 import { ApprovalRunService } from "./approval-runs.js";
 import { NotificationPolicyService } from "./notification-policy.js";
@@ -35,6 +37,8 @@ export async function assertRunScope(
   run: any,
 ) {
   await assertScheduledRun(service.db.pool, run);
+  if (isOfficeWorkflow(run.workflow))
+    return new OfficeRunService(service.db).scope(s, run.office_plan);
   if (run.workflow === "recognize_ocr")
     return new OcrRunService(service.db).scope(s, run.ocr_plan);
   if (run.workflow === "manage_approval")
@@ -106,6 +110,8 @@ async function baseRunContext(
   subject: Subject,
   run: any,
 ) {
+  if (isOfficeWorkflow(run.workflow))
+    return new OfficeRunService(service.db).context(subject, run.office_plan);
   if (run.workflow === "recognize_ocr")
     return new OcrRunService(service.db).context(subject, run.ocr_plan);
   if (run.workflow === "manage_approval")

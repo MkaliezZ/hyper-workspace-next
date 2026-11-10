@@ -24,6 +24,8 @@ const workflowLabels: Record<Workflow, string> = {
   manage_communication: "会话管理",
   manage_approval: "审批助手",
   recognize_ocr: "OCR 助手",
+  draft_office: "Office 修改方案",
+  apply_office: "Office 生成副本",
   manage_calendar: "日历操作",
   share_attachment: "分享附件",
   manage_decision: "项目决定",

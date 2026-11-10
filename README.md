@@ -35,7 +35,11 @@
 
 企业文件已加入 DOCX、XLSX 和 PPTX 的统一 Office 入口。服务核对员工权限和所选版本，再通过 Nextcloud 打开。返回后可核对来源是否已有新版本。桌面和手机入口已通过合成来源验证，当前推进真实编辑器、协作保存与双执行器操作。 [Office 接入与验证范围](docs/OFFICE.md) · [手机入口](docs/images/office-source-link-mobile.png)
 
-Windows 端已接续开发。已定位并修复设置预设回调地址导致的文档会话循环，以及加载探针被无关 iframe 导航干扰的问题。WSL 真实 Nextcloud/Collabora 已通过 DOCX、XLSX、PPTX 加载；Office 独立 CI、多人保存和复杂表格继续按对应提交逐项验收。 [接续记录](docs/IMPLEMENTATION.md)
+Windows 端已接续开发，预设回调地址与加载探针的问题已修复并合入主分支。`fd616a8` 的[四项 CI 全部通过](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42919022456)。后续本机测试已实际编辑、保存并回读三种格式，核对段落/加粗/表格、跨表公式结果/筛选/数据验证/图表及演示文稿表格。多人协作、修订和更复杂的工作簿继续逐项验证。 [接续记录](docs/IMPLEMENTATION.md)
+
+Office 助手新增可编辑的修改方案与新副本回执。人工、DSH 和 Hermes 接入相同业务服务，按所选源版本起草、校验并保存方案，再确认生成可继续编辑的副本；结果不明时只回读核对。同一固定 Collabora 内核负责在线编辑和后台变换，后台服务通过独立内网部署。真实同核三格式变换及两项桌面/手机协议测试已通过；本批双原生执行器和组合部署由当前 CI 核验，真实供应商模型尚待此功能专项验证。 [方案、权限与恢复](docs/OFFICE-TOOLS.md) · [批处理安装](runtime/office/README.md) · [手机方案对照](docs/images/office-tools-mobile.png)
+
+![Office 修改方案与生成副本确认，合成测试资料](docs/images/office-tools-desktop.png)
 
 [![CI](https://github.com/MkaliezZ/hyper-workspace-next/actions/workflows/ci.yml/badge.svg)](https://github.com/MkaliezZ/hyper-workspace-next/actions/workflows/ci.yml)
 
