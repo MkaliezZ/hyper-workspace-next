@@ -39,7 +39,7 @@ def clean():
     raise AssertionError("soffice process leaked")
 
 
-def transform(payload, operations, expected_status=200):
+def transform(payload, operations, expected_status=200, output_name=None):
     result_status, result = call("/transform", {**payload, "operations": operations})
     assert result_status == expected_status, (result_status, result)
     clean()
@@ -47,7 +47,7 @@ def transform(payload, operations, expected_status=200):
         assert result["summary"]["reopenedVerified"] is True
         content = base64.b64decode(result["contentBase64"], validate=True)
         assert hashlib.sha256(content).hexdigest() == result["outputSha256"]
-        (output_root / ("edited." + payload["format"])).write_bytes(content)
+        (output_root / (output_name or "edited." + payload["format"])).write_bytes(content)
     return result
 
 
@@ -120,4 +120,42 @@ for kind in ("docx", "xlsx", "pptx"):
         assert target["editable"] is True
         transform(payload, [{"kind": "impress.replace", "target": target["id"], "expectedText": target["text"], "text": MARKER}])
     results.append({"format": kind, "realKernel": True, "http": True, "readback": True, "cleanup": True})
+
+unsupported = (source_root / "pivot-seed.xlsx").read_bytes()
+status, rejected = call("/inspect", {"format": "xlsx", "contentBase64": base64.b64encode(unsupported).decode()})
+assert status == 422 and rejected == {"error": {"code": "unsupported_pivot_caption"}}
+clean()
+denied = transform({"format": "xlsx", "contentBase64": base64.b64encode(unsupported).decode(),
+                    "sourceSha256": hashlib.sha256(unsupported).hexdigest()},
+                   [{"kind": "calc.set", "sheet": "sheet:1", "cell": "B5",
+                     "expected": {"type": "string", "value": "Editable text"},
+                     "value": {"type": "string", "value": MARKER}}], 422)
+assert denied == {"error": {"code": "unsupported_pivot_caption"}}
+source = (source_root / "pivot-default-seed.xlsx").read_bytes()
+payload = {"format": "xlsx", "contentBase64": base64.b64encode(source).decode()}
+status, inspected = call("/inspect", payload)
+assert status == 200, (status, inspected)
+clean()
+payload["sourceSha256"] = hashlib.sha256(source).hexdigest()
+report = next(sheet for sheet in inspected["inspection"]["sheets"] if sheet["name"] == "Report")
+target = next(cell for cell in report["cells"] if cell["address"] == "B5")
+transform(payload, [{"kind": "calc.set", "sheet": report["id"], "cell": "B5",
+                     "expected": {"type": target["type"], "value": target["value"]},
+                     "value": {"type": "string", "value": MARKER}}], output_name="pivot-edited.xlsx")
+inputs = next(sheet for sheet in inspected["inspection"]["sheets"] if sheet["name"] == "Inputs")
+pivot_sheet = next(sheet for sheet in inspected["inspection"]["sheets"] if sheet["name"] == "Pivot")
+assert next(cell for cell in pivot_sheet["cells"] if cell["address"] == "B2")["editable"] is False
+for sheet, cell, before in ((inputs, "A2", {"type": "string", "value": "Pens"}),
+                            (pivot_sheet, "B2", {"type": "number", "value": 3})):
+    denied = transform(payload, [{"kind": "calc.set", "sheet": sheet["id"], "cell": cell,
+                                 "expected": before, "value": {"type": "number", "value": 4}}], 422)
+    assert denied == {"error": {"code": "unsupported_pivot_target"}}
+changed = transform(payload, [
+    {"kind": "calc.set", "sheet": inputs["id"], "cell": "B2", "expected": {"type": "number", "value": 3},
+     "value": {"type": "number", "value": 4}},
+    {"kind": "calc.set", "sheet": report["id"], "cell": "B5",
+     "expected": {"type": target["type"], "value": target["value"]}, "value": {"type": "string", "value": MARKER}}
+], output_name="pivot-source-edited.xlsx")
+assert changed["summary"]["recalculated"] is True and changed["summary"]["formulaErrors"] == []
+results.append({"format": "xlsx", "pivot": True, "realKernel": True, "readback": True, "cleanup": True})
 print(json.dumps({"status": "passed", "results": results}))

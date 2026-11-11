@@ -20,6 +20,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "runtime/office"))
 from service import Engine, Handler, Server
+from pivots import cache_records, features as pivot_features
 from validation import Rejected, formula, package, request, validate_operations
 
 
@@ -35,6 +36,33 @@ def seed(extra=None):
 
 def body(data=None):
     return {"format": "docx", "contentBase64": base64.b64encode(data or seed()).decode()}
+
+
+def pivot_seed(changes=None, relocated=False):
+    namespace = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+    relationships = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+    pivot_path = 'xl/relocated.xml' if relocated else 'xl/pivotTables/pivotTable1.xml'
+    files = {
+        '[Content_Types].xml': '<Types/>',
+        'xl/workbook.xml': f'<workbook xmlns="{namespace}" xmlns:r="{relationships}"><sheets><sheet name="Inputs" r:id="s1"/><sheet name="Pivot" r:id="s2"/></sheets><pivotCaches><pivotCache cacheId="1" r:id="c1"/></pivotCaches></workbook>',
+        'xl/_rels/workbook.xml.rels': '<Relationships><Relationship Id="s1" Target="worksheets/sheet1.xml"/><Relationship Id="s2" Target="worksheets/sheet2.xml"/><Relationship Id="c1" Target="pivotCache/cache.xml"/></Relationships>',
+        'xl/worksheets/sheet1.xml': f'<worksheet xmlns="{namespace}"/>',
+        'xl/worksheets/sheet2.xml': f'<worksheet xmlns="{namespace}"/>',
+        'xl/worksheets/_rels/sheet2.xml.rels': f'<Relationships><Relationship Id="p1" Type="{relationships}/pivotTable" Target="/{pivot_path}"/></Relationships>',
+        pivot_path: f'<pivotTableDefinition xmlns="{namespace}" name="LocalPivot" cacheId="1"><location ref="A1:B3"/><rowFields><field x="0"/></rowFields><dataFields><dataField name="Total" fld="1" subtotal="sum"/></dataFields><pivotFields><pivotField axis="axisRow"/><pivotField dataField="1"/></pivotFields></pivotTableDefinition>',
+        'xl/pivotCache/cache.xml': f'<pivotCacheDefinition xmlns="{namespace}" xmlns:r="{relationships}" r:id="records"><cacheSource type="worksheet"><worksheetSource sheet="Inputs" ref="A1:B2"/></cacheSource><cacheFields><cacheField name="Item"><sharedItems><s v="Pens"/></sharedItems></cacheField><cacheField name="Quantity"><sharedItems><n v="3"/></sharedItems></cacheField></cacheFields></pivotCacheDefinition>',
+        'xl/pivotCache/_rels/cache.xml.rels': '<Relationships><Relationship Id="records" Target="records.xml"/></Relationships>',
+        'xl/pivotCache/records.xml': f'<pivotCacheRecords xmlns="{namespace}"><r><x v="0"/><x v="0"/></r></pivotCacheRecords>',
+        'xl/styles.xml': f'<styleSheet xmlns="{namespace}"><numFmts><numFmt numFmtId="164" formatCode="General"/></numFmts></styleSheet>',
+    }
+    for path, old, new in changes or []:
+        path = pivot_path if path == 'pivot' else 'xl/pivotCache/cache.xml' if path == 'cache' else path
+        files[path] = files[path].replace(old, new)
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as archive:
+        for name, content in files.items():
+            archive.writestr(name, content)
+    return output.getvalue()
 
 
 class Protocol(unittest.TestCase):
@@ -94,6 +122,33 @@ class Protocol(unittest.TestCase):
             with self.subTest(expression=expression), self.assertRaises(Rejected):
                 formula(expression, ["Inputs", "Other"])
 
+    def test_pivot_is_local_bounded_and_relocated_parts_cannot_bypass(self):
+        for relocated in (False, True):
+            content = pivot_seed(relocated=relocated)
+            item = pivot_features(content)[0]
+            self.assertEqual(item["sourceBounds"], (0, 0, 1, 1))
+            self.assertEqual(cache_records(content, item), (("Pens", 3.0),))
+            rejected = pivot_seed([('pivot', 'cacheId="1"', 'cacheId="1" grandTotalCaption="Private caption"')], relocated)
+            self.rejected("unsupported_pivot_caption", request, {"format": "xlsx", "contentBase64": base64.b64encode(rejected).decode()})
+        for changes, code in [
+            ([('cache', 'type="worksheet"', 'type="external"')], 'unsupported_pivot_source'),
+            ([('cache', 'ref="A1:B2"', 'name="ExternalName" ref="A1:B2"')], 'unsupported_pivot_source'),
+            ([('cache', 'ref="A1:B2"', 'ref="A1:BZ2000"')], 'target_limit'),
+            ([('pivot', 'subtotal="sum"', 'subtotal="average"')], 'unsupported_pivot_aggregation'),
+            ([('pivot', 'subtotal="sum"', 'subtotal="sum" numFmtId="2"')], 'unsupported_pivot_aggregation'),
+            ([('pivot', '<pivotField axis="axisRow"/>', '<pivotField axis="axisRow" name="Custom label"/>')], 'unsupported_pivot_layout'),
+            ([('pivot', 'cacheId="1"', 'cacheId="1" rowHeaderCaption="Custom label"')], 'unsupported_pivot_caption'),
+            ([('pivot', 'cacheId="1"', 'cacheId="1" colHeaderCaption="Custom label"')], 'unsupported_pivot_caption'),
+            ([('pivot', '<pivotField axis="axisRow"/>', '<pivotField axis="axisRow" subtotalCaption="Custom label"/>')], 'unsupported_pivot_caption'),
+            ([('pivot', '<pivotField axis="axisRow"/>', '<pivotField axis="axisRow" autoShow="1"/>')], 'unsupported_pivot_layout'),
+            ([('pivot', '<pivotField axis="axisRow"/>', '<pivotField axis="axisRow" sortType="ascending"/>')], 'unsupported_pivot_layout'),
+            ([('xl/_rels/workbook.xml.rels', '</Relationships>', '<Relationship Type="example/connections" Target="customConnections.xml"/></Relationships>')], 'unsupported_pivot_source'),
+            ([('[Content_Types].xml', '<Types/>', '<Types><Override PartName="/xl/customConnections.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.connections+xml"/></Types>')], 'unsupported_pivot_source'),
+            ([('cache', '<cacheField name="Quantity">', '<cacheField name="Quantity" formula="1+2">')], 'unsupported_pivot_layout'),
+        ]:
+            self.rejected(code, pivot_features, pivot_seed(changes))
+        self.assertEqual(len(pivot_features(pivot_seed([('pivot', 'subtotal="sum"', 'subtotal="sum" numFmtId="164"')]))), 1)
+
     @unittest.skipUnless(sys.platform == "linux", "Linux process groups and seccomp")
     def test_network_sandbox_is_inherited(self):
         script = '''from sandbox import deny_ip_network
@@ -127,10 +182,18 @@ subprocess.run([sys.executable,'-c','import socket; socket.socket(socket.AF_INET
             self.rejected("engine_timeout", engine.execute, body(), False)
             self.assertEqual(list(jobs.iterdir()), [])
             pid = int(pidfile.read_text())
-            # A just-killed child may be a zombie briefly until container init reaps it.
+            # SIGKILL can be pending while the child has not yet been scheduled.
+            # Require termination within a bound, not an immediate /proc snapshot.
             status = Path(f"/proc/{pid}/status")
-            if status.exists():
-                self.assertIn("Z (zombie)", status.read_text())
+            for _ in range(100):
+                try:
+                    if "Z (zombie)" in status.read_text():
+                        break
+                except FileNotFoundError:
+                    break
+                time.sleep(0.02)
+            else:
+                self.fail("Timed-out descendant remained alive")
 
 
 class HTTP(unittest.TestCase):

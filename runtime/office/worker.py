@@ -1,5 +1,6 @@
 """One fixed-operation UNO job. Invoked only by the private service."""
 import json
+import math
 import os
 from pathlib import Path
 import resource
@@ -8,6 +9,7 @@ import sys
 import time
 
 from sandbox import deny_ip_network
+import pivots
 from validation import MAX_CELLS, MAX_FILE, MAX_PREVIEW, MAX_TEXT, Rejected, address, formula, require
 
 PROGRAM = Path("/opt/collaboraoffice/program")
@@ -83,7 +85,7 @@ def cell_name(column, row):
     return name + str(row + 1)
 
 
-def inspect(document, kind):
+def inspect(document, kind, pivot_features=()):
     preview = 0
 
     def bounded(value):
@@ -118,7 +120,8 @@ def inspect(document, kind):
                     if isinstance(value["value"], str):
                         bounded(value["value"])
                     cells.append({"address": cell_name(column, row), **value, "display": bounded(cell.String),
-                                  "error": cell.getError(), "editable": cell_editable(sheet, cell)})
+                                  "error": cell.getError(), "editable": cell_editable(sheet, cell)
+                                  and all(pivots.editable(item, index, column, row) for item in pivot_features)})
             result.append({"id": f"sheet:{index}", "name": sheet.Name, "rows": rows, "columns": columns, "cells": cells})
         return {"sheets": result}
     require(document.supportsService("com.sun.star.presentation.PresentationDocument"), "format_mismatch")
@@ -150,7 +153,44 @@ def formula_snapshot(inspection):
             for sheet in inspection["sheets"] for cell in sheet["cells"] if cell["type"] == "formula"]
 
 
-def apply(document, kind, inspection, operations):
+def pivot_state(document, feature, refresh=False):
+    sheets = document.getSheets()
+    sheet = sheets.getByIndex(feature["sourceSheet"])
+    output_sheet = sheets.getByIndex(feature["outputSheet"])
+    tables = output_sheet.getDataPilotTables()
+    require(tables.hasByName(feature["name"]), "pivot_readback_mismatch")
+    table = tables.getByName(feature["name"])
+    source = table.getSourceRange()
+    require((source.StartColumn, source.StartRow, source.EndColumn, source.EndRow) == feature["sourceBounds"]
+            and source.Sheet == feature["sourceSheet"] and not table.getPropertyValue("SourceServiceName"), "unsupported_pivot_source")
+    x1, y1, x2, y2 = feature["sourceBounds"]
+    records = sheet.getCellRangeByPosition(x1, y1, x2, y2).getDataArray()
+    require(list(records[0]) == feature["fieldNames"] and len(set(records[0])) == len(records[0]), "unsupported_pivot_source")
+    groups = {}
+    for row_index, record in enumerate(records[1:], y1+1):
+        for column in range(x1, x2+1):
+            cell = sheet.getCellByPosition(column, row_index)
+            require(cell.getType().value in ("EMPTY", "TEXT", "VALUE") and cell.getError() == 0, "unsupported_pivot_value")
+        key, value = record[feature["rowField"]], record[feature["dataField"]]
+        require(isinstance(key, str) and key and type(value) in (int, float) and math.isfinite(value), "unsupported_pivot_value")
+        groups.setdefault(key, []).append(value)
+    if refresh:
+        table.refresh()
+    out = table.getOutputRange()
+    require((out.StartColumn, out.StartRow, out.EndColumn, out.EndRow) == feature["outputBounds"]
+            and out.Sheet == feature["outputSheet"], "unsupported_pivot_layout")
+    values = output_sheet.getCellRangeByPosition(out.StartColumn, out.StartRow, out.EndColumn, out.EndRow).getDataArray()
+    require(len(values) == len(groups)+2 and values[0] == (records[0][feature["rowField"]], feature["dataName"])
+            and values[-1][0] == "Total Result", "pivot_readback_mismatch")
+    def equal(left, right):
+        return type(left) in (int, float) and math.isclose(left, right, rel_tol=1e-12, abs_tol=1e-12)
+    observed = dict(values[1:-1])
+    require(set(observed) == set(groups) and all(equal(observed[key], math.fsum(value)) for key, value in groups.items())
+            and equal(values[-1][1], math.fsum(value for row in groups.values() for value in row)), "pivot_readback_mismatch")
+    return records[1:], values
+
+
+def apply(document, kind, inspection, operations, pivot_features=()):
     checks = []
     if kind == "docx":
         targets = dict(zip((p["id"] for p in inspection["paragraphs"]), paragraphs(document)))
@@ -173,6 +213,8 @@ def apply(document, kind, inspection, operations):
             require(op["sheet"] in sheets, "unknown_target")
             sheet = sheets[op["sheet"]]
             column, row = address(op["cell"])
+            require(all(pivots.editable(item, int(op["sheet"].split(":")[1]), column, row)
+                        for item in pivot_features), "unsupported_pivot_target")
             cell = sheet.getCellByPosition(column, row)
             require(cell_editable(sheet, cell), "unsupported_target")
             before = cell_value(cell)
@@ -214,6 +256,9 @@ def apply(document, kind, inspection, operations):
         summary.append({"kind": name, "target": result_target, "before": before, "after": after})
     if kind == "xlsx":
         document.calculateAll()
+        for item in pivot_features:
+            pivot_state(document, item, refresh=True)
+        document.calculateAll()
         for op, cell, _ in checks:
             if op["value"]["type"] == "formula":
                 require(cell.getError() == 0, "calculation_failed")
@@ -237,6 +282,7 @@ def verify(inspection, summary, kind, document):
 def execute(directory):
     job = json.loads((directory / "job.json").read_text())
     kind = job["format"]
+    pivot_features = pivots.features((directory / "source.xlsx").read_bytes()) if kind == "xlsx" else []
     profile = directory / "profile"
     (profile / "user").mkdir(parents=True)
     (profile / "user/registrymodifications.xcu").write_text('''<?xml version="1.0"?>
@@ -268,24 +314,34 @@ def execute(directory):
         desktop = remote.ServiceManager.createInstanceWithContext("com.sun.star.frame.Desktop", remote)
         document = load(desktop, directory / ("source." + kind))
         try:
-            inspection = inspect(document, kind)
+            for item in pivot_features:
+                pivot_state(document, item, refresh=True)
+            inspection = inspect(document, kind, pivot_features)
             if not job["transform"]:
                 return {"inspection": inspection}
-            summary = apply(document, kind, inspection, job["operations"])
-            after = inspect(document, kind)  # Check output target bounds before save.
+            summary = apply(document, kind, inspection, job["operations"], pivot_features)
+            after = inspect(document, kind, pivot_features)  # Check output target bounds before save.
+            pivot_before_save = [pivot_state(document, item) for item in pivot_features]
             errors = formula_errors(after) if kind == "xlsx" else []
             document.storeAsURL((directory / ("output." + kind)).as_uri(), (
                 prop("FilterName", FILTERS[kind]), prop("Overwrite", False)))
         finally:
             document.close(True)
         require((directory / ("output." + kind)).stat().st_size <= MAX_FILE, "output_limit", 413)
+        if pivot_features:
+            content = (directory / "output.xlsx").read_bytes()
+            saved_features = pivots.features(content)
+            require(pivots.signature(saved_features) == pivots.signature(pivot_features), "pivot_readback_mismatch")
+            for feature, (records, _) in zip(saved_features, pivot_before_save):
+                require(pivots.cache_records(content, feature) == records, "pivot_cache_mismatch")
         reopened = load(desktop, directory / ("output." + kind), True)
         try:
-            saved = inspect(reopened, kind)
+            saved = inspect(reopened, kind, pivot_features)
             verify(saved, summary, kind, reopened)
             if kind == "xlsx":
                 require(formula_errors(saved) == errors, "readback_mismatch")
                 require(formula_snapshot(saved) == formula_snapshot(after), "readback_mismatch")
+                require([pivot_state(reopened, item) for item in pivot_features] == pivot_before_save, "pivot_readback_mismatch")
         finally:
             reopened.close(True)
         return {"summary": {"operations": summary, "recalculated": kind == "xlsx", "formulaErrors": errors,

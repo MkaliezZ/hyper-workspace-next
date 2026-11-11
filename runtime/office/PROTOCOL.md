@@ -31,6 +31,8 @@ Target IDs are stable for the **same exact input bytes only**, not across saves.
   `string`, `number` or `formula`; `value` is respectively null, text, number or
   the engine's canonical formula. `display` is formatted text; `error` is the
   Calc error code (0 = none). Only unmerged, unprotected cells are editable.
+  A supported pivot's output, source header and grouping-key cells are also
+  noneditable. Its numeric source values may be edited with ordinary calc.set.
 - PPTX: `{ slides: [{id:"slide:0",shapes:[{id:"slide:0/shape:1",text,editable}]}] }`.
   All top-level shapes are identified; only simple text shapes are editable.
   Tables, groups, fields and inherited master shapes are not text targets.
@@ -68,6 +70,23 @@ The service saves to a new file, reopens with the same engine, and verifies ever
 operation's resulting content. Calc always calls calculateAll, and reports every
 remaining formula error in the bounded workbook; errors in a newly assigned
 formula reject the transform. Output is editable OOXML, not an image/PDF.
+
+The pivot subset is deliberately narrow: one pivot in the workbook, one bounded
+local worksheet source on a different sheet, one text row field and one numeric
+SUM field. Source headers must be unique, and source records may contain only
+constant strings/numbers/empty cells. External/named sources, formulas inside the
+pivot source, calculated/grouped fields, filters, custom field/item captions,
+column/page fields, multiple aggregations and explicit `grandTotalCaption` are
+unsupported. The engine's default total label is `Total Result`; absent an
+explicit caption, default presentation may be normalized to that label.
+An explicit caption is rejected with `unsupported_pivot_caption`, because this
+pinned engine does not preserve it. Other unsupported cases return
+`unsupported_pivot_source/layout/aggregation/value/target/cache` as appropriate.
+The runtime explicitly refreshes the supported local pivot after source edits,
+checks every grouped sum and grand total against the source, verifies the saved
+cache records, and compares the pivot definition and values after a same-core
+reopen. It never patches OOXML or accepts a changed explicit label as success.
+See [compatibility evidence](COMPATIBILITY.md) for the observed engine limitation.
 
 Errors are `{error:{code:"..."}}`, with no raw engine error/input/URL. HTTP 400
 invalid JSON/headers, 413 input/package/output limit, 422 unsupported/invalid

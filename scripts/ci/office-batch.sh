@@ -14,6 +14,8 @@ fixture_python="${DOCUMENTS_PYTHON:-.runtime/documents/bin/python}"
 for kind in docx xlsx pptx; do
   "$fixture_python" tests/fixtures/office-roundtrip.py create "$kind" > "$task_dir/input/roundtrip-seed.$kind"
 done
+"$fixture_python" tests/fixtures/office-roundtrip.py create xlsx --pivot > "$task_dir/input/pivot-seed.xlsx"
+"$fixture_python" tests/fixtures/office-roundtrip.py create xlsx --pivot-default > "$task_dir/input/pivot-default-seed.xlsx"
 docker build --memory=512m -t hyper-workspace-office-batch:test -f runtime/office/Dockerfile .
 docker run -d --name "$container" --init --network=none --memory=512m --memory-swap=512m --cpus=1 \
   --pids-limit=128 --read-only --cap-drop=ALL --security-opt=no-new-privileges \
@@ -26,6 +28,8 @@ docker exec "$container" /opt/collaboraoffice/program/python.bin /tests/runtime_
 for kind in docx xlsx pptx; do
   "$fixture_python" tests/fixtures/office-roundtrip.py verify "$kind" "$task_dir/output/edited.$kind" "Hyper Office batch verified"
 done
+"$fixture_python" tests/fixtures/office-roundtrip.py verify xlsx "$task_dir/output/pivot-edited.xlsx" "Hyper Office batch verified" --pivot-default
+"$fixture_python" tests/fixtures/office-roundtrip.py verify xlsx "$task_dir/output/pivot-source-edited.xlsx" "Hyper Office batch verified" --pivot-default --quantity4
 if [ "$(docker inspect --format '{{.State.OOMKilled}}' "$container")" != false ]; then
   echo 'Office batch test exhausted its memory limit' >&2
   exit 1

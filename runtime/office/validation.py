@@ -257,6 +257,12 @@ def request(value, transform=False):
         raise Rejected("invalid_base64") from None
     require(base64.b64encode(data).decode() == encoded, "invalid_base64")
     package(data, kind)
+    if kind == "xlsx":
+        from pivots import features
+        try:
+            features(data)
+        except (ValueError, TypeError, KeyError, IndexError, AttributeError):
+            raise Rejected("unsupported_pivot_source") from None
     digest = hashlib.sha256(data).hexdigest()
     if transform:
         require(value["sourceSha256"] == digest, "source_mismatch", 409)

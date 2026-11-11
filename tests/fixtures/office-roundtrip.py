@@ -8,7 +8,42 @@ import json
 import sys
 
 
-def create(kind):
+def add_pivot_fixture(workbook, default_caption=False):
+    """A local worksheet-backed pivot with explicit cache records, no connections."""
+    from openpyxl.pivot.cache import CacheDefinition, CacheField, CacheSource, SharedItems, WorksheetSource
+    from openpyxl.pivot.fields import Index, Number, Text
+    from openpyxl.pivot.record import Record, RecordList
+    from openpyxl.pivot.table import DataField, FieldItem, Location, PivotField, RowColField, RowColItem, TableDefinition
+    cache = CacheDefinition(
+        cacheSource=CacheSource(type="worksheet", worksheetSource=WorksheetSource(sheet="Inputs", ref="A1:C3")),
+        cacheFields=[
+            CacheField(name="Item", sharedItems=SharedItems(_fields=[Text(v="Pens"), Text(v="Paper")], containsString=True)),
+            CacheField(name="Quantity", sharedItems=SharedItems(_fields=[Number(v=3), Number(v=2)], containsNumber=True, containsString=False)),
+            CacheField(name="Price", sharedItems=SharedItems(_fields=[Number(v=10), Number(v=5)], containsNumber=True, containsString=False)),
+        ],
+        recordCount=2, saveData=True, refreshOnLoad=False, enableRefresh=True,
+    )
+    cache.records = RecordList(r=[Record(_fields=[Index(v=index), Index(v=index), Index(v=index)]) for index in (0, 1)])
+    pivot = TableDefinition(
+        name="SyntheticQuantityPivot", cacheId=1, dataCaption="Values",
+        grandTotalCaption=None if default_caption else "Grand Total",
+        location=Location(ref="A1:B4", firstHeaderRow=1, firstDataRow=1, firstDataCol=1),
+        pivotFields=[
+            PivotField(axis="axisRow", items=[FieldItem(x=0), FieldItem(x=1), FieldItem(t="default")]),
+            PivotField(dataField=True), PivotField(),
+        ],
+        rowFields=[RowColField(x=0)],
+        rowItems=[RowColItem(x=[Index(v=0)]), RowColItem(x=[Index(v=1)]), RowColItem(t="grand", x=[Index(v=0)])],
+        dataFields=[DataField(name="Total quantity", fld=1, subtotal="sum")],
+    )
+    pivot.cache = cache
+    report = workbook.create_sheet("Pivot")
+    for row in [("Item", "Total quantity"), ("Pens", 3), ("Paper", 2), ("Total Result" if default_caption else "Grand Total", 5)]:
+        report.append(row)
+    report.add_pivot(pivot)
+
+
+def create(kind, pivot=False):
     output = io.BytesIO()
     if kind == "docx":
         from docx import Document
@@ -54,6 +89,8 @@ def create(kind):
         chart.add_data(Reference(data, min_col=2, min_row=1, max_row=3), titles_from_data=True)
         chart.set_categories(Reference(data, min_col=1, min_row=2, max_row=3))
         report.add_chart(chart, "D2")
+        if pivot:
+            add_pivot_fixture(workbook, pivot == "default")
         workbook.save(output)
     elif kind == "pptx":
         from pptx import Presentation
@@ -74,7 +111,47 @@ def create(kind):
     return output.getvalue()
 
 
-def verify(kind, path, marker):
+def verify_named_table(workbook):
+    assert "SyntheticItems" in workbook["Inputs"].tables, "The named table object was lost"
+    table = workbook["Inputs"].tables["SyntheticItems"]
+    assert table.name == table.displayName == "SyntheticItems"
+    assert table.ref == "A1:D3"
+    assert [column.name for column in table.tableColumns] == ["Item", "Quantity", "Price", "Total"]
+    assert table.autoFilter is not None and table.autoFilter.ref == "A1:D3"
+    assert table.tableStyleInfo is not None and table.tableStyleInfo.name == "TableStyleMedium2"
+    assert table.tableStyleInfo.showRowStripes is True
+
+
+def verify_pivot(workbook, values, default_caption=False, quantity=3):
+    pivots = workbook["Pivot"]._pivots
+    assert len(pivots) == 1, "The pivot table object was lost"
+    pivot = pivots[0]
+    assert pivot.name == "SyntheticQuantityPivot"
+    assert pivot.grandTotalCaption == (None if default_caption else "Grand Total")
+    assert pivot.location.ref == "A1:B4"
+    assert [field.x for field in pivot.rowFields] == [0]
+    assert [(field.fld, field.subtotal) for field in pivot.dataFields] == [(1, "sum")]
+    assert pivot.cache.cacheSource.type == "worksheet"
+    source = pivot.cache.cacheSource.worksheetSource
+    assert source.sheet == "Inputs" and source.ref == "A1:C3"
+    assert [field.name for field in pivot.cache.cacheFields] == ["Item", "Quantity", "Price"]
+    assert pivot.cache.records is not None and len(pivot.cache.records.r) == 2, "The pivot cache records were lost"
+    records = []
+    for record in pivot.cache.records.r:
+        row = []
+        for index, item in enumerate(record._fields):
+            if item.tagname == "x":
+                item = pivot.cache.cacheFields[index].sharedItems._fields[item.v]
+            row.append(item.v)
+        records.append(row)
+    assert records == [["Pens", quantity, 10], ["Paper", 2, 5]], "The pivot source cache changed"
+    assert list(values["Pivot"].values) == [
+        ("Item", "Total quantity"), ("Pens", quantity), ("Paper", 2),
+        ("Total Result" if default_caption else "Grand Total", quantity+2)
+    ], "The pivot display/cache changed"
+
+
+def verify(kind, path, marker, pivot=False, quantity=3):
     if kind == "docx":
         from docx import Document
         document = Document(path)
@@ -94,16 +171,21 @@ def verify(kind, path, marker):
         assert workbook["Report"]["B5"].value == marker, "The saved edit is absent"
         assert workbook["Inputs"]["D2"].data_type == "f"
         assert workbook["Report"]["B2"].data_type == "f"
-        assert values["Inputs"]["D2"].value == 30, "Formula was not recalculated"
+        assert values["Inputs"]["D2"].value == quantity*10, "Formula was not recalculated"
         assert values["Inputs"]["D3"].value == 10
-        assert values["Report"]["B2"].value == 30, "Cross-sheet formula changed"
-        assert values["Report"]["B3"].value == 40
+        assert values["Report"]["B2"].value == quantity*10, "Cross-sheet formula changed"
+        assert values["Report"]["B3"].value == quantity*10+10
         assert workbook["Inputs"].auto_filter.ref == "A1:D3"
         assert any("F2" in item and item.type == "list"
                    for item in workbook["Inputs"].data_validations.dataValidation)
         assert len(workbook["Report"]._charts) == 1
-        return {"edit": True, "formulas": True, "crossSheet": True,
-                "filter": True, "validation": True, "chart": True}
+        verify_named_table(workbook)
+        result = {"edit": True, "formulas": True, "crossSheet": True,
+                  "filter": True, "validation": True, "chart": True, "namedTable": True}
+        if pivot:
+            verify_pivot(workbook, values, pivot == "default", quantity)
+            result["pivot"] = True
+        return result
     if kind == "pptx":
         from pptx import Presentation
         presentation = Presentation(path)
@@ -123,8 +205,9 @@ def verify(kind, path, marker):
 if __name__ == "__main__":
     action, kind = sys.argv[1:3]
     if action == "create":
-        sys.stdout.buffer.write(create(kind))
+        sys.stdout.buffer.write(create(kind, "default" if "--pivot-default" in sys.argv[3:] else "--pivot" in sys.argv[3:]))
     elif action == "verify":
-        print(json.dumps(verify(kind, sys.argv[3], sys.argv[4])))
+        print(json.dumps(verify(kind, sys.argv[3], sys.argv[4], "default" if "--pivot-default" in sys.argv[5:] else "--pivot" in sys.argv[5:],
+                               4 if "--quantity4" in sys.argv[5:] else 3)))
     else:
         raise ValueError("Unknown fixture action")
