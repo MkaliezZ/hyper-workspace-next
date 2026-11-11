@@ -56,6 +56,20 @@ jobs:
           path: .runtime/hermes-source.tar.gz
           key: hermes-source-${{ hashFiles('runtime/hermes/lock.json') }}
       - run: npm ci
+      - name: Prepare the browser before application services
+        run: |
+          stat -Lc 'resolver_permissions=%a' /etc/resolv.conf
+          if getent ahostsv4 archive.ubuntu.com >/dev/null; then
+            echo 'host_dns=available'
+          else
+            echo 'host_dns=unavailable'
+          fi
+          if sudo -u _apt getent ahostsv4 archive.ubuntu.com >/dev/null; then
+            echo 'package_dns=available'
+          else
+            echo 'package_dns=unavailable'
+          fi
+          npx playwright install --with-deps chromium
       - run: node scripts/dependency-inventory.mjs --check
       - run: npm audit --audit-level=high --registry=https://registry.npmjs.org
       - name: Verify the intranet IP TLS proxy in an isolated loopback environment
@@ -85,7 +99,6 @@ jobs:
       - run: npm run test:runtime
       - run: npm run build
       - run: npm run migrate && npm run seed
-      - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
   nextcloud-identity:
     runs-on: ubuntu-latest
@@ -141,13 +154,26 @@ jobs:
           path: .runtime/hermes-source.tar.gz
           key: hermes-source-${{ hashFiles('runtime/hermes/lock.json') }}
       - run: npm ci
+      - name: Prepare the browser before application services
+        run: |
+          stat -Lc 'resolver_permissions=%a' /etc/resolv.conf
+          if getent ahostsv4 archive.ubuntu.com >/dev/null; then
+            echo 'host_dns=available'
+          else
+            echo 'host_dns=unavailable'
+          fi
+          if sudo -u _apt getent ahostsv4 archive.ubuntu.com >/dev/null; then
+            echo 'package_dns=available'
+          else
+            echo 'package_dns=unavailable'
+          fi
+          npx playwright install --with-deps chromium
       - run: npm ci --prefix runtime/dsh
       - run: python3 runtime/hermes/download.py
       - run: python3 runtime/hermes/install.py
       - run: bash scripts/ci/nextcloud-setup.sh
       - run: python3 -m venv .runtime/documents && .runtime/documents/bin/python -m pip install --require-hashes -r runtime/documents/requirements.lock --index-url https://pypi.org/simple
       - run: npm run migrate && npm run workspace:init
-      - run: npx playwright install --with-deps chromium
       - name: Verify real CalDAV and local scheduling
         run: npm run test:nextcloud -- calendar-meeting.spec.ts calendar.spec.ts
       - name: Verify other real Nextcloud workflows
@@ -210,10 +236,23 @@ jobs:
         with:
           python-version: "3.14.6"
       - run: npm ci
+      - name: Prepare the browser before application services
+        run: |
+          stat -Lc 'resolver_permissions=%a' /etc/resolv.conf
+          if getent ahostsv4 archive.ubuntu.com >/dev/null; then
+            echo 'host_dns=available'
+          else
+            echo 'host_dns=unavailable'
+          fi
+          if sudo -u _apt getent ahostsv4 archive.ubuntu.com >/dev/null; then
+            echo 'package_dns=available'
+          else
+            echo 'package_dns=unavailable'
+          fi
+          npx playwright install --with-deps chromium
       - run: bash scripts/ci/nextcloud-setup.sh
       - run: python3 -m venv .runtime/documents && .runtime/documents/bin/python -m pip install --require-hashes -r runtime/documents/requirements.lock --index-url https://pypi.org/simple
       - run: npm run migrate && npm run workspace:init
-      - run: npx playwright install --with-deps chromium
       - name: Verify real Office editing, revisions, revocation and recovery
         run: |
           bash scripts/ci/office-setup.sh
@@ -273,6 +312,20 @@ jobs:
           path: .runtime/hermes-source.tar.gz
           key: hermes-source-${{ hashFiles('runtime/hermes/lock.json') }}
       - run: npm ci
+      - name: Prepare the browser before application services
+        run: |
+          stat -Lc 'resolver_permissions=%a' /etc/resolv.conf
+          if getent ahostsv4 archive.ubuntu.com >/dev/null; then
+            echo 'host_dns=available'
+          else
+            echo 'host_dns=unavailable'
+          fi
+          if sudo -u _apt getent ahostsv4 archive.ubuntu.com >/dev/null; then
+            echo 'package_dns=available'
+          else
+            echo 'package_dns=unavailable'
+          fi
+          npx playwright install --with-deps chromium
       - run: python3 runtime/hermes/download.py
       - run: |
           python3 runtime/hermes/bootstrap_cache.py --prepare-build
@@ -281,7 +334,6 @@ jobs:
           docker compose --project-name hyper-deployment-ci --env-file .runtime/compose-ci.env -f compose.yaml -f deploy/compose.ci.yaml config --quiet
       - run: docker compose --project-name hyper-deployment-ci --env-file .runtime/compose-ci.env -f compose.yaml -f deploy/compose.ci.yaml build api
       - run: docker compose --project-name hyper-deployment-ci --env-file .runtime/compose-ci.env -f compose.yaml -f deploy/compose.ci.yaml up -d --no-build --wait --wait-timeout 180
-      - run: npx playwright install --with-deps chromium
       - run: npm run test:deployment
       - name: Verify the private CPU OCR service
         run: |
