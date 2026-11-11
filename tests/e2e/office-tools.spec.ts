@@ -132,8 +132,8 @@ test("Office opens one structure inspection despite StrictMode effect replay", a
   expect(
     await page.evaluate(
       () =>
-        (window as Window & { officeEffectProbe: { inspections: number } })
-          .officeEffectProbe.inspections,
+        (window as Window & { officeEffectProbe?: { inspections: number } })
+          .officeEffectProbe?.inspections,
     ),
   ).toBe(1);
 });

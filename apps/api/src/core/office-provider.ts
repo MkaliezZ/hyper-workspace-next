@@ -33,6 +33,74 @@ const transformed = envelope
   })
   .strict();
 const maxBytes = 8 * 1024 * 1024;
+const compatibilityMessages = new Map<string, string>([
+  [
+    "unsupported_pivot_caption",
+    "此透视表含自定义标题，当前编辑内核无法保证保留。请在原编辑器中处理。",
+  ],
+  [
+    "unsupported_pivot_source",
+    "此透视表的数据源尚不支持自动编辑；当前仅支持同一工作簿中的固定数据范围。",
+  ],
+  [
+    "unsupported_pivot_aggregation",
+    "此透视表的汇总方式尚不支持自动编辑；当前仅支持单一数值字段求和。",
+  ],
+  [
+    "unsupported_pivot_target",
+    "这项修改涉及透视表结果、分组字段或源表头。请修改支持的源数据，或在原编辑器中处理。",
+  ],
+  [
+    "unsupported_pivot_layout",
+    "此透视表的布局或格式尚不支持自动编辑。请在原编辑器中处理。",
+  ],
+  ["unsupported_pivot_range", "此透视表的数据范围超出当前自动编辑的支持范围。"],
+  [
+    "unsupported_pivot_cache",
+    "此透视表的缓存结构尚不支持自动编辑。请在原编辑器中处理。",
+  ],
+  [
+    "unsupported_pivot_value",
+    "此透视表的源数据类型尚不支持自动刷新。请在原编辑器中处理。",
+  ],
+  [
+    "pivot_readback_mismatch",
+    "透视表刷新或保存后的结果无法核对，未生成可确认的副本。",
+  ],
+  [
+    "pivot_cache_mismatch",
+    "透视表刷新或保存后的结果无法核对，未生成可确认的副本。",
+  ],
+]);
+async function failureCode(response: Response): Promise<string | undefined> {
+  const reader = response.body?.getReader();
+  if (!reader) return;
+  try {
+    if (
+      !response.headers.get("content-type")?.startsWith("application/json") ||
+      Number(response.headers.get("content-length")) > 4096
+    )
+      return;
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      size += next.value.length;
+      if (size > 4096) return;
+      chunks.push(next.value);
+    }
+    const code = JSON.parse(Buffer.concat(chunks).toString("utf8"))?.error
+      ?.code;
+    return typeof code === "string" && /^[a-z_]{1,64}$/.test(code)
+      ? code
+      : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+}
 /** Fixed internal runtime only. No employee URL, credentials, paths or executable code cross this boundary. */
 export class OfficeProvider {
   private async request(
@@ -79,13 +147,18 @@ export class OfficeProvider {
         ]),
       });
       if (!response.ok) {
-        await response.body?.cancel();
+        const code = await failureCode(response);
         if ([400, 413, 422].includes(response.status))
           throw new BadRequestException(
-            "Office 文件或操作不符合受限编辑规则。",
+            compatibilityMessages.get(code ?? "") ??
+              "Office 文件或操作不符合受限编辑规则。",
           );
         if (response.status === 409)
           throw new ConflictException("Office 来源或预期内容已变化。");
+        if (response.status === 503 && code === "busy")
+          throw new ServiceUnavailableException(
+            "Office 正在处理另一个文件，请稍后重新打开或重试校验。",
+          );
         throw new Error("office unavailable");
       }
       if (
@@ -116,7 +189,8 @@ export class OfficeProvider {
       input.signal?.throwIfAborted();
       if (
         error instanceof BadRequestException ||
-        error instanceof ConflictException
+        error instanceof ConflictException ||
+        error instanceof ServiceUnavailableException
       )
         throw error;
       throw new ServiceUnavailableException(

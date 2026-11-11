@@ -310,3 +310,47 @@ test("Office provider rejects operator public endpoints and sanitized remote fai
   status = 200;
   change = (v) => v;
 });
+test("Office provider explains only bounded known compatibility codes and never returns runtime details", async () => {
+  const initial = requests;
+  try {
+    for (const [code, expected] of [
+      ["unsupported_pivot_caption", /自定义标题/],
+      ["unsupported_pivot_source", /同一工作簿/],
+      ["unsupported_pivot_aggregation", /求和/],
+      ["pivot_readback_mismatch", /无法核对/],
+      ["busy", /正在处理另一个文件/],
+    ] as const) {
+      status = code === "busy" ? 503 : 422;
+      change = () => ({
+        error: { code, message: "synthetic-private-runtime-detail" },
+      });
+      await assert.rejects(
+        () => provider.inspect({ bytes, format: "docx" }),
+        (error) =>
+          error instanceof Error &&
+          expected.test(error.message) &&
+          !error.message.includes("synthetic-private"),
+      );
+    }
+    status = 422;
+    for (const body of [
+      { error: { code: "unsupported_pivot_caption:synthetic-private" } },
+      {
+        error: { code: "unsupported_pivot_caption" },
+        padding: "x".repeat(4096),
+      },
+    ]) {
+      change = () => body;
+      await assert.rejects(
+        () => provider.inspect({ bytes, format: "docx" }),
+        (error) =>
+          error instanceof Error &&
+          error.message === "Office 文件或操作不符合受限编辑规则。",
+      );
+    }
+    assert.equal(requests, initial + 7);
+  } finally {
+    status = 200;
+    change = (value) => value;
+  }
+});
