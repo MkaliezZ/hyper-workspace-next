@@ -383,6 +383,19 @@ async function topology() {
     "Office installation: private CODE/control topology and real discovery verified",
   );
 }
+export function classifyInstallationPageError(error) {
+  const message = typeof error?.message === "string" ? error.message : "";
+  if (error?.name === "ReferenceError" && message === "__name is not defined")
+    return "transpiler_helper";
+  if (
+    /postMessage.*target origin|target origin.*recipient window/i.test(message)
+  )
+    return "postmessage_origin";
+  if (error?.name === "ReferenceError") return "reference_error";
+  if (error?.name === "TypeError") return "type_error";
+  if (error?.name === "SyntaxError") return "syntax_error";
+  return "other";
+}
 async function probe() {
   const value = await data();
   const { chromium } = await import("@playwright/test");
@@ -406,6 +419,14 @@ async function probe() {
     value.employee +
     "/Installation-probe.docx";
   let browser, context, page, observer;
+  const browserErrors = {
+    transpiler_helper: 0,
+    postmessage_origin: 0,
+    reference_error: 0,
+    type_error: 0,
+    syntax_error: 0,
+    other: 0,
+  };
   let passed = false;
   try {
     const uploaded = await fetch(url, {
@@ -436,6 +457,12 @@ async function probe() {
     browser = await chromium.launch({ headless: true });
     context = await browser.newContext({ locale: "en-US" });
     context.setDefaultTimeout(30000);
+    context.on("page", (candidate) =>
+      candidate.on("pageerror", (error) => {
+        const category = classifyInstallationPageError(error);
+        browserErrors[category] = Math.min(1000, browserErrors[category] + 1);
+      }),
+    );
     observer = await observeOffice(context, value.office, value.source);
     page = await context.newPage();
     await page.goto(value.source + "/login", { waitUntil: "domcontentloaded" });
@@ -466,6 +493,10 @@ async function probe() {
     );
   } finally {
     if (!passed) {
+      console.error(
+        "Office installation browser error categories:",
+        JSON.stringify(browserErrors),
+      );
       try {
         if (observer && page)
           console.error(

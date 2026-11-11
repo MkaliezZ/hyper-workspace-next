@@ -3,14 +3,91 @@ import assert from "node:assert/strict";
 import {
   cleanupOwnedResources,
   validateOfficeTopology,
+  classifyInstallationPageError,
 } from "./office-installation.mjs";
 import {
   saveSourceFixtureKey,
   loadSourceFixtureKey,
 } from "./office-source-fixture.mjs";
-import { mkdtemp, rm, writeFile, lstat, chmod } from "node:fs/promises";
+import {
+  mkdtemp,
+  rm,
+  writeFile,
+  readFile,
+  lstat,
+  chmod,
+} from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
+
+test("installation page errors expose only fixed categories, never messages or URLs", () => {
+  assert.equal(
+    classifyInstallationPageError({
+      name: "ReferenceError",
+      message: "__name is not defined",
+    }),
+    "transpiler_helper",
+  );
+  assert.equal(
+    classifyInstallationPageError({
+      name: "Error",
+      message:
+        "postMessage target origin https://private.invalid/?access_token=synthetic-secret does not match recipient window",
+    }),
+    "postmessage_origin",
+  );
+  assert.equal(
+    classifyInstallationPageError({
+      name: "TypeError",
+      message: "synthetic-secret",
+    }),
+    "type_error",
+  );
+  assert.equal(
+    classifyInstallationPageError({
+      name: "synthetic-secret",
+      message: "synthetic-secret",
+    }),
+    "other",
+  );
+});
+
+test("the installation probe loader keeps the actual Office observer executable in the browser realm", async () => {
+  const shell = await readFile(
+    new URL("./office-installation.sh", import.meta.url),
+    "utf8",
+  );
+  const command = shell.match(
+    /^node (.*?)scripts\/ci\/office-installation\.mjs probe$/m,
+  );
+  assert.ok(
+    command,
+    "Exercise the loader used by the actual installation probe",
+  );
+  const loaderArgs = command[1].trim() ? command[1].trim().split(/\s+/) : [];
+  // addInitScript serializes a function into the browser. Transpiler helpers in
+  // its outer Node scope cannot follow it, even when importing the module succeeds.
+  const script = `
+    import assert from 'node:assert/strict';
+    import vm from 'node:vm';
+    import { observeOffice } from './tests/nextcloud/office-helpers.ts';
+    let injected, config, listener;
+    await observeOffice({on(){},async exposeBinding(){},async addInitScript(fn,args){injected=fn;config=args}},'http://editor.test','http://source.test');
+    const sender={}, iframe={contentWindow:sender,dataset:{}}, reports=[];
+    const window={location:{origin:config.sourceOrigin},addEventListener(name,fn){listener=fn},async __hyperOfficeObserved(value){reports.push(value)}};
+    vm.runInNewContext('('+injected.toString()+')(config)',{window,document:{querySelectorAll:()=>[iframe]},config});
+    listener({origin:config.editorOrigin,source:sender,data:JSON.stringify({MessageId:'App_LoadingStatus',Values:{Status:'Document_Loaded'}})});
+    assert.equal(reports.length,1);
+    assert.equal(reports[0].status,'Document_Loaded');
+  `;
+  await promisify(execFile)(
+    process.execPath,
+    [...loaderArgs, "--input-type=module", "-e", script],
+    { timeout: 10000 },
+  );
+});
 
 test("installation cleanup rejects foreign labels, continues other cleanup and preserves the existing stack", async () => {
   const project = "hyper-deployment-ci",

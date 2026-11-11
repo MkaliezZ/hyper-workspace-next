@@ -64,5 +64,7 @@ occ app:enable hyper_office_guard
 occ richdocuments:activate-config --wopi-url=http://office-gateway:9981 --callback-url=http://nextcloud
 test "$(occ config:app:get richdocuments public_wopi_url)" = http://127.0.0.1:18091
 node scripts/ci/office-installation.mjs topology
-node --import tsx scripts/ci/office-installation.mjs probe
+# The pinned Node runtime strips types without injecting helpers into functions
+# that Playwright serializes into a separate browser JavaScript realm.
+node scripts/ci/office-installation.mjs probe
 node scripts/ci/office-installation.mjs preserved
