@@ -48,6 +48,10 @@ def verify(path, expected):
         assert any(item.get("{" + NS["w"] + "}author") == expected["tracked"]["author"]
                    and expected["tracked"]["text"] in texts(item)
                    for item in document.findall(".//w:ins", NS)), "The authored tracked insertion is absent"
+        if expected["tracked"].get("deletedText"):
+            assert any(item.get("{" + NS["w"] + "}author") == expected["tracked"]["author"]
+                       and expected["tracked"]["deletedText"] in "".join(node.text or "" for node in item.findall(".//w:delText", NS))
+                       for item in document.findall(".//w:del", NS)), "The authored tracked deletion is absent"
     if expected.get("accepted"):
         assert not document.findall(".//w:ins", NS) and not document.findall(".//w:del", NS), "Tracked revisions remain after acceptance"
     return {"edits": len(expected.get("text", [])),

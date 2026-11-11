@@ -232,12 +232,17 @@ test("Two real Office users preserve simultaneous edits, authored comments, and 
     await verify({
       text: [markers.alice, markers.bob, markers.revision],
       comments: { [owner]: markers.comment, [collaborator]: markers.reply },
-      tracked: { author: owner, text: markers.revision },
+      tracked: {
+        author: owner,
+        text: markers.revision,
+        deletedText: "Revision target",
+      },
     });
     await acceptOfficeRevisions(bob.editor, bob.frame);
     await verify({
       text: [markers.alice, markers.bob, markers.revision],
       comments: { [owner]: markers.comment, [collaborator]: markers.reply },
+      absent: ["Revision target"],
       accepted: true,
     });
   } catch (error) {

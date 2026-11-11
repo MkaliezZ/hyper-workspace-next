@@ -59,12 +59,15 @@ async function reviewControl(
 ) {
   await frame.locator("#Review-tab-label").click();
   const button = frame.locator(`.${command} > button.unobutton:visible`);
-  if ((await button.count()) === 0)
-    await frame
-      .locator(
-        '#Review-container [id^="overflow-button-review-tracking"].menubutton:visible .arrowbackground',
-      )
-      .click();
+  const overflow = frame.locator(
+    '#Review-container [id^="overflow-button-review-tracking"].menubutton:visible .arrowbackground',
+  );
+  await expect
+    .poll(
+      async () => (await button.isVisible()) || (await overflow.isVisible()),
+    )
+    .toBe(true);
+  if (!(await button.isVisible())) await overflow.click();
   return button;
 }
 
