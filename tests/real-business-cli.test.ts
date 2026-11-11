@@ -34,6 +34,28 @@ test("Real supplier business CLI defaults to a no-call preflight even with inval
 });
 
 const methods = new URL("../scripts/real-methods-smoke.ts", import.meta.url);
+const office = new URL("../scripts/real-office-smoke.ts", import.meta.url);
+test("Office supplier CLI defaults to a no-call preflight and describes the isolated real-core checks", () => {
+  const result = invoke([], office);
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0);
+  const preflight = JSON.parse(result.stdout);
+  assert.equal(preflight.requestsSent, 0);
+  assert.equal(preflight.businessRuns, 12);
+  assert.equal(preflight.executionMayBeBillable, true);
+  assert.equal(result.stderr, "");
+  assert.ok(!result.stdout.includes(sentinel));
+});
+test("Office supplier CLI rejects missing isolation and unknown arguments without leaking private values", () => {
+  for (const args of [["--execute"], ["--execute", sentinel]]) {
+    const result = invoke(args, office);
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /Office supplier verification failed/);
+    assert.ok(!result.stderr.includes(sentinel));
+  }
+});
 const localTools = [
   new URL("../runtime/evaluations/embedding-server.mjs", import.meta.url),
   new URL("../runtime/evaluations/download-embedding.mjs", import.meta.url),

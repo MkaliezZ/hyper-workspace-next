@@ -37,7 +37,7 @@
 
 Windows 端已接续开发，预设回调地址与加载探针的问题已修复并合入主分支。`fd616a8` 的[四项 CI 全部通过](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42919022456)。后续本机测试已实际编辑、保存并回读三种格式，核对段落/加粗/表格、跨表公式结果/筛选/数据验证/图表及演示文稿表格。多人协作、修订和更复杂的工作簿继续逐项验证。 [接续记录](docs/IMPLEMENTATION.md)
 
-Office 助手新增可编辑的修改方案与新副本回执。人工、DSH 和 Hermes 接入相同业务服务，按所选源版本起草、校验并保存方案，再确认生成可继续编辑的副本；结果不明时只回读核对。同一固定 Collabora 内核负责在线编辑和后台变换，后台服务通过独立内网部署。真实同核三格式变换及两项桌面/手机协议测试已通过；本批双原生执行器和组合部署由当前 CI 核验，真实供应商模型尚待此功能专项验证。 [方案、权限与恢复](docs/OFFICE-TOOLS.md) · [批处理安装](runtime/office/README.md) · [手机方案对照](docs/images/office-tools-mobile.png)
+Office 助手新增可编辑的修改方案与新副本回执。人工、DSH 和 Hermes 接入相同业务服务，按所选源版本起草、校验并保存方案，再确认生成可继续编辑的副本；结果不明时只回读核对。同一固定 Collabora 内核负责在线编辑和后台变换，后台服务通过独立内网部署。双原生执行器与组合部署已有 CI 通过证据；实际 DeepSeek 已完成两执行器、三格式的六份副本检查，首轮不完整方案和部分用量保留。真实 Nextcloud 产品界面新增流程与透视表受控范围继续按当前提交 CI 核验。 [真实模型记录](docs/REAL-OFFICE-ACCEPTANCE.md) · [方案、权限与恢复](docs/OFFICE-TOOLS.md) · [批处理安装](runtime/office/README.md) · [手机方案对照](docs/images/office-tools-mobile.png)
 
 ![Office 修改方案与生成副本确认，合成测试资料](docs/images/office-tools-desktop.png)
 
