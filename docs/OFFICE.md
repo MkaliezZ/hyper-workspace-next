@@ -67,8 +67,10 @@ office_install_connector() {
     office_occ integrity:check-app richdocuments
 }
 office_install_connector
-editor_ip="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$editor_container")"
-gateway_ip="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$gateway_container")"
+office_project="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$gateway_container")"
+office_network="${office_project}_office"
+editor_ip="$(docker inspect --format "{{(index .NetworkSettings.Networks \"$office_network\").IPAddress}}" "$editor_container")"
+gateway_ip="$(docker inspect --format "{{(index .NetworkSettings.Networks \"$office_network\").IPAddress}}" "$gateway_container")"
 test -n "$editor_ip"
 test -n "$gateway_ip"
 office_occ config:app:set richdocuments wopi_allowlist --value="$editor_ip,$gateway_ip"
@@ -92,7 +94,7 @@ office_occ richdocuments:activate-config --wopi-url=http://office-gateway:9981 -
 office_occ config:app:get richdocuments public_wopi_url
 ```
 
-公开编辑器地址应为公司固定 IP 上的 `https://192.168.10.50:8444`。安装 [Office Nginx 模板](../deploy/nginx.office.intranet.conf.example)，替换监听 IP、证书路径和回环端口，执行 `nginx -t` 后再重载。通过受信任的公司根证书访问 `/hosting/discovery`，再从员工浏览器打开 DOCX、XLSX 和 PPTX。公共端口只映射到网关，Collabora 不发布主机端口；文件回调和设置预设走隔离容器网络。此组合要求 Nextcloud 安装在来源地址根路径。已有外部来源必须同样安装伴随应用，并按实际内部地址、网关直连 IP 与 WOPI 来源配置专用网络。
+公开编辑器地址应为公司固定 IP 上的 `https://192.168.10.50:8444`。安装 [Office Nginx 模板](../deploy/nginx.office.intranet.conf.example)，替换监听 IP、证书路径和回环端口，执行 `nginx -t` 后再重载。通过受信任的公司根证书访问 `/hosting/discovery`，再从员工浏览器打开 DOCX、XLSX 和 PPTX。网关同时接入专用 `office-ingress` 网络和隔离的 `office` 网络；前者支持回环数据端口映射，后者承载来源检查和编辑器流量。本次 Linux Docker 实测中，网关仅接入 internal 网络时未建立可用的宿主端口映射。Collabora 仅接入 internal `office` 网络且不发布主机端口；网关控制端口也不发布。此组合要求 Nextcloud 安装在来源地址根路径。已有外部来源必须同样安装伴随应用，并按实际内部地址、网关在来源网络上的直连 IP 与 WOPI 来源配置专用网络。
 
 `hyper_office_guard` 是本仓库维护的独立 Nextcloud 33 应用。它按当前文件读取/修改权限、账号状态和工作区成员组复核 WOPI 身份。普通共享删除和权限更新先暂停编辑流，再按变更后的权限恢复合法会话；其他权限变化以事件通知和短租约复核补充。复核超时会关闭会话。源变更与网关通知不是跨系统事务，不能承诺任意后台路径在零延迟内失效。网关初版限制编辑器导出、剪贴板文件及转换 HTTP 路由；原件和已保存副本通过 Nextcloud 当前授权下载。真实撤权与保存冲突的验收状态以对应提交的专项测试为准。
 

@@ -1,6 +1,8 @@
 # Office 活动会话网关
 
-该服务把固定 Nextcloud 的当前权限检查放在固定 CODE 浏览器连接前。它不编辑文件、不运行办公内核、不修改签名 richdocuments。必须把 CODE 放在仅网关可访问的内部网络，且不发布 CODE 宿主端口；公开编辑器地址指向网关数据端口。容器编排和真实编辑器验收由仓库部署/Nextcloud 测试负责。
+该服务把固定 Nextcloud 的当前权限检查放在固定 CODE 浏览器连接前。它不编辑文件、不运行办公内核、不修改签名 richdocuments。必须把 CODE 放在受控的内部网络，且不发布 CODE 宿主端口；公开编辑器地址指向网关数据端口。容器编排和真实编辑器验收由仓库部署/Nextcloud 测试负责。
+
+正式 Compose 中，CODE 只接入 internal `office` 网络；网关还接入独立的普通 `office-ingress` 网络，以便将数据端口发布到宿主回环地址，再由公司 HTTPS 代理转发。本次 Linux Docker 实测中，仅接入 internal 网络时未建立可用的宿主端口映射。控制端口不发布；来源白名单必须使用网关在 `office` 网络上的 IP，不能拼接两张网卡地址。
 
 ## 运行与依赖
 

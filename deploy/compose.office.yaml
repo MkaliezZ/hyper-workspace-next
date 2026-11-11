@@ -35,7 +35,7 @@ services:
     volumes:
       - ./.runtime/office-guard/secret:/run/secrets/office_guard:ro
     ports: ["127.0.0.1:${HYPER_OFFICE_PORT:-8091}:9981"]
-    networks: [office]
+    networks: [office, office-ingress]
     depends_on:
       collabora: { condition: service_started }
     healthcheck:
@@ -50,3 +50,5 @@ services:
 networks:
   office:
     internal: true
+  office-ingress:
+    internal: false

@@ -42,8 +42,9 @@ docker exec --user root "$source_container" chown -R www-data:www-data /var/www/
 occ app:enable richdocuments
 occ integrity:check-app richdocuments
 test "$(occ config:app:get richdocuments installed_version)" = 10.3.3
-editor_ip="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$editor_container")"
-gateway_ip="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$gateway_container")"
+office_network="${COMPOSE_TEST_PROJECT}_office"
+editor_ip="$(docker inspect --format "{{(index .NetworkSettings.Networks \"$office_network\").IPAddress}}" "$editor_container")"
+gateway_ip="$(docker inspect --format "{{(index .NetworkSettings.Networks \"$office_network\").IPAddress}}" "$gateway_container")"
 test -n "$editor_ip"
 test -n "$gateway_ip"
 occ config:app:set richdocuments wopi_allowlist --value="$editor_ip,$gateway_ip"

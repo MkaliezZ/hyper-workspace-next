@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { cleanupOwnedResources } from "./office-installation.mjs";
+import {
+  cleanupOwnedResources,
+  validateOfficeTopology,
+} from "./office-installation.mjs";
 import {
   saveSourceFixtureKey,
   loadSourceFixtureKey,
@@ -77,35 +80,101 @@ test("installation cleanup never removes a product database volume or unlabelled
   }
 });
 
-test("installation cleanup only removes its labelled empty Office network", async () => {
+test("installation cleanup only removes its labelled empty Office and ingress networks", async () => {
   const project = "hyper-deployment-ci";
   for (const [label, containers, allowed] of [
     [project, {}, true],
     ["foreign", {}, false],
     [project, { foreignEndpoint: {} }, false],
   ]) {
-    let removed = false;
+    const removed = [];
     const failures = await cleanupOwnedResources(
       { project, sourceVolume: project + "_nextcloud_data" },
       {},
       {
         volumeLabels: () => undefined,
         verifyPreserved: () => {},
-        networkInfo: () => ({
+        networkInfo: (name) => ({
           Labels: {
             "com.docker.compose.project": label,
-            "com.docker.compose.network": "office",
+            "com.docker.compose.network": name.slice(project.length + 1),
           },
           Containers: containers,
         }),
         removeNetwork: (name) => {
-          assert.equal(name, project + "_office");
-          removed = true;
+          removed.push(name);
         },
       },
     );
-    assert.equal(removed, allowed);
-    assert.deepEqual(failures, allowed ? [] : ["network_cleanup_failed"]);
+    assert.deepEqual(
+      removed,
+      allowed ? [project + "_office", project + "_office-ingress"] : [],
+    );
+    assert.deepEqual(
+      failures,
+      allowed ? [] : ["network_cleanup_failed", "network_cleanup_failed"],
+    );
+  }
+});
+
+test("installation topology requires real loopback publication, private CODE and a separate gateway ingress", () => {
+  const project = "hyper-deployment-ci";
+  const snapshot = {
+    codePorts: { "9980/tcp": null },
+    guardPorts: {
+      "9981/tcp": [{ HostIp: "127.0.0.1", HostPort: "18091" }],
+      "9982/tcp": null,
+    },
+    codeNetworks: { [project + "_office"]: {} },
+    guardNetworks: {
+      [project + "_office"]: {},
+      [project + "_office-ingress"]: {},
+    },
+    office: {
+      Internal: true,
+      Labels: {
+        "com.docker.compose.project": project,
+        "com.docker.compose.network": "office",
+      },
+    },
+    ingress: {
+      Internal: false,
+      Labels: {
+        "com.docker.compose.project": project,
+        "com.docker.compose.network": "office-ingress",
+      },
+    },
+  };
+  assert.doesNotThrow(() => validateOfficeTopology(project, snapshot));
+  for (const mutate of [
+    // Actual Docker result for internal-only: configured HostConfig bindings exist,
+    // but NetworkSettings has no published port and loopback connections fail.
+    (s) => {
+      s.guardPorts["9981/tcp"] = null;
+      delete s.guardNetworks[project + "_office-ingress"];
+    },
+    (s) => {
+      s.guardPorts["9981/tcp"][0].HostIp = "0.0.0.0";
+    },
+    (s) => {
+      s.guardPorts["9982/tcp"] = [{ HostIp: "127.0.0.1", HostPort: "18092" }];
+    },
+    (s) => {
+      s.codeNetworks[project + "_office-ingress"] = {};
+    },
+    (s) => {
+      s.codePorts["9980/tcp"] = [{ HostIp: "127.0.0.1", HostPort: "18093" }];
+    },
+    (s) => {
+      s.office.Internal = false;
+    },
+    (s) => {
+      s.ingress.Labels["com.docker.compose.project"] = "foreign";
+    },
+  ]) {
+    const candidate = structuredClone(snapshot);
+    mutate(candidate);
+    assert.throws(() => validateOfficeTopology(project, candidate));
   }
 });
 

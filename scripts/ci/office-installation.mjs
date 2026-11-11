@@ -132,10 +132,17 @@ async function prepare() {
     ]),
     "",
   );
-  assert.equal(
-    docker(["network", "ls", "-q", "--filter", `name=^${project}_office$`]),
-    "",
-  );
+  for (const network of ["office", "office-ingress"])
+    assert.equal(
+      docker([
+        "network",
+        "ls",
+        "-q",
+        "--filter",
+        `name=^${project}_${network}$`,
+      ]),
+      "",
+    );
   await mkdir(directory, { mode: 0o700 }); // No recursive overwrite/reuse of a previous run.
   const value = {
     project,
@@ -281,6 +288,36 @@ async function preserved() {
     "Office installation: pre-existing services and health preserved",
   );
 }
+export function validateOfficeTopology(project, snapshot) {
+  const {
+    codePorts,
+    guardPorts,
+    codeNetworks,
+    guardNetworks,
+    office,
+    ingress,
+  } = snapshot;
+  assert.ok(Object.values(codePorts || {}).every((value) => value === null));
+  assert.deepEqual(
+    Object.fromEntries(
+      Object.entries(guardPorts || {}).filter(([, value]) => value !== null),
+    ),
+    { "9981/tcp": [{ HostIp: "127.0.0.1", HostPort: "18091" }] },
+  );
+  assert.deepEqual(Object.keys(codeNetworks), [project + "_office"]);
+  assert.deepEqual(
+    Object.keys(guardNetworks).sort(),
+    [project + "_office", project + "_office-ingress"].sort(),
+  );
+  for (const [name, network, internal] of [
+    ["office", office, true],
+    ["office-ingress", ingress, false],
+  ]) {
+    assert.equal(network.Internal, internal);
+    assert.equal(network.Labels?.["com.docker.compose.project"], project);
+    assert.equal(network.Labels?.["com.docker.compose.network"], name);
+  }
+}
 async function topology() {
   const value = await data(),
     env = resolve(directory, "compose.env");
@@ -291,15 +328,10 @@ async function topology() {
   const codePorts = JSON.parse(
     docker(["inspect", "--format", "{{json .NetworkSettings.Ports}}", code]),
   );
-  assert.ok(Object.values(codePorts || {}).every((value) => value === null));
   const guardPorts = JSON.parse(
     docker(["inspect", "--format", "{{json .NetworkSettings.Ports}}", guard]),
   );
-  assert.ok(!guardPorts["9982/tcp"]);
-  assert.deepEqual(guardPorts["9981/tcp"], [
-    { HostIp: "127.0.0.1", HostPort: "18091" },
-  ]);
-  const networks = JSON.parse(
+  const guardNetworks = JSON.parse(
     docker([
       "inspect",
       "--format",
@@ -307,11 +339,25 @@ async function topology() {
       guard,
     ]),
   );
-  assert.equal(Object.keys(networks).length, 1);
-  const network = Object.keys(networks)[0];
-  assert.equal(
-    docker(["network", "inspect", "--format", "{{.Internal}}", network]),
-    "true",
+  const codeNetworks = JSON.parse(
+    docker(["inspect", "--format", "{{json .NetworkSettings.Networks}}", code]),
+  );
+  const office = JSON.parse(
+    docker(["network", "inspect", value.project + "_office"]),
+  )[0];
+  const ingress = JSON.parse(
+    docker(["network", "inspect", value.project + "_office-ingress"]),
+  )[0];
+  validateOfficeTopology(value.project, {
+    codePorts,
+    guardPorts,
+    codeNetworks,
+    guardNetworks,
+    office,
+    ingress,
+  });
+  console.log(
+    "Office installation: private CODE, separate ingress and loopback data-only port verified",
   );
   const discovery = await fetch(value.office + "/hosting/discovery", {
     redirect: "error",
@@ -475,20 +521,23 @@ export async function cleanupOwnedResources(value, owned, operations) {
     failures.push("volume_cleanup_failed");
   }
   if (operations.networkInfo) {
-    try {
-      const network = await operations.networkInfo(value.project + "_office");
-      if (network) {
-        assert.equal(
-          network.Labels?.["com.docker.compose.project"],
-          value.project,
+    for (const name of ["office", "office-ingress"])
+      try {
+        const network = await operations.networkInfo(
+          value.project + "_" + name,
         );
-        assert.equal(network.Labels?.["com.docker.compose.network"], "office");
-        assert.equal(Object.keys(network.Containers || {}).length, 0);
-        await operations.removeNetwork(value.project + "_office");
+        if (network) {
+          assert.equal(
+            network.Labels?.["com.docker.compose.project"],
+            value.project,
+          );
+          assert.equal(network.Labels?.["com.docker.compose.network"], name);
+          assert.equal(Object.keys(network.Containers || {}).length, 0);
+          await operations.removeNetwork(value.project + "_" + name);
+        }
+      } catch {
+        failures.push("network_cleanup_failed");
       }
-    } catch {
-      failures.push("network_cleanup_failed");
-    }
   }
   try {
     await operations.verifyPreserved();
