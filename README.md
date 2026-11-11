@@ -1,6 +1,6 @@
 # Hyper Workspace
 
-> **Windows 开发交接 · 2026-11-11**　[PRD](docs/PRD.md) · [接手步骤、已知 CI 问题与待办](docs/WINDOWS-HANDOFF.md) · [阶段源码包](https://github.com/MkaliezZ/hyper-workspace-next/releases)
+> **扩展阶段源码与安装**　[软件内容与安装顺序](docs/DELIVERY.md) · [PRD](docs/PRD.md) · [版本、归档与核验记录](https://github.com/MkaliezZ/hyper-workspace-next/releases) · [Windows 接续记录](docs/WINDOWS-HANDOFF.md)
 
 
 > **扩展阶段开发仓库 hyper-workspace-next** 由首阶段 `61082e0` 派生，按日历排期 → 复杂审批 → 图片 OCR → 复杂表格与 Office 协作推进。 [扩展基线 v2.0](docs/PHASE2-BASELINE.md)
@@ -33,11 +33,11 @@
 
 ## 复杂表格与 Office 协作
 
-企业文件已加入 DOCX、XLSX 和 PPTX 的统一 Office 入口。服务核对员工权限和所选版本，再通过 Nextcloud 打开。返回后可核对来源是否已有新版本。桌面和手机入口已通过合成来源验证，当前推进真实编辑器、协作保存与双执行器操作。 [Office 接入与验证范围](docs/OFFICE.md) · [手机入口](docs/images/office-source-link-mobile.png)
+企业文件已加入 DOCX、XLSX 和 PPTX 的统一 Office 入口。服务核对员工权限和所选版本，再通过 Nextcloud 打开。返回后可核对来源是否已有新版本。固定编辑器前的独立网关与 Nextcloud 伴随应用持续检查当前访问权；普通共享删除和降权先暂停编辑流。桌面和手机入口、实际编辑和来源保存分别验证。 [Office 接入与验证范围](docs/OFFICE.md) · [手机入口](docs/images/office-source-link-mobile.png)
 
-Windows 端已接续开发，预设回调地址与加载探针的问题已修复并合入主分支。`b3eaf5c` 的[四项 CI 全部通过](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42930241845)：真实三格式编辑、保存回读、双人修改与评论、同核批处理和 Nextcloud 新副本检查通过。另已验证受控命名表与 SUM 透视，兼容范围逐项保留。新增修订接受、活动会话撤权与保存冲突恢复继续按当前提交核验。 [接续记录](docs/IMPLEMENTATION.md)
+Windows 接续后修复了预设回调地址与加载探针。`b3eaf5c` 的[四项 CI 全部通过](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42930241845)：真实三格式编辑、保存回读、双人修改与评论、同核批处理和 Nextcloud 新副本检查通过。受控命名表与 SUM 透视的兼容范围逐项保留。发布检查还包括真实修订接受、活动会话撤权、保存冲突恢复及正式 Compose 安装链；各版本的实际通过状态以对应 Actions 和源码包清单为准。 [接续记录](docs/IMPLEMENTATION.md)
 
-Office 助手新增可编辑的修改方案与新副本回执。人工、DSH 和 Hermes 接入相同业务服务，按所选源版本起草、校验并保存方案，再确认生成可继续编辑的副本；结果不明时只回读核对。同一固定 Collabora 内核负责在线编辑和后台变换，后台服务通过独立内网部署。双原生执行器与组合部署已有 CI 通过证据；实际 DeepSeek 已完成两执行器、三格式的六份副本检查，首轮不完整方案和部分用量保留。真实 Nextcloud 产品界面新增流程与透视表受控范围继续按当前提交 CI 核验。 [真实模型记录](docs/REAL-OFFICE-ACCEPTANCE.md) · [方案、权限与恢复](docs/OFFICE-TOOLS.md) · [批处理安装](runtime/office/README.md) · [手机方案对照](docs/images/office-tools-mobile.png)
+Office 助手提供可编辑的修改方案与新副本回执。人工、DSH 和 Hermes 接入相同业务服务，按所选源版本起草、校验并保存方案，再确认生成可继续编辑的副本；结果不明时只回读核对。同一固定 Collabora 内核负责在线编辑和后台变换，后台服务通过独立内网部署。双原生执行器与组合部署已有 CI 证据；实际 DeepSeek 已完成两执行器、三格式的六份副本检查，首轮不完整方案和部分用量保留。 [真实模型记录](docs/REAL-OFFICE-ACCEPTANCE.md) · [方案、权限与恢复](docs/OFFICE-TOOLS.md) · [批处理安装](runtime/office/README.md) · [手机方案对照](docs/images/office-tools-mobile.png)
 
 ![Office 修改方案与生成副本确认，合成测试资料](docs/images/office-tools-desktop.png)
 

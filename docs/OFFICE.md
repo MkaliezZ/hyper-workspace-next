@@ -12,7 +12,7 @@
 
 `b3eaf5c` 的[四项 CI 已通过](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42930241845)。真实 Collabora UI 修改并保存 DOCX/XLSX/PPTX，WebDAV 下载后核对内容和保留结构，再回工作台确认来源版本变化。双人修改与评论也已通过。覆盖 DOCX 段落/加粗/表格，XLSX 公式缓存/跨表结果/筛选/数据验证/图表，PPTX 幻灯片/表格；样例结果对应这些已列明的结构。
 
-PostgreSQL 与合成 WebDAV 来源覆盖功能开关、员工本人、同工作区管理员无文件权限、共享后打开、撤销读取后拒绝、文件 ID 或 ETag 变化，以及不支持的格式。桌面和手机入口已验证。[OfficeTools](OFFICE-TOOLS.md) 使用同版内核生成可编辑副本，人工/DSH/Hermes 共用权限、方案和回执；真实供应商六份三格式副本的记录见[模型验收](REAL-OFFICE-ACCEPTANCE.md)。命名表与受控 SUM 透视的固定内核验证已通过，限制见[兼容记录](../runtime/office/COMPATIBILITY.md)。新增修订接受、活动会话撤权、保存冲突恢复和网关组合安装仍待各自当前提交的专项结果。 [合成表格的手机入口](images/office-source-link-mobile.png)
+PostgreSQL 与合成 WebDAV 来源覆盖功能开关、员工本人、同工作区管理员无文件权限、共享后打开、撤销读取后拒绝、文件 ID 或 ETag 变化，以及不支持的格式。桌面和手机入口已验证。[OfficeTools](OFFICE-TOOLS.md) 使用同版内核生成可编辑副本，人工/DSH/Hermes 共用权限、方案和回执；真实供应商六份三格式副本的记录见[模型验收](REAL-OFFICE-ACCEPTANCE.md)。命名表与受控 SUM 透视的固定内核验证已通过，限制见[兼容记录](../runtime/office/COMPATIBILITY.md)。修订接受、活动会话撤权、保存冲突恢复和网关组合安装是发布前必须通过的专项检查；发布清单给出对应 revision 与完整 CI 结果。 [合成表格的手机入口](images/office-source-link-mobile.png)
 
 GitHub Actions 的独立 Office job 使用固定镜像与连接器，检查三格式加载、真实编辑保存、双人协作、同核批处理及真实 Nextcloud 新副本。加载断言仍要求 Collabora 报告文档完成，保存断言要求来源文件回读，两个结果分别核对。
 

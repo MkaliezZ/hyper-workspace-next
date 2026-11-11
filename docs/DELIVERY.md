@@ -1,6 +1,8 @@
 # Hyper Workspace 软件交付入口
 
-首阶段沿用冻结三层定义与 DSH 默认/Hermes 必需的技术基线。软件、技术验收、公司安装与组织签收分别记录。公司已选择局域网 Linux 服务器，机器和内网 IP 仍“待准备”；云端合成试用不替代该机器。
+软件沿用冻结三层定义与 DSH 默认/Hermes 必需的技术基线，扩展模块的安装增量见本页末尾。每个源码包的 `manifest.json` 记录完整 Git revision、源码归档 SHA-256、逐文件清单和该 revision 的 CI；`SHA256SUMS.txt` 用于核对归档与清单。当前包和版本说明从 [hyper-workspace-next Releases](https://github.com/MkaliezZ/hyper-workspace-next/releases) 获取。
+
+软件、技术验收、公司安装与组织签收分别记录。公司已选择局域网 Linux 服务器，机器和内网 IP 仍“待准备”；云端合成试用不替代该机器。
 
 ## 安装顺序
 
@@ -22,7 +24,7 @@
 
 ## 尚待公司环境完成
 
-目标机/固定 IP、内部证书分发、公司员工与实际权限、目标机容量、多员工冷加载及正式安装签收。供应商费用须在公司选择的价格/预算策略下记录，现有真实试用 unpriced/unknown 不填成零。自动供应商账单对账、执行器私有检查点热迁移、Calendar/复杂办公与媒体后续阶段均不冒称已实现；冻结首阶段范围不缩减。
+目标机/固定 IP、内部证书分发、公司员工与实际权限、目标机容量、多员工冷加载及正式安装签收仍待公司环境。供应商费用按公司选择的价格/预算策略记录，现有真实试用 unpriced/unknown 保留原状态。自动供应商账单对账、执行器私有检查点热迁移及本轮之外的音视频/媒体编辑尚未实现；日历、审批、OCR 与 Office 按下面的扩展范围安装。
 
 ## 扩展仓库的安装增量
 
@@ -30,7 +32,7 @@
 
 - 日历启用 `NEXTCLOUD_CALENDAR_ENABLED=true`，先完成来源 Calendar/CalDAV 和员工权限设置；审批使用产品数据库，管理员发布流程后才供员工提交。
 - OCR 在原部署组合后加入 `deploy/compose.local-ocr.yaml`；服务权重固定并在构建时校验，安装与样例范围见 [OCR](OCR.md)。
-- 在线办公按 [Office](OFFICE.md)准备受限连接器设置、HTTPS 入口与 `deploy/compose.office.yaml`。该叠加文件用于本仓库自管 Nextcloud 的组合；已有外部来源按其实际地址配置。
+- 在线办公按 [Office](OFFICE.md)准备受限连接器设置、私有网关秘密、来源伴随应用、HTTPS 入口与 `deploy/compose.office.yaml`。该叠加文件用于本仓库自管 Nextcloud 的组合；已有外部来源按其实际地址与直连网关 IP 配置。编辑器本体和网关控制端口均不公开。
 - 生成可编辑副本另加入 `deploy/compose.office-tools.yaml`，按 [批处理安装](../runtime/office/README.md)构建同核服务。保留此前用于来源、OCR、内网代理及证书的所有叠加文件，不用新模块示例替换原安装命令。API/Worker 与相关内网服务一起验证，数据库迁移和受限角色由初始化服务处理。
 
 新安装使用生成器创建的 `.env.compose`；已有安装沿用原配置文件、主密钥与数据卷。Office 提案/来源写入进入不明状态时先对账，回退应用不代表已生成的来源副本被撤销。复杂工作簿的支持范围及已知标题限制见 [同核兼容记录](../runtime/office/COMPATIBILITY.md)。
