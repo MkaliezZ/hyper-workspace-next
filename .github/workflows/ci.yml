@@ -34,16 +34,8 @@ jobs:
       CREDENTIAL_MASTER_KEY: "abababababababababababababababababababababababababababababababab"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Use the canonical Ubuntu archive
-        run: |
-          for apt_source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
-            if [ -f "$apt_source" ]; then
-              sudo sed -i -E \
-                -e 's#https?://azure[.]archive[.]ubuntu[.]com/ubuntu#https://archive.ubuntu.com/ubuntu#g' \
-                -e 's#mirror[+]file:/etc/apt/apt-mirrors[.]txt#https://archive.ubuntu.com/ubuntu/#g' "$apt_source"
-              grep -E '^URIs:|^deb ' "$apt_source" || true
-            fi
-          done
+      - name: Configure signed Ubuntu mirror fallback
+        run: bash scripts/ci/ubuntu-apt.sh
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24.14.1"
@@ -57,21 +49,7 @@ jobs:
           key: hermes-source-${{ hashFiles('runtime/hermes/lock.json') }}
       - run: npm ci
       - name: Prepare the browser before application services
-        run: |
-          stat -Lc 'resolver_permissions=%a' /etc/resolv.conf
-          python3 scripts/ci/test_ubuntu_dns.py
-          sudo --preserve-env=GITHUB_ACTIONS python3 scripts/ci/ubuntu-dns.py
-          if getent ahostsv4 archive.ubuntu.com >/dev/null; then
-            echo 'host_dns=available'
-          else
-            echo 'host_dns=unavailable'
-          fi
-          if sudo -u _apt getent ahostsv4 archive.ubuntu.com >/dev/null; then
-            echo 'package_dns=available'
-          else
-            echo 'package_dns=unavailable'
-          fi
-          npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium
       - run: node scripts/dependency-inventory.mjs --check
       - run: npm audit --audit-level=high --registry=https://registry.npmjs.org
       - name: Verify the intranet IP TLS proxy in an isolated loopback environment
@@ -134,16 +112,8 @@ jobs:
       NEXTCLOUD_CALENDAR_ENABLED: "true"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Use the canonical Ubuntu archive
-        run: |
-          for apt_source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
-            if [ -f "$apt_source" ]; then
-              sudo sed -i -E \
-                -e 's#https?://azure[.]archive[.]ubuntu[.]com/ubuntu#https://archive.ubuntu.com/ubuntu#g' \
-                -e 's#mirror[+]file:/etc/apt/apt-mirrors[.]txt#https://archive.ubuntu.com/ubuntu/#g' "$apt_source"
-              grep -E '^URIs:|^deb ' "$apt_source" || true
-            fi
-          done
+      - name: Configure signed Ubuntu mirror fallback
+        run: bash scripts/ci/ubuntu-apt.sh
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24.14.1"
@@ -157,21 +127,7 @@ jobs:
           key: hermes-source-${{ hashFiles('runtime/hermes/lock.json') }}
       - run: npm ci
       - name: Prepare the browser before application services
-        run: |
-          stat -Lc 'resolver_permissions=%a' /etc/resolv.conf
-          python3 scripts/ci/test_ubuntu_dns.py
-          sudo --preserve-env=GITHUB_ACTIONS python3 scripts/ci/ubuntu-dns.py
-          if getent ahostsv4 archive.ubuntu.com >/dev/null; then
-            echo 'host_dns=available'
-          else
-            echo 'host_dns=unavailable'
-          fi
-          if sudo -u _apt getent ahostsv4 archive.ubuntu.com >/dev/null; then
-            echo 'package_dns=available'
-          else
-            echo 'package_dns=unavailable'
-          fi
-          npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium
       - run: npm ci --prefix runtime/dsh
       - run: python3 runtime/hermes/download.py
       - run: python3 runtime/hermes/install.py
@@ -222,16 +178,8 @@ jobs:
       NEXTCLOUD_OFFICE_ENABLED: "true"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Use the canonical Ubuntu archive
-        run: |
-          for apt_source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
-            if [ -f "$apt_source" ]; then
-              sudo sed -i -E \
-                -e 's#https?://azure[.]archive[.]ubuntu[.]com/ubuntu#https://archive.ubuntu.com/ubuntu#g' \
-                -e 's#mirror[+]file:/etc/apt/apt-mirrors[.]txt#https://archive.ubuntu.com/ubuntu/#g' "$apt_source"
-              grep -E '^URIs:|^deb ' "$apt_source" || true
-            fi
-          done
+      - name: Configure signed Ubuntu mirror fallback
+        run: bash scripts/ci/ubuntu-apt.sh
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24.14.1"
@@ -241,21 +189,7 @@ jobs:
           python-version: "3.14.6"
       - run: npm ci
       - name: Prepare the browser before application services
-        run: |
-          stat -Lc 'resolver_permissions=%a' /etc/resolv.conf
-          python3 scripts/ci/test_ubuntu_dns.py
-          sudo --preserve-env=GITHUB_ACTIONS python3 scripts/ci/ubuntu-dns.py
-          if getent ahostsv4 archive.ubuntu.com >/dev/null; then
-            echo 'host_dns=available'
-          else
-            echo 'host_dns=unavailable'
-          fi
-          if sudo -u _apt getent ahostsv4 archive.ubuntu.com >/dev/null; then
-            echo 'package_dns=available'
-          else
-            echo 'package_dns=unavailable'
-          fi
-          npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium
       - run: bash scripts/ci/nextcloud-setup.sh
       - run: python3 -m venv .runtime/documents && .runtime/documents/bin/python -m pip install --require-hashes -r runtime/documents/requirements.lock --index-url https://pypi.org/simple
       - run: npm run migrate && npm run workspace:init
@@ -299,16 +233,8 @@ jobs:
       HYPER_REVISION: ${{ github.sha }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Use the canonical Ubuntu archive
-        run: |
-          for apt_source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
-            if [ -f "$apt_source" ]; then
-              sudo sed -i -E \
-                -e 's#https?://azure[.]archive[.]ubuntu[.]com/ubuntu#https://archive.ubuntu.com/ubuntu#g' \
-                -e 's#mirror[+]file:/etc/apt/apt-mirrors[.]txt#https://archive.ubuntu.com/ubuntu/#g' "$apt_source"
-              grep -E '^URIs:|^deb ' "$apt_source" || true
-            fi
-          done
+      - name: Configure signed Ubuntu mirror fallback
+        run: bash scripts/ci/ubuntu-apt.sh
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24.14.1"
@@ -319,21 +245,7 @@ jobs:
           key: hermes-source-${{ hashFiles('runtime/hermes/lock.json') }}
       - run: npm ci
       - name: Prepare the browser before application services
-        run: |
-          stat -Lc 'resolver_permissions=%a' /etc/resolv.conf
-          python3 scripts/ci/test_ubuntu_dns.py
-          sudo --preserve-env=GITHUB_ACTIONS python3 scripts/ci/ubuntu-dns.py
-          if getent ahostsv4 archive.ubuntu.com >/dev/null; then
-            echo 'host_dns=available'
-          else
-            echo 'host_dns=unavailable'
-          fi
-          if sudo -u _apt getent ahostsv4 archive.ubuntu.com >/dev/null; then
-            echo 'package_dns=available'
-          else
-            echo 'package_dns=unavailable'
-          fi
-          npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium
       - run: python3 runtime/hermes/download.py
       - run: |
           python3 runtime/hermes/bootstrap_cache.py --prepare-build
