@@ -133,17 +133,17 @@ async function actor(browser: Browser, uid: string, actors: Actor[]) {
   return value;
 }
 
-async function revokedLaunchDenied(value: Actor) {
-  if (!value.launch) return false;
+async function revokedLaunchDenied(launch: Actor["launch"]) {
+  if (!launch) return false;
   try {
-    const response = await fetch(value.launch.url, {
+    const response = await fetch(launch.url, {
       method: "POST",
       redirect: "error",
       headers: {
-        Origin: value.launch.origin,
+        Origin: launch.origin,
         "Content-Type": "application/x-www-form-urlencoded",
       },
-      body: value.launch.body,
+      body: launch.body,
       signal: AbortSignal.timeout(10000),
     });
     if (response.status !== 403) {
@@ -248,6 +248,10 @@ test("Revoking a real Office share isolates the already active collaborator", as
 
     const connected = bob.office.connections(bob.editor);
     expect(connected.active).toBeGreaterThan(0);
+    // Freeze the productive session's binding before mutation. Any later
+    // automatic launch or reconnect must not replace this evidence.
+    const boundLaunch = bob.launch ? { ...bob.launch } : undefined;
+    expect(!!boundLaunch).toBe(true);
     await sharing("DELETE", shareId!);
     shareId = undefined;
     expect((await content(name, collaborator)).status).toBe(404);
@@ -267,7 +271,7 @@ test("Revoking a real Office share isolates the already active collaborator", as
       )
       .toBe(true);
     expect(
-      await revokedLaunchDenied(bob),
+      await revokedLaunchDenied(boundLaunch),
       "The gateway must reject the revoked user's previously authorized launch token",
     ).toBe(true);
     if (!bob.editor.isClosed()) {
