@@ -8,11 +8,11 @@ from zipfile import ZipFile
 NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 
 
-def create():
+def create(revision_target="Revision target"):
     from docx import Document
     document = Document()
     document.add_heading("Synthetic shared review", level=1)
-    for text in ("Alice edit target", "Bob edit target", "Revision target"):
+    for text in ("Alice edit target", "Bob edit target", revision_target):
         document.add_paragraph(text)
     table = document.add_table(rows=2, cols=2)
     for row, values in zip(table.rows, [("Item", "Quantity"), ("Pens", "3")]):
@@ -31,6 +31,8 @@ def verify(path, expected):
     with ZipFile(path) as package:
         document = ET.fromstring(package.read("word/document.xml"))
         comments = ET.fromstring(package.read("word/comments.xml")) if "word/comments.xml" in package.namelist() else ET.Element("comments")
+        persisted_text = "".join("".join(ET.fromstring(package.read(name)).itertext())
+                                 for name in package.namelist() if name.endswith(".xml"))
     text = texts(document)
     assert "Synthetic shared review" in text, "The original heading changed"
     table = document.find(".//w:tbl", NS)
@@ -40,7 +42,7 @@ def verify(path, expected):
     for marker in expected.get("text", []):
         assert marker in text, "A required saved edit is absent"
     for marker in expected.get("absent", []):
-        assert marker not in text, "A forbidden edit reached the source file"
+        assert marker not in persisted_text, "A forbidden edit reached the source file"
     for author, marker in expected.get("comments", {}).items():
         assert any(item.get("{" + NS["w"] + "}author") == author and marker in texts(item)
                    for item in comments.findall("w:comment", NS)), "A persisted author comment is absent"
@@ -63,7 +65,7 @@ def verify(path, expected):
 
 if __name__ == "__main__":
     if sys.argv[1] == "create":
-        sys.stdout.buffer.write(create())
+        sys.stdout.buffer.write(create(sys.argv[2] if len(sys.argv) > 2 else "Revision target"))
     elif sys.argv[1] == "verify":
         print(json.dumps(verify(sys.argv[2], json.loads(sys.argv[3]))))
     else:
