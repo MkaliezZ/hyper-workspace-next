@@ -38,7 +38,10 @@ jobs:
         run: |
           for apt_source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
             if [ -f "$apt_source" ]; then
-              sudo sed -i -E 's#https?://azure[.]archive[.]ubuntu[.]com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$apt_source"
+              sudo sed -i -E \
+                -e 's#https?://azure[.]archive[.]ubuntu[.]com/ubuntu#https://archive.ubuntu.com/ubuntu#g' \
+                -e 's#mirror[+]file:/etc/apt/apt-mirrors[.]txt#https://archive.ubuntu.com/ubuntu/#g' "$apt_source"
+              grep -E '^URIs:|^deb ' "$apt_source" || true
             fi
           done
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -120,7 +123,10 @@ jobs:
         run: |
           for apt_source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
             if [ -f "$apt_source" ]; then
-              sudo sed -i -E 's#https?://azure[.]archive[.]ubuntu[.]com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$apt_source"
+              sudo sed -i -E \
+                -e 's#https?://azure[.]archive[.]ubuntu[.]com/ubuntu#https://archive.ubuntu.com/ubuntu#g' \
+                -e 's#mirror[+]file:/etc/apt/apt-mirrors[.]txt#https://archive.ubuntu.com/ubuntu/#g' "$apt_source"
+              grep -E '^URIs:|^deb ' "$apt_source" || true
             fi
           done
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -190,7 +196,10 @@ jobs:
         run: |
           for apt_source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
             if [ -f "$apt_source" ]; then
-              sudo sed -i -E 's#https?://azure[.]archive[.]ubuntu[.]com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$apt_source"
+              sudo sed -i -E \
+                -e 's#https?://azure[.]archive[.]ubuntu[.]com/ubuntu#https://archive.ubuntu.com/ubuntu#g' \
+                -e 's#mirror[+]file:/etc/apt/apt-mirrors[.]txt#https://archive.ubuntu.com/ubuntu/#g' "$apt_source"
+              grep -E '^URIs:|^deb ' "$apt_source" || true
             fi
           done
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -249,7 +258,10 @@ jobs:
         run: |
           for apt_source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
             if [ -f "$apt_source" ]; then
-              sudo sed -i -E 's#https?://azure[.]archive[.]ubuntu[.]com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$apt_source"
+              sudo sed -i -E \
+                -e 's#https?://azure[.]archive[.]ubuntu[.]com/ubuntu#https://archive.ubuntu.com/ubuntu#g' \
+                -e 's#mirror[+]file:/etc/apt/apt-mirrors[.]txt#https://archive.ubuntu.com/ubuntu/#g' "$apt_source"
+              grep -E '^URIs:|^deb ' "$apt_source" || true
             fi
           done
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
