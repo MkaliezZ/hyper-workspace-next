@@ -4,17 +4,17 @@
 
 ## 办公内核评估
 
-首轮测试目标是 Collabora CODE 26.04.6.1.1 和 Nextcloud Office 10.3.3。官方发布的连接器清单支持当前部署的 Nextcloud 33。Collabora 官方说明支持桌面和移动设备编辑，也把 CODE 定位为测试和小团队版本。ONLYOFFICE Docs 10.0.0 和连接器 10.2.1 是另一组兼容候选。ONLYOFFICE 社区版可用于桌面网页编辑，官方将手机网页编辑和 Automation API 列在商业版本的能力中。两种编辑器共用 Nextcloud 文件入口，一个部署使用其管理员选定的默认编辑器。 [Collabora CODE](https://www.collaboraonline.com/code/) · [Nextcloud Office 10.3.3](https://github.com/nextcloud/richdocuments/releases/tag/v10.3.3) · [ONLYOFFICE 手机网页能力](https://api.onlyoffice.com/docs/docs-api/get-started/how-it-works/mobile-integration) · [Automation API](https://api.onlyoffice.com/docs/docs-api/usage-api/automation-api)
+本版固定 Collabora CODE 26.04.6.1.1 和 Nextcloud Office 10.3.3，在线编辑与后台 OfficeTools 使用同一版本内核；连接器支持固定的 Nextcloud 33。CODE 面向测试和小团队，目标机并发容量需要实测。早期评估保留 ONLYOFFICE Docs 10.0.0／连接器 10.2.1 作为候选，手机网页编辑与 Automation API 的商业授权是当时的选型约束；它们未接入本版执行链。 [Collabora CODE](https://www.collaboraonline.com/code/) · [Nextcloud Office 10.3.3](https://github.com/nextcloud/richdocuments/releases/tag/v10.3.3) · [ONLYOFFICE 手机网页能力](https://api.onlyoffice.com/docs/docs-api/get-started/how-it-works/mobile-integration) · [Automation API](https://api.onlyoffice.com/docs/docs-api/usage-api/automation-api)
 
-已有经管理员配置的 Nextcloud 办公编辑器时，在私有 Compose 环境文件启用 `NEXTCLOUD_FILES_ENABLED=true` 和 `NEXTCLOUD_OFFICE_ENABLED=true`，然后按现有部署命令重新应用配置。登录企业账号后，从知识库的企业文件中选择“Office 协作”。这是按需启用的入口，编辑器部署与健康情况需要在 Nextcloud 核对。
+按下方配置固定编辑器、网关和来源伴随应用后，在私有 Compose 环境文件启用 `NEXTCLOUD_FILES_ENABLED=true` 和 `NEXTCLOUD_OFFICE_ENABLED=true`，然后按现有部署命令重新应用配置。登录企业账号后，从知识库的企业文件中选择“Office 协作”。现有外部 Nextcloud 也按这组组件及来源当前权限接口接入，实际加载和撤权须在其配置上核对。
 
 ## 当前验证
 
-加载修复 `fd616a8` 的[四项 CI 已通过](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42919022456)。后续正式测试在本机用真实 Collabora UI 修改并保存 DOCX/XLSX/PPTX，通过 WebDAV 下载、文件内容和保留断言复核，再回工作台确认源版本变化。已覆盖 DOCX 段落/加粗/表格，XLSX 公式缓存/跨表结果/筛选/数据验证/图表，PPTX 幻灯片/表格；这组夹具没有证明任意 OOXML 文件无损往返。
+`b3eaf5c` 的[四项 CI 已通过](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42930241845)。真实 Collabora UI 修改并保存 DOCX/XLSX/PPTX，WebDAV 下载后核对内容和保留结构，再回工作台确认来源版本变化。双人修改与评论也已通过。覆盖 DOCX 段落/加粗/表格，XLSX 公式缓存/跨表结果/筛选/数据验证/图表，PPTX 幻灯片/表格；样例结果对应这些已列明的结构。
 
-PostgreSQL 与合成 WebDAV 来源覆盖功能开关、员工本人、同工作区管理员无文件权限、共享后打开、撤销读取后拒绝、文件 ID 或 ETag 变化，以及不支持的格式。桌面和手机入口已验证。新 [OfficeTools](OFFICE-TOOLS.md) 使用同版内核生成可编辑副本，人工/DSH/Hermes 共用权限、方案和回执。真实双人评论、修订/撤权、更多复杂工作簿和真实供应商模型继续专项验证。 [合成表格的手机入口](images/office-source-link-mobile.png)
+PostgreSQL 与合成 WebDAV 来源覆盖功能开关、员工本人、同工作区管理员无文件权限、共享后打开、撤销读取后拒绝、文件 ID 或 ETag 变化，以及不支持的格式。桌面和手机入口已验证。[OfficeTools](OFFICE-TOOLS.md) 使用同版内核生成可编辑副本，人工/DSH/Hermes 共用权限、方案和回执；真实供应商六份三格式副本的记录见[模型验收](REAL-OFFICE-ACCEPTANCE.md)。命名表与受控 SUM 透视的固定内核验证已通过，限制见[兼容记录](../runtime/office/COMPATIBILITY.md)。新增修订接受、活动会话撤权、保存冲突恢复和网关组合安装仍待各自当前提交的专项结果。 [合成表格的手机入口](images/office-source-link-mobile.png)
 
-GitHub Actions 加入固定版本的真实编辑器检查。隔离运行器验证公开组件的镜像和安装包、Nextcloud 的 WOPI 连接，并等待 Collabora 报告三种合成文档加载完成。这个检查验证实际打开，协作保存和格式往返另行验收。
+GitHub Actions 的独立 Office job 使用固定镜像与连接器，检查三格式加载、真实编辑保存、双人协作、同核批处理及真实 Nextcloud 新副本。加载断言仍要求 Collabora 报告文档完成，保存断言要求来源文件回读，两个结果分别核对。
 
 ### Windows 接续诊断
 

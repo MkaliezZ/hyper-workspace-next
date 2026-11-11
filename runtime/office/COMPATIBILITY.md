@@ -29,3 +29,5 @@
 独立审查补充了改名连接/透视部件与其他显式caption的拒绝回归。最终Linux协议12项及真实透视HTTP回归通过，日志 `.runtime/office-pivot-final.log`、输出 `.runtime/office-batch-Uj1fza/output`。数字格式按实际 `formatCode=General` 核对；内核导出的General使用自定义编号164，不能只认内置编号0，也不能因此允许任意自定义格式。
 
 扩展透视兼容性时，应新增未支持结构的原始断言和真实固定内核证据，再扩大允许范围。不能删除明确标题断言、把缓存不更新当成公式重算成功，或引入另一个办公内核来绕过此限制。
+
+`b3eaf5c` 的 [CI 42930241845](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42930241845) 已完成干净镜像构建、12 项 Linux 协议检查、三格式真实 HTTP 往返及两个透视输出验证，另有应用容器调用私有批处理服务的检查通过。这补足上述本地下载停滞之后的正式构建证据。
