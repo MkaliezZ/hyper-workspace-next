@@ -95,7 +95,32 @@ export async function recordOfficeReplacement(
   if (await overflow.isVisible()) {
     // The fixed COOL dropdown closes through its overlay's normal onclick.
     // Escape does not consistently dismiss this notebookbar overflow menu.
-    await overflow.click({ position: { x: 8, y: 8 } });
+    const position = await overflow.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      const left = Math.max(0, bounds.left);
+      const top = Math.max(0, bounds.top);
+      const width =
+        Math.min(document.documentElement.clientWidth, bounds.right) - left;
+      const height =
+        Math.min(document.documentElement.clientHeight, bounds.bottom) - top;
+      // The document header sits above this overlay. Read hit targets to pick
+      // exposed menu-dismiss space rather than clicking a fixed covered corner.
+      for (const [xRatio, yRatio] of [
+        [0.5, 0.5],
+        [0.25, 0.75],
+        [0.75, 0.75],
+        [0.1, 0.9],
+      ] as const) {
+        const x = left + width * xRatio;
+        const y = top + height * yRatio;
+        if (document.elementFromPoint(x, y) === element)
+          return { x: x - bounds.left, y: y - bounds.top };
+      }
+      return null;
+    });
+    if (!position)
+      throw new Error("The Office review menu has no exposed dismiss area");
+    await overflow.click({ position });
     await expect.poll(() => overflow.isVisible()).toBe(false);
   }
   await frame

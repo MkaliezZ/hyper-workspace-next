@@ -79,9 +79,11 @@ test("Office revision recording closes its real menu overlay before editing", as
         contentType: "text/html",
         body: `<style>[hidden] { display:none !important }
           #document-container { width:750px;height:400px;margin-top:80px }
+          #Review-container { margin-top:60px }
+          #document-header { position:fixed;top:0;left:0;right:0;height:50px;z-index:8 }
           .jsdialog-overlay { position:fixed;inset:0;z-index:5 }
           #menu { position:fixed;left:200px;top:80px;z-index:6;background:white }
-          </style><button id="Review-tab-label">Review</button>
+          </style><div id="document-header"><button id="Review-tab-label">Review</button></div>
           <div id="Review-container"><div id="overflow-button-review-tracking" class="menubutton">
             <button class="arrowbackground" onclick="document.querySelector('#menu').hidden=false;document.querySelector('.jsdialog-overlay').hidden=false">More</button>
           </div></div>
