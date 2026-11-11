@@ -235,35 +235,41 @@ export function OfficeToolsDialog({
     clearPrivate();
     setLoading(true);
     setError("");
-    void Promise.all([
-      api<OfficeInspectionResult>("/office/inspect", {
-        method: "POST",
-        body: JSON.stringify(source),
-        signal: controller.signal,
-      }),
-      api<History[]>("/office/lookup", {
-        method: "POST",
-        body: JSON.stringify(source),
-        signal: controller.signal,
-      }),
-      api<ModelSummary[]>("/models", { signal: controller.signal }),
-    ])
-      .then(async ([observed, runs, available]) => {
-        if (controller.signal.aborted) return;
-        setInspection(observed);
-        setHistory(runs);
-        setModels(available);
-        await refreshProposals();
-      })
-      .catch((e) => {
-        if (!controller.signal.aborted) {
-          clearPrivate();
-          setError(e.message);
-        }
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
-      });
+    // React can mount and clean up an effect before the next microtask. Avoid
+    // dispatching an expensive inspection for that already-discarded mount:
+    // cancelling fetch alone cannot cancel work the server has already begun.
+    queueMicrotask(() => {
+      if (controller.signal.aborted) return;
+      void Promise.all([
+        api<OfficeInspectionResult>("/office/inspect", {
+          method: "POST",
+          body: JSON.stringify(source),
+          signal: controller.signal,
+        }),
+        api<History[]>("/office/lookup", {
+          method: "POST",
+          body: JSON.stringify(source),
+          signal: controller.signal,
+        }),
+        api<ModelSummary[]>("/models", { signal: controller.signal }),
+      ])
+        .then(async ([observed, runs, available]) => {
+          if (controller.signal.aborted) return;
+          setInspection(observed);
+          setHistory(runs);
+          setModels(available);
+          await refreshProposals();
+        })
+        .catch((e) => {
+          if (!controller.signal.aborted) {
+            clearPrivate();
+            setError(e.message);
+          }
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setLoading(false);
+        });
+    });
     return () => {
       alive.current = false;
       controller.abort();

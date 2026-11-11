@@ -112,6 +112,32 @@ async function open(
   return state;
 }
 
+test("Office opens one structure inspection despite StrictMode effect replay", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const state = { inspections: 0 };
+    Object.assign(window, { officeEffectProbe: state });
+    const original = window.fetch;
+    window.fetch = (input, options) => {
+      const url = new URL(
+        input instanceof Request ? input.url : String(input),
+        location.href,
+      );
+      if (url.pathname === "/api/office/inspect") state.inspections++;
+      return original.call(window, input, options);
+    };
+  });
+  await open(page, async () => {});
+  expect(
+    await page.evaluate(
+      () =>
+        (window as Window & { officeEffectProbe: { inspections: number } })
+          .officeEffectProbe.inspections,
+    ),
+  ).toBe(1);
+});
+
 test("Office manual proposals require saved review and explicit copy confirmation; uncertain saves reconcile without a second upload", async ({
   page,
 }, testInfo) => {

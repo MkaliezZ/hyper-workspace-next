@@ -17,6 +17,33 @@ test("Real OfficeTools proposals save verified editable Nextcloud copies and pre
 }) => {
   test.setTimeout(360000);
   const actor = await login(browser, "employee-one");
+  const initialization: { route: string; outcome: number | string }[] = [];
+  const routeName = (url: string) => {
+    const path = new URL(url).pathname;
+    return [
+      "/api/office/inspect",
+      "/api/office/lookup",
+      "/api/office/proposals",
+      "/api/models",
+    ].includes(path)
+      ? path.slice(5)
+      : undefined;
+  };
+  actor.page.on("response", (response) => {
+    const route = routeName(response.url());
+    if (route && initialization.length < 40)
+      initialization.push({ route, outcome: response.status() });
+  });
+  actor.page.on("requestfailed", (request) => {
+    const route = routeName(request.url());
+    if (route && initialization.length < 40)
+      initialization.push({
+        route,
+        outcome: /ABORTED/.test(request.failure()?.errorText ?? "")
+          ? "aborted"
+          : "network-failure",
+      });
+  });
   const headers = {
     Authorization:
       "Basic " + Buffer.from("employee-one:" + password).toString("base64"),
@@ -134,9 +161,36 @@ test("Real OfficeTools proposals save verified editable Nextcloud copies and pre
           .getByRole("button", { name: "Office 助手", exact: true })
           .click();
         const dialog = actor.page.getByRole("dialog", { name: "Office 助手" });
-        await expect(dialog.getByLabel("修改位置")).toBeVisible({
-          timeout: 80000,
-        });
+        try {
+          await expect(dialog.getByLabel("修改位置")).toBeVisible({
+            timeout: 80000,
+          });
+        } catch (error) {
+          const alert = await dialog
+            .getByRole("alert")
+            .textContent()
+            .catch(() => "");
+          const category = /繁忙|正在处理|busy/i.test(alert ?? "")
+            ? "busy"
+            : /权限|成员|身份/.test(alert ?? "")
+              ? "authorization"
+              : /版本|变化/.test(alert ?? "")
+                ? "source-version"
+                : /配置|启用/.test(alert ?? "")
+                  ? "configuration"
+                  : /连接|不可用|超时/.test(alert ?? "")
+                    ? "availability"
+                    : alert
+                      ? "other-alert"
+                      : "no-alert";
+          // Fixed route names, numeric statuses and categories only. Do not emit
+          // document text, credentials, signed editor URLs or an HTML snapshot.
+          console.info(
+            "Office initialization diagnostics:",
+            JSON.stringify({ requests: initialization, category }),
+          );
+          throw error;
+        }
         await dialog
           .getByLabel("修改位置")
           .selectOption(
