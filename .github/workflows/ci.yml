@@ -60,7 +60,7 @@ jobs:
         run: |
           stat -Lc 'resolver_permissions=%a' /etc/resolv.conf
           python3 scripts/ci/test_ubuntu_dns.py
-          sudo python3 scripts/ci/ubuntu-dns.py
+          sudo --preserve-env=GITHUB_ACTIONS python3 scripts/ci/ubuntu-dns.py
           if getent ahostsv4 archive.ubuntu.com >/dev/null; then
             echo 'host_dns=available'
           else
@@ -160,7 +160,7 @@ jobs:
         run: |
           stat -Lc 'resolver_permissions=%a' /etc/resolv.conf
           python3 scripts/ci/test_ubuntu_dns.py
-          sudo python3 scripts/ci/ubuntu-dns.py
+          sudo --preserve-env=GITHUB_ACTIONS python3 scripts/ci/ubuntu-dns.py
           if getent ahostsv4 archive.ubuntu.com >/dev/null; then
             echo 'host_dns=available'
           else
@@ -244,7 +244,7 @@ jobs:
         run: |
           stat -Lc 'resolver_permissions=%a' /etc/resolv.conf
           python3 scripts/ci/test_ubuntu_dns.py
-          sudo python3 scripts/ci/ubuntu-dns.py
+          sudo --preserve-env=GITHUB_ACTIONS python3 scripts/ci/ubuntu-dns.py
           if getent ahostsv4 archive.ubuntu.com >/dev/null; then
             echo 'host_dns=available'
           else
@@ -322,7 +322,7 @@ jobs:
         run: |
           stat -Lc 'resolver_permissions=%a' /etc/resolv.conf
           python3 scripts/ci/test_ubuntu_dns.py
-          sudo python3 scripts/ci/ubuntu-dns.py
+          sudo --preserve-env=GITHUB_ACTIONS python3 scripts/ci/ubuntu-dns.py
           if getent ahostsv4 archive.ubuntu.com >/dev/null; then
             echo 'host_dns=available'
           else
@@ -389,7 +389,7 @@ jobs:
       - name: Verify the documented Office installation with the source and gateway
         timeout-minutes: 15
         run: bash scripts/ci/office-installation.sh
-      - if: failure()
+      - if: failure() && hashFiles('.runtime/compose-ci.env') != ''
         run: docker compose --project-name hyper-deployment-ci --env-file .runtime/compose-ci.env -f compose.yaml -f deploy/compose.ci.yaml -f deploy/compose.local-ocr.yaml logs --tail 100
-      - if: always()
+      - if: always() && hashFiles('.runtime/compose-ci.env') != ''
         run: docker compose --project-name hyper-deployment-ci --env-file .runtime/compose-ci.env -f compose.yaml -f deploy/compose.ci.yaml -f deploy/compose.local-ocr.yaml -f deploy/compose.office-tools.yaml down --volumes
