@@ -21,7 +21,15 @@ export async function installOfficeOnboardingHandler(frame: Frame) {
         await expect.poll(() => welcome.isVisible()).toBe(false);
       }
       if (await tour.isVisible()) {
-        await tour.getByText("Skip", { exact: true }).click();
+        try {
+          await tour.getByText("Skip", { exact: true }).click({ timeout: 2000 });
+        } catch (error) {
+          // COOL can remove the animated tour before Skip becomes stable.
+          // Only a confirmed disappearance on the same live page is success;
+          // a remaining overlay or a lost editor must still fail the action.
+          if (page.isClosed() || frame.isDetached() || (await tour.isVisible()))
+            throw error;
+        }
         await expect.poll(() => tour.isVisible()).toBe(false);
       }
     },

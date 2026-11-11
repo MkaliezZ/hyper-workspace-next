@@ -108,3 +108,41 @@ test("Office conflict recovery chooses a new file and never falls back to overwr
     await context.close();
   }
 });
+
+test("Office onboarding tolerates an animated tour disappearing before Skip is actionable", async ({
+  browser,
+}) => {
+  const context = await browser.newContext();
+  try {
+    await context.route("http://office-ui-editor.test/**", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: `<style>@keyframes moving { from { transform:translateX(0) } to { transform:translateX(200px) } }
+          #modal-dialog-onboarding-tour-overlay { position:fixed; inset:0; background:white; z-index:5 }
+          #skip { animation:moving 100ms linear infinite alternate }
+          </style><button id="edit" onclick="document.body.dataset.edited='true'">Edit</button>
+          <div id="modal-dialog-onboarding-tour-overlay" hidden><button id="skip">Skip</button></div>`,
+      }),
+    );
+    const page = await context.newPage();
+    await page.setContent(
+      '<iframe name="editor" src="http://office-ui-editor.test/animated-tour"></iframe>',
+    );
+    const frame = page.frame({ name: "editor" })!;
+    await installOfficeOnboardingHandler(frame);
+    await frame.evaluate(() => {
+      const tour = document.querySelector(
+        "#modal-dialog-onboarding-tour-overlay",
+      ) as HTMLElement;
+      tour.hidden = false;
+      setTimeout(() => tour.remove(), 400);
+    });
+    await frame.locator("#edit").click({ timeout: 5000 });
+    await expect(frame.locator("body")).toHaveAttribute("data-edited", "true");
+    expect(
+      await frame.locator("#modal-dialog-onboarding-tour-overlay").count(),
+    ).toBe(0);
+  } finally {
+    await context.close();
+  }
+});
