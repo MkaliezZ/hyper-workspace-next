@@ -96,3 +96,16 @@ export async function acceptOfficeRevisions(page: Page, frame: Frame) {
   await dialog.getByRole("button", { name: "Close", exact: true }).click();
   await page.keyboard.press("Control+s");
 }
+
+export async function recoverOfficeConflict(frame: Frame, timeout = 30000) {
+  const dialog = frame.locator("#modal-dialog-document-conflict-popup");
+  await expect
+    .poll(() => dialog.isVisible(), {
+      timeout,
+      message: "The live editor must expose the storage conflict",
+    })
+    .toBe(true);
+  await dialog
+    .getByRole("button", { name: "Save to new file", exact: true })
+    .click({ timeout });
+}

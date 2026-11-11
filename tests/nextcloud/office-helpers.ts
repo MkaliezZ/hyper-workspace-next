@@ -27,6 +27,13 @@ export async function observeOffice(
   >();
   const navigations = new Map<Frame, number>();
   const network = new Map<Page, object[]>();
+  const connections = new Map<
+    Page,
+    { created: number; closed: number; active: number }
+  >();
+  const connectionState = (page: Page) => ({
+    ...(connections.get(page) ?? { created: 0, closed: 0, active: 0 }),
+  });
   function record(page: Page, event: object) {
     const entries = network.get(page) ?? [];
     if (entries.length < 80) entries.push(event);
@@ -132,6 +139,20 @@ export async function observeOffice(
     });
     page.on("websocket", (socket) => {
       const route = routeKind(socket.url());
+      if (route === "editor-session") {
+        const state = connections.get(page) ?? {
+          created: 0,
+          closed: 0,
+          active: 0,
+        };
+        state.created++;
+        state.active++;
+        connections.set(page, state);
+        socket.once("close", () => {
+          state.closed++;
+          state.active--;
+        });
+      }
       record(page, { kind: "socket-created", route });
       socket.on("socketerror", () =>
         record(page, { kind: "socket-error", route }),
@@ -359,6 +380,7 @@ export async function observeOffice(
     )?.[0];
   }
   return {
+    connections: connectionState,
     hasLoaded: (page: Page) => !!loaded(page),
     loadedFrame: (page: Page) => loaded(page),
     async waitForLoaded(page: Page, timeout = 60000) {
@@ -397,6 +419,7 @@ export async function observeOffice(
           ...event,
         })),
         network: network.get(page) ?? [],
+        connections: connectionState(page),
       };
     },
   };

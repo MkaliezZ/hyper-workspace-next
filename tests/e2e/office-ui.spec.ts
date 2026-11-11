@@ -1,5 +1,8 @@
 import { expect, test } from "@playwright/test";
-import { installOfficeOnboardingHandler } from "../nextcloud/office-ui";
+import {
+  installOfficeOnboardingHandler,
+  recoverOfficeConflict,
+} from "../nextcloud/office-ui";
 
 test("Office onboarding handles late welcome frames and preserves unrelated dialogs", async ({
   browser,
@@ -59,6 +62,48 @@ test("Office onboarding handles late welcome frames and preserves unrelated dial
       );
     expect(clicked).toBe(false);
     await expect(frame.locator("#unrelated")).toBeVisible();
+  } finally {
+    await context.close();
+  }
+});
+
+test("Office conflict recovery chooses a new file and never falls back to overwriting", async ({
+  browser,
+}) => {
+  const context = await browser.newContext();
+  try {
+    await context.route("http://office-ui-editor.test/**", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: `<div id="modal-dialog-document-conflict-popup" hidden>
+          <button onclick="document.body.dataset.action='discard'">Discard</button>
+          <button onclick="document.body.dataset.action='overwrite'">Overwrite</button>
+          <button id="copy" onclick="document.body.dataset.action='copy'">Save to new file</button>
+          </div>
+          <script>setTimeout(() => document.querySelector('div').hidden=false, 100);</script>`,
+      }),
+    );
+    const page = await context.newPage();
+    await page.setContent(
+      '<iframe name="editor" src="http://office-ui-editor.test/conflict"></iframe>',
+    );
+    const frame = page.frame({ name: "editor" })!;
+    await recoverOfficeConflict(frame, 3000);
+    await expect(frame.locator("body")).toHaveAttribute("data-action", "copy");
+    await frame.evaluate(() => {
+      document.body.removeAttribute("data-action");
+      document.querySelector("#copy")!.remove();
+    });
+    expect(
+      await recoverOfficeConflict(frame, 500).then(
+        () => true,
+        () => false,
+      ),
+    ).toBe(false);
+    expect(await frame.locator("body").getAttribute("data-action")).toBeNull();
+    await expect(
+      frame.getByRole("button", { name: "Overwrite" }),
+    ).toBeVisible();
   } finally {
     await context.close();
   }
