@@ -23,3 +23,14 @@
 ## 尚待公司环境完成
 
 目标机/固定 IP、内部证书分发、公司员工与实际权限、目标机容量、多员工冷加载及正式安装签收。供应商费用须在公司选择的价格/预算策略下记录，现有真实试用 unpriced/unknown 不填成零。自动供应商账单对账、执行器私有检查点热迁移、Calendar/复杂办公与媒体后续阶段均不冒称已实现；冻结首阶段范围不缩减。
+
+## 扩展仓库的安装增量
+
+以上首阶段证据保留原范围。扩展代码从 `MkaliezZ/hyper-workspace-next` 获取，以其发布清单和对应提交 CI 为准；不要用旧仓库源码安装新增模块。当前整组日历补项、Office 协作与副本保存的开发验收状态见 [实现记录](IMPLEMENTATION.md)。
+
+- 日历启用 `NEXTCLOUD_CALENDAR_ENABLED=true`，先完成来源 Calendar/CalDAV 和员工权限设置；审批使用产品数据库，管理员发布流程后才供员工提交。
+- OCR 在原部署组合后加入 `deploy/compose.local-ocr.yaml`；服务权重固定并在构建时校验，安装与样例范围见 [OCR](OCR.md)。
+- 在线办公按 [Office](OFFICE.md)准备受限连接器设置、HTTPS 入口与 `deploy/compose.office.yaml`。该叠加文件用于本仓库自管 Nextcloud 的组合；已有外部来源按其实际地址配置。
+- 生成可编辑副本另加入 `deploy/compose.office-tools.yaml`，按 [批处理安装](../runtime/office/README.md)构建同核服务。保留此前用于来源、OCR、内网代理及证书的所有叠加文件，不用新模块示例替换原安装命令。API/Worker 与相关内网服务一起验证，数据库迁移和受限角色由初始化服务处理。
+
+新安装使用生成器创建的 `.env.compose`；已有安装沿用原配置文件、主密钥与数据卷。Office 提案/来源写入进入不明状态时先对账，回退应用不代表已生成的来源副本被撤销。复杂工作簿的支持范围及已知标题限制见 [同核兼容记录](../runtime/office/COMPATIBILITY.md)。

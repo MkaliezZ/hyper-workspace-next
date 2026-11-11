@@ -29,8 +29,8 @@ API/Worker 使用 UID/GID 10001、只读根文件系统、去除 Linux capabilit
 先执行 `docker buildx version` 和 `docker compose version`；发行版的 Docker Engine 包可能需要另装 Buildx 插件。Dockerfile 的 Debian 源默认使用官方 HTTPS，保留仓库签名、有效期和包摘要校验；网络较慢时，可对 `build api` 增加 `--build-arg DEBIAN_MIRROR=https://mirrors.tuna.tsinghua.edu.cn`。仅接受官方源或这个明确的镜像地址，设置限于本次容器构建，不改主机源；不关闭签名检查。镜像同步及安全更新需按 [Debian 官方镜像说明](https://www.debian.org/mirror/list)和 [TUNA 说明](https://mirrors.tuna.tsinghua.edu.cn/help/debian/)核对。构建保留实际包版本清单，正式部署仍核对所构建镜像与依赖证据。
 
 ```bash
-git clone https://github.com/MkaliezZ/hyper-workspace.git
-cd hyper-workspace
+git clone https://github.com/MkaliezZ/hyper-workspace-next.git
+cd hyper-workspace-next
 node scripts/deploy-init.mjs
 ```
 
@@ -46,7 +46,7 @@ node scripts/deploy-init.mjs
 | NEXTCLOUD_MEMBER_GROUP                 | 明确允许进入产品的来源群组                                                                                        |
 | NEXTCLOUD_BOOTSTRAP_ADMIN_IDS          | JSON 数组，精确来源 UID；只用于首次角色映射，来源 admin 不自动成为产品 admin                                      |
 | WORKSPACE_NAME                         | 初始化工作区名称，默认 Hyper Workspace                                                                            |
-| NEXTCLOUD_TALK_ENABLED / FILES_ENABLED | 完成相应来源配置后显式启用，默认关闭                                                                              |
+| NEXTCLOUD_TALK_ENABLED / NEXTCLOUD_FILES_ENABLED / NEXTCLOUD_CALENDAR_ENABLED / NEXTCLOUD_OFFICE_ENABLED | 完成相应来源配置后显式启用，默认关闭；Office 助手同时需要 Files 来源和私有批处理服务 |
 
 保持 `DEMO_MODE=false`。首次初始化在企业身份配置缺失时拒绝启动，不自动改用演示资料。详见 [身份配置](NEXTCLOUD-IDENTITY.md)、[Talk](NEXTCLOUD-TALK.md)、[Files](NEXTCLOUD-FILES.md)。容器内的 `127.0.0.1` 指向该容器；来源必须通过容器可达的地址访问，组织代理的公开 URL、trusted domains、证书和来源返回地址也需一致。
 

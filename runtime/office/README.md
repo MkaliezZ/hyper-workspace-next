@@ -24,8 +24,8 @@
 在既有公司内网安装配置上添加 `deploy/compose.office-tools.yaml`，例如从仓库根目录执行：
 
 ```sh
-docker compose --env-file .env.deploy -f compose.yaml -f deploy/compose.office-tools.yaml build office-batch
-docker compose --env-file .env.deploy -f compose.yaml -f deploy/compose.office-tools.yaml up -d office-batch api worker
+docker compose --env-file .env.compose -f compose.yaml -f deploy/compose.office-tools.yaml build office-batch
+docker compose --env-file .env.compose -f compose.yaml -f deploy/compose.office-tools.yaml up -d office-batch api worker
 ```
 
 保留该安装原本使用的其他 Compose 覆盖文件；若基础文件名称不同，以原安装命令为准。服务只连接独立 `internal: true` 的 `office-tools` 网络，不发布宿主端口；仅 API/Worker 另接此网，通过 `HYPER_OFFICE_BATCH_URL=http://office-batch:3123` 使用。无需新增外部域名或公网入口。限制 768 MiB/1 CPU、禁用 swap、128 PID、只读根目录、256 MiB tmpfs、非 root、无 capabilities。公司服务器仍待准备，此说明不是已安装记录。
