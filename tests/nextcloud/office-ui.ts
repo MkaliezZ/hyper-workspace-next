@@ -17,7 +17,9 @@ export async function installOfficeOnboardingHandler(frame: Frame) {
           .find((child) => child.name() === "iframe-welcome-form");
         if (!welcomeFrame)
           throw new Error("The visible Office welcome frame is unavailable");
-        await welcomeFrame.locator("body").press("Escape");
+        // The fixed CODE welcome frame binds its close control on window load.
+        // Escape belongs to the parent UI and depends on incidental focus.
+        await welcomeFrame.locator("#welcome-close").click();
         await expect.poll(() => welcome.isVisible()).toBe(false);
       }
       if (await tour.isVisible()) {

@@ -151,7 +151,26 @@ test("Two real Office users preserve simultaneous edits, authored comments, and 
             "The source DOCX must preserve the actual collaborative edits and review data",
         },
       )
-      .toBe(true);
+      .toBe(true)
+      .catch((error) => {
+        const inspected = spawnSync(
+          python,
+          [
+            "tests/fixtures/office-collaboration.py",
+            "evidence",
+            resultPath,
+            JSON.stringify(expected),
+            resolve(".runtime", "office-evidence"),
+          ],
+          { encoding: "utf8", timeout: 15000 },
+        );
+        // The fixture emits only a fixed stage and boolean/count inspection;
+        // never print stderr, expected markers, source addresses or credentials.
+        if (inspected.status === 0 && inspected.stdout.length < 4096)
+          console.error("Office source inspection:", inspected.stdout.trim());
+        else console.error("Office source inspection: unavailable");
+        throw error;
+      });
     console.info("Office collaboration readback:", summary.trim());
   }
   try {

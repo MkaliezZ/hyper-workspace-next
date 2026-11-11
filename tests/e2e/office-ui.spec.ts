@@ -18,7 +18,7 @@ test("Office onboarding handles late welcome frames and preserves unrelated dial
         url.origin === source
           ? `<iframe name="editor" src="${editor}/editor" width="800" height="600"></iframe>`
           : url.pathname === "/welcome"
-            ? `<body tabindex="0">Welcome<script>window.addEventListener('keydown', event => { if (event.key === 'Escape') parent.postMessage('dismiss-welcome', '${editor}'); });</script></body>`
+            ? `<body>Welcome<button id="welcome-close" onclick="parent.postMessage('dismiss-welcome', '${editor}')">Close</button></body>`
             : `<style>.overlay { display:none; position:fixed; inset:0; background:white; z-index:5; }</style>
              <button id="edit" onclick="document.body.dataset.edited='true'">Edit</button>
              <div class="iframe-welcome-wrap overlay"><iframe name="iframe-welcome-form" src="${editor}/welcome"></iframe></div>
