@@ -18,7 +18,11 @@ test("Office onboarding handles late welcome frames and preserves unrelated dial
         url.origin === source
           ? `<iframe name="editor" src="${editor}/editor" width="800" height="600"></iframe>`
           : url.pathname === "/welcome"
-            ? `<body>Welcome<button id="welcome-close" onclick="parent.postMessage('dismiss-welcome', '${editor}')">Close</button></body>`
+            ? `<body><style>#welcome-close{position:absolute;top:0;right:0}#welcome-close::before{content:'×';position:absolute;right:3px;top:3px;width:48px;height:48px}</style>
+              Welcome<div id="welcome-close" onclick="parent.postMessage('dismiss-welcome', '${editor}')"></div>
+              <button id="slide-1-button" onclick="this.hidden=true;document.querySelector('#slide-2-button').hidden=false">Next</button>
+              <button id="slide-2-button" hidden onclick="this.hidden=true;document.querySelector('#slide-3-button').hidden=false">Next</button>
+              <button id="slide-3-button" hidden onclick="parent.postMessage('dismiss-welcome', '${editor}')">Close</button></body>`
             : `<style>.overlay { display:none; position:fixed; inset:0; background:white; z-index:5; }</style>
              <button id="edit" onclick="document.body.dataset.edited='true'">Edit</button>
              <div class="iframe-welcome-wrap overlay"><iframe name="iframe-welcome-form" src="${editor}/welcome"></iframe></div>
@@ -43,6 +47,12 @@ test("Office onboarding handles late welcome frames and preserves unrelated dial
         document.querySelector(".iframe-welcome-wrap") as HTMLElement
       ).style.display = "block";
     });
+    expect(
+      await page
+        .frame({ name: "iframe-welcome-form" })!
+        .locator("#welcome-close")
+        .isVisible(),
+    ).toBe(false);
     await frame.locator("#edit").click({ timeout: 5000 });
     await expect(frame.locator("body")).toHaveAttribute("data-edited", "true");
     await expect(frame.locator(".iframe-welcome-wrap")).toBeHidden();
