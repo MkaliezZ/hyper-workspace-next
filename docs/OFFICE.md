@@ -50,11 +50,15 @@ office_compose() {
     -f deploy/compose.office.yaml "$@"
 }
 office_compose config --quiet
+node scripts/office-guard-init.mjs
 python3 runtime/nextcloud/install-office.py
-office_compose up -d --wait nextcloud collabora
+office_compose build office-gateway
+office_compose up -d --wait nextcloud collabora office-gateway
 source_container="$(office_compose ps -q nextcloud)"
 editor_container="$(office_compose ps -q collabora)"
+gateway_container="$(office_compose ps -q office-gateway)"
 office_occ() { docker exec --user www-data "$source_container" php occ "$@"; }
+office_occ config:system:set loglevel --type=integer --value=2
 office_install_connector() {
   docker exec "$source_container" test ! -e /var/www/html/custom_apps/richdocuments &&
     docker cp .runtime/nextcloud/richdocuments "$source_container":/var/www/html/custom_apps/ &&
@@ -64,14 +68,34 @@ office_install_connector() {
 }
 office_install_connector
 editor_ip="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$editor_container")"
+gateway_ip="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$gateway_container")"
 test -n "$editor_ip"
-office_occ config:app:set richdocuments wopi_allowlist --value="$editor_ip"
+test -n "$gateway_ip"
+office_occ config:app:set richdocuments wopi_allowlist --value="$editor_ip,$gateway_ip"
 python3 runtime/nextcloud/office-settings.py "$editor_ip"
 docker cp .runtime/nextcloud/zz-hyper-office-settings.config.php "$source_container":/var/www/html/config/
 docker exec --user root "$source_container" chmod 644 /var/www/html/config/zz-hyper-office-settings.config.php
 docker exec -i "$source_container" php /dev/stdin /var/www/html/config/zz-hyper-office-settings.config.php "$editor_ip" < tests/fixtures/office-settings.php
-office_occ richdocuments:activate-config --wopi-url=http://collabora:9980 --callback-url=http://nextcloud
+member_group="$(office_compose exec -T api printenv NEXTCLOUD_MEMBER_GROUP)"
+test -n "$member_group"
+python3 runtime/nextcloud/install-office-guard.py \
+  --secret-file .runtime/office-guard/secret \
+  --gateway-url http://office-gateway:9982 --gateway-ip "$gateway_ip" \
+  --member-group "$member_group"
+docker cp .runtime/nextcloud/hyper_office_guard "$source_container":/var/www/html/custom_apps/
+docker cp .runtime/nextcloud/zz-hyper-office-guard.config.php "$source_container":/var/www/html/config/
+docker exec --user root "$source_container" chown -R www-data:www-data /var/www/html/custom_apps/hyper_office_guard
+docker exec --user root "$source_container" chown www-data:www-data /var/www/html/config/zz-hyper-office-guard.config.php
+docker exec --user root "$source_container" chmod 640 /var/www/html/config/zz-hyper-office-guard.config.php
+office_occ app:enable hyper_office_guard
+office_occ richdocuments:activate-config --wopi-url=http://office-gateway:9981 --callback-url=http://nextcloud
 office_occ config:app:get richdocuments public_wopi_url
 ```
 
-公开编辑器地址应为公司固定 IP 上的 `https://192.168.10.50:8444`。安装 [Office Nginx 模板](../deploy/nginx.office.intranet.conf.example)，替换监听 IP、证书路径和回环端口，执行 `nginx -t` 后再重载。通过受信任的公司根证书访问 `/hosting/discovery`，再从员工浏览器打开 DOCX、XLSX 和 PPTX。应用容器内的 Collabora 地址只供 Nextcloud 查询发现和功能；文件回调和设置预设均走隔离容器网络。若重建 Collabora 后容器地址变化，重新设置 WOPI 白名单、重新生成并复制设置片段，再复核实际文档加载。片段只包含容器 IP，不含凭据；回退时删除该片段并恢复经过验证的应用组合。若另行接入 HTTPS 来源，需要为其配置可信 CA，保留 `ssl.ssl_verification=true`。确认来源连接器和编辑器都可用后，以同一 Compose 文件组合重建 API 和 Worker 让入口启用。
+公开编辑器地址应为公司固定 IP 上的 `https://192.168.10.50:8444`。安装 [Office Nginx 模板](../deploy/nginx.office.intranet.conf.example)，替换监听 IP、证书路径和回环端口，执行 `nginx -t` 后再重载。通过受信任的公司根证书访问 `/hosting/discovery`，再从员工浏览器打开 DOCX、XLSX 和 PPTX。公共端口只映射到网关，Collabora 不发布主机端口；文件回调和设置预设走隔离容器网络。此组合要求 Nextcloud 安装在来源地址根路径。已有外部来源必须同样安装伴随应用，并按实际内部地址、网关直连 IP 与 WOPI 来源配置专用网络。
+
+`hyper_office_guard` 是本仓库维护的独立 Nextcloud 33 应用。它按当前文件读取/修改权限、账号状态和工作区成员组复核 WOPI 身份。普通共享删除和权限更新先暂停编辑流，再按变更后的权限恢复合法会话；其他权限变化以事件通知和短租约复核补充。复核超时会关闭会话。源变更与网关通知不是跨系统事务，不能承诺任意后台路径在零延迟内失效。网关初版限制编辑器导出、剪贴板文件及转换 HTTP 路由；原件和已保存副本通过 Nextcloud 当前授权下载。真实撤权与保存冲突的验收状态以对应提交的专项测试为准。
+
+网关秘密仅存于 `.runtime/office-guard/secret` 与来源私有配置，备份时按凭据保护。初始化脚本保留现有值，父目录为 `0700`，文件以只读方式挂入非 root 网关。Nextcloud 配置由 `www-data` 持有且权限为 `0640`。Nextcloud 日志保持 warning（`loglevel=2`）或更严格，签名连接器的 debug 日志可能包含 WOPI 记录，不能对这些接口开启调试日志。重建 Collabora 或网关后若容器 IP 变化，重新设置两者的 WOPI 白名单、生成并复制对应配置，再核对实际文档加载和撤权。不要只移除网关恢复直连来回退；先停止 Office 入口及编辑会话，回到经过验证的整个组件组合。若另行接入 HTTPS 来源，需要配置可信 CA，保留 `ssl.ssl_verification=true`。确认来源连接器、网关和编辑器均可用后，以同一 Compose 文件组合重建 API 和 Worker 让入口启用。
+
+网关校验连接初始 token 绑定的身份与当前权限。Collabora 协作保存会选择可写会话，且上游支持 token 更新；具体保存身份仍由编辑器与 Nextcloud 共同决定。该网关不提供逐次 PUT 的单作者归因，也不回撤撤权前已经进入共享内核的修改。

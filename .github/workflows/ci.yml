@@ -61,6 +61,7 @@ jobs:
       - run: python3 -m unittest discover -s runtime/hermes -p 'test_*.py'
       - run: python3 -m unittest discover -s runtime/nextcloud -p 'test_*.py'
       - run: python3 tests/office/test_protocol.py -v
+      - run: node --test runtime/office-gateway/gateway.test.mjs
       - run: python3 -m venv .runtime/documents
       - run: .runtime/documents/bin/python -m pip install --require-hashes -r runtime/documents/requirements.lock --index-url https://pypi.org/simple
       - run: .runtime/documents/bin/python -m unittest discover -s runtime/documents -p test_extract.py -v
