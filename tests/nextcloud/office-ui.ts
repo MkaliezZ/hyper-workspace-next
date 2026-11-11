@@ -98,7 +98,18 @@ export async function recordOfficeReplacement(
   previous: string,
   replacement: string,
 ) {
-  await (await reviewControl(frame, "unoTrackChanges")).click();
+  const record = await reviewControl(frame, "unoTrackChanges");
+  // The pinned editor offers explicit recording scopes on its split button.
+  // Select this author rather than toggling the current document-wide state.
+  await record.locator("..").locator("button.arrowbackground").click();
+  await frame.getByText("This user", { exact: true }).click();
+  await expect
+    .poll(() =>
+      frame.locator(".unoTrackChanges > button.unobutton").evaluateAll((buttons) =>
+        buttons.some((button) => button.getAttribute("aria-pressed") === "true"),
+      ),
+    )
+    .toBe(true);
   const overflow = frame.locator(
     "#overflow-button-review-tracking-dropdown-overlay.cancellable",
   );
