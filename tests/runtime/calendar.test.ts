@@ -11,10 +11,15 @@ import { engineRegistry } from "../../apps/api/src/engines/adapters.js";
 import { createCalendarScope } from "../fixtures/calendar-scope.js";
 import { modelFixture } from "./business-contract.js";
 import { CalendarAvailabilityQuery } from "@hyper/contracts/calendar";
+import ICAL from "ical.js";
+import {
+  expandMeetingFixture,
+  meetingOverride,
+} from "../fixtures/calendar-meetings.js";
 
 test(
   "Native DSH and Hermes execute the same private calendar service with observed source receipts and cleaned runtime",
-  { timeout: 300000 },
+  { timeout: 600000 },
   async () => {
     const url = process.env.TEST_DATABASE_URL;
     assert.ok(url && new URL(url).pathname.endsWith("_test"));
@@ -275,11 +280,112 @@ test(
           /RRULE:FREQ=WEEKLY;COUNT=3/,
         );
         assert.equal(f.source.writes, before + 1);
+        const meetingRun = async (commandId: string) => {
+          const started = await work.startCalendarRun(f.actor, {
+            ...input,
+            idempotencyKey: randomUUID(),
+            plan: { operation: "apply", commandId, confirmed: true },
+          });
+          await processor.process(started.id);
+          const result = await work.getRun(f.actor, started.id);
+          assert.equal(result.state, "succeeded", result.error);
+          assert.equal(result.result.receipts[0].observedResult, "matched");
+          assert.equal(result.result.receipts[0].commandId, commandId);
+          assert.ok(!result.result.text.includes("Model text"));
+          await assert.rejects(work.getRun(f.peer, started.id), /不存在|无权/);
+          return result.result.receipts[0];
+        };
+        const series = await f.service.get(f.actor, rejectedCommand.id);
+        const reschedule = await f.service.prepare(f.actor, {
+          operation: "update",
+          scope: "meeting",
+          calendarId: "personal",
+          objectId: series.objectId,
+          etag: series.sourceEtag,
+          idempotencyKey: randomUUID(),
+          change: {
+            operation: "reschedule_series",
+            exceptions: "preserve_overrides",
+            interval: {
+              kind: "timed",
+              start: "2026-11-05T01:00:00Z",
+              end: "2026-11-05T02:00:00Z",
+            },
+          },
+        });
+        assert.equal(
+          (await meetingRun(reschedule.id)).meetingChange,
+          "reschedule_series",
+        );
+        // External source fixture: Alice receives Bob's meeting with one special arrangement.
+        const received = f.source.objects.get(fixtureKey)!;
+        const receivedRoot = new ICAL.Component(ICAL.parse(received.ical));
+        const master = receivedRoot.getFirstSubcomponent("vevent")!;
+        master.updatePropertyWithValue(
+          "organizer",
+          "mailto:bob@example.invalid",
+        );
+        master
+          .getFirstProperty("attendee")!
+          .setValue("mailto:alice@example.invalid");
+        received.ical = meetingOverride(
+          receivedRoot.toString(),
+          "2026-11-12T01:00:00Z",
+          "2026-11-12T05:00:00Z",
+          "2026-11-12T06:00:00Z",
+        );
+        received.version++;
+        f.source.expand = expandMeetingFixture;
+        const target = {
+          scope: "occurrence",
+          recurrenceId: "2026-11-12T01:00:00Z",
+          window: {
+            start: "2026-11-12T00:00:00Z",
+            end: "2026-11-13T00:00:00Z",
+          },
+        };
+        const reply = await f.service.prepare(f.actor, {
+          operation: "update",
+          scope: "meeting",
+          calendarId: "personal",
+          objectId: series.objectId,
+          etag: '"v' + received.version + '"',
+          idempotencyKey: randomUUID(),
+          change: { operation: "reply", response: "DECLINED", target },
+        });
+        const replyReceipt = await meetingRun(reply.id);
+        assert.equal(replyReceipt.meetingReplyScope, "occurrence");
+        assert.equal(replyReceipt.recurrenceId, target.recurrenceId);
+        assert.deepEqual(replyReceipt.meeting.responses, [
+          { recurrenceId: null, response: "needs_action" },
+          { recurrenceId: target.recurrenceId, response: "declined" },
+        ]);
+        const all = await f.service.prepare(f.actor, {
+          operation: "update",
+          scope: "meeting",
+          calendarId: "personal",
+          objectId: series.objectId,
+          etag: '"v' + f.source.objects.get(fixtureKey)!.version + '"',
+          idempotencyKey: randomUUID(),
+          change: {
+            operation: "reply",
+            response: "ACCEPTED",
+            target: { scope: "series" },
+          },
+        });
+        const allReceipt = await meetingRun(all.id);
+        assert.equal(allReceipt.meetingReplyScope, "series");
+        assert.deepEqual(allReceipt.meeting.responses, [
+          { recurrenceId: null, response: "accepted" },
+          { recurrenceId: target.recurrenceId, response: "accepted" },
+        ]);
+        assert.equal(f.source.writes, before + 4);
+        f.source.expand = undefined;
         // Isolate the next engine's unrelated window assertions from this fixture series.
         f.source.objects.delete(fixtureKey);
       }
-      assert.equal(f.source.writes, 4);
-      assert.equal(model.calls(), 12);
+      assert.equal(f.source.writes, 10);
+      assert.equal(model.calls(), 18);
       assert.equal(
         (
           await db.pool.query(

@@ -215,6 +215,22 @@ export const CalendarCommandInput = z.discriminatedUnion("operation", [
             .object({
               operation: z.literal("reply"),
               response: z.enum(["ACCEPTED", "TENTATIVE", "DECLINED"]),
+              // Absent on historical commands; those replies apply to the series.
+              target: z
+                .discriminatedUnion("scope", [
+                  z.object({ scope: z.literal("series") }).strict(),
+                  occurrenceTarget
+                    .extend({ scope: z.literal("occurrence") })
+                    .strict(),
+                ])
+                .optional(),
+            })
+            .strict(),
+          z
+            .object({
+              operation: z.literal("reschedule_series"),
+              interval: CalendarInterval,
+              exceptions: z.literal("preserve_overrides"),
             })
             .strict(),
           z
@@ -243,6 +259,9 @@ export const CalendarObjectQuery = z
     etag: CalendarEtag,
   })
   .strict();
+export const CalendarMeetingQuery = CalendarObjectQuery.extend({
+  target: occurrenceTarget.optional(),
+}).strict();
 export interface CalendarSeriesRule {
   rules: string[];
   simple: CalendarRepeat | null;
@@ -255,6 +274,18 @@ export interface CalendarMeeting {
   title: string;
   ownResponse?: CalendarInvitationStatus["response"];
   invitations?: CalendarInvitationStatus[];
+  responses?: {
+    recurrenceId: string | null;
+    response: CalendarInvitationStatus["response"];
+  }[];
+  selectedResponse?: CalendarInvitationStatus["response"];
+  selectedRecurrenceId?: string;
+  series?: {
+    interval: CalendarInterval;
+    repeat: CalendarRepeat;
+    exceptionCount: number;
+    canReschedule: boolean;
+  };
 }
 export interface CalendarSummary {
   id: string;
@@ -295,6 +326,10 @@ export interface CalendarInvitationStatus {
     | "tentative"
     | "declined"
     | "unreported";
+  instances?: {
+    recurrenceId: string;
+    response: CalendarInvitationStatus["response"];
+  }[];
 }
 export interface CalendarCommandReceipt {
   sourceRunId?: string | null;

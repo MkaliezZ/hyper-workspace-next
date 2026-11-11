@@ -12,6 +12,7 @@ import {
   CalendarQuery,
   CalendarAvailabilityQuery,
   CalendarObjectQuery,
+  CalendarMeetingQuery,
   CalendarLinkChange,
   type CalendarLink,
   type CalendarLinkReceipt,
@@ -40,6 +41,7 @@ import {
   meetingParticipants,
   calendarMeeting,
   patchCalendarMeeting,
+  calendarMeetingRepliesMatch,
 } from "./calendar-codec.js";
 import { calendarOccurrences } from "./calendar-projection.js";
 import { ProjectAccess } from "./project-access.js";
@@ -464,7 +466,7 @@ export class CalendarService {
     });
   }
   async meeting(s: Subject, raw: unknown) {
-    const input = CalendarObjectQuery.parse(raw);
+    const input = CalendarMeetingQuery.parse(raw);
     const source = await this.connection(s);
     const { address, canUpdate } = await this.ownMeetingAddress(
       source,
@@ -473,7 +475,15 @@ export class CalendarService {
     const actual = await source.provider.read(input.calendarId, input.objectId);
     if (actual.etag !== input.etag)
       throw new ConflictException("会议已更新，请刷新日历后再读取。");
-    const meeting = calendarMeeting(actual.ical, address);
+    const occurrence = input.target
+      ? await this.meetingOccurrence(
+          source,
+          input.calendarId,
+          actual,
+          input.target,
+        )
+      : undefined;
+    const meeting = calendarMeeting(actual.ical, address, occurrence);
     if (meeting.role === "organizer") {
       const saved = (
         await this.db.pool.query(
@@ -507,6 +517,28 @@ export class CalendarService {
     if (address !== current.address)
       throw new ConflictException("来源会议身份已变化，请刷新日历。");
     return { ...meeting, canUpdate: canUpdate && current.canUpdate };
+  }
+  private async meetingOccurrence(
+    source: Source,
+    calendarId: string,
+    original: { objectId: string; etag: string; uid: string },
+    target: { recurrenceId: string; window: { start: string; end: string } },
+  ) {
+    const selected = (
+      await source.provider.occurrences(calendarId, target.window)
+    ).find((object) => object.objectId === original.objectId);
+    if (
+      !selected ||
+      selected.etag !== original.etag ||
+      selected.uid !== original.uid
+    )
+      throw new ConflictException("本次会议已更新或不在所选窗口，请重新读取。");
+    const occurrence = calendarOccurrences([selected]).find(
+      (event) => event.recurrenceId === target.recurrenceId,
+    );
+    if (!occurrence)
+      throw new ConflictException("当前来源窗口内未找到本次会议。");
+    return occurrence;
   }
   async availability(s: Subject, raw: unknown, signal?: AbortSignal) {
     const input = CalendarAvailabilityQuery.parse(raw),
@@ -614,12 +646,23 @@ export class CalendarService {
           true,
         );
         meetingActor = address;
-        title = calendarMeeting(original.ical, address).title;
+        const occurrence =
+          input.change.operation === "reply" &&
+          input.change.target?.scope === "occurrence"
+            ? await this.meetingOccurrence(
+                source,
+                input.calendarId,
+                original,
+                input.change.target,
+              )
+            : undefined;
+        title = calendarMeeting(original.ical, address, occurrence).title;
         desired = patchCalendarMeeting(
           original.ical,
           address,
           input.change,
           id,
+          occurrence,
         );
       } else {
         const { calendarUid } = await import(
@@ -797,7 +840,11 @@ export class CalendarService {
             seen.role !== expected.role ||
             seen.cancelled !== expected.cancelled ||
             (plan.change.operation === "reply" &&
-              seen.ownResponse !== expected.ownResponse)
+              !calendarMeetingRepliesMatch(
+                row.desired_ical,
+                actual.ical,
+                address,
+              ))
           ) {
             outcome = null;
             etag = null;
