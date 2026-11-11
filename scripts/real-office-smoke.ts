@@ -12,6 +12,10 @@ import { WorkspaceService } from "../apps/api/src/core/workspace.js";
 import { RunProcessor } from "../apps/api/src/core/processor.js";
 import { engineRegistry } from "../apps/api/src/engines/adapters.js";
 import { createCalendarScope } from "../tests/fixtures/calendar-scope.js";
+import {
+  finalizeOfficeSmoke,
+  officeFixtureEnvironment,
+} from "./office-smoke-support.js";
 
 async function main() {
   if (process.argv.length === 2) {
@@ -187,7 +191,9 @@ async function main() {
         engine,
         operation: plan.operation,
         state: actual.state,
-        error: actual.error,
+        error: actual.error
+          ? "Product run did not complete; inspect its private receipt."
+          : null,
         result: actual.result,
         requests,
       });
@@ -216,7 +222,7 @@ async function main() {
         const bytes = execFileSync(
           python,
           ["tests/fixtures/office-roundtrip.py", "create", format],
-          { timeout: 15000 },
+          { timeout: 15000, env: officeFixtureEnvironment() },
         );
         const file = source.files.add(
           "alice",
@@ -337,7 +343,7 @@ async function main() {
             output,
             marker,
           ],
-          { encoding: "utf8", timeout: 15000 },
+          { encoding: "utf8", timeout: 15000, env: officeFixtureEnvironment() },
         );
         assert.equal(
           checked.status,
@@ -375,25 +381,40 @@ async function main() {
   } catch (error) {
     report.status = "failed";
     report.failure =
-      error instanceof Error ? error.message : "Verification failed";
+      "Verification did not complete; inspect the private product receipts.";
     throw error;
   } finally {
-    if (profileId)
-      await db.pool.query(
-        "UPDATE cw_model_profiles SET credential_enc=NULL,key_hint=NULL WHERE id=$1",
-        [profileId],
+    const cleanup = await finalizeOfficeSmoke({
+      report,
+      clearCredential: profileId
+        ? () =>
+            db.pool.query(
+              "UPDATE cw_model_profiles SET credential_enc=NULL,key_hint=NULL WHERE id=$1",
+              [profileId],
+            )
+        : undefined,
+      closeSource: scope ? () => scope!.close() : undefined,
+      closeDatabase: () => db.close(),
+      restoreEnvironment: () => {
+        for (const [key, value] of originalEnvironment) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+      },
+      saveReport: save,
+    });
+    if (cleanup.cleanupFailures.length) {
+      process.exitCode = 1;
+      console.error(
+        "Office verification cleanup incomplete:",
+        cleanup.cleanupFailures.join(", "),
       );
-    await save();
-    await scope?.close();
-    await db.close();
-    for (const [key, value] of originalEnvironment) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
+    } else {
+      console.info(
+        "Private verification report:",
+        resolve(directory, "report.json"),
+      );
     }
-    console.info(
-      "Private verification report:",
-      resolve(directory, "report.json"),
-    );
   }
 }
 const mimes = {
