@@ -378,6 +378,11 @@ export function createGateway(config) {
         const route = publicRoute(url, req.method);
         let body;
         if (route === "launch") {
+          demand(
+            req.headers.origin === config.sourceOrigin ||
+              req.headers.origin === config.publicOrigin,
+            "invalid_origin",
+          );
           demand(!gateway.holds.size, "permission_change_pending", 423);
           demand(
             req.headers["content-type"]?.split(";")[0].trim() ===

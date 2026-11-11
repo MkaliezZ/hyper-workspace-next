@@ -388,6 +388,16 @@ test("HTTP exposes static resources only; launch is authenticated; redirects and
       body: "access_token=bob",
     });
   assert.equal((await launch()).status, 200);
+  assert.equal(
+    (
+      await request(f.port, path, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "access_token=bob",
+      })
+    ).status,
+    403,
+  );
   f.permissions.get("bob").canWrite = false;
   assert.equal((await launch()).status, 403);
   f.permissions.get("bob").canWrite = true;
@@ -545,7 +555,10 @@ test("control authentication and bounded inputs fail without upstream secrets; n
     "/browser/hash/cool.html?WOPISrc=" + encodeURIComponent(wopi),
     {
       method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        origin: "http://source.test",
+      },
       body: "a".repeat(65537),
     },
   );
@@ -612,11 +625,45 @@ test("slow HTTP bodies have an absolute deadline and pending upgrades count agai
   socket.write(
     "POST /browser/hash/cool.html?WOPISrc=" +
       encodeURIComponent(wopi) +
-      " HTTP/1.1\r\nHost: office.test:9981\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 100\r\n\r\n",
+      " HTTP/1.1\r\nHost: office.test:9981\r\nOrigin: http://source.test\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 100\r\n\r\n",
   );
   const timer = setInterval(() => socket.write("x"), 10);
   t.after(() => clearInterval(timer));
   await until(() => Buffer.concat(chunks).toString().includes("408"));
   clearInterval(timer);
   assert.equal(f.upstreamRequests.length, 0);
+});
+
+test("denied pending authorization discards a coalesced partial frame after client disconnect", async (t) => {
+  const f = await fixture(t, { checkTimeoutMs: 500 });
+  let release;
+  f.sourceState.checkGate = new Promise((resolve) => {
+    release = resolve;
+  });
+  t.after(() => release());
+  const socket = net.connect(f.port, "127.0.0.1");
+  socket.on("error", () => {});
+  t.after(() => socket.destroy());
+  await new Promise((resolve) => socket.once("connect", resolve));
+  socket.write(
+    Buffer.concat([
+      Buffer.from(
+        "GET " +
+          wsPath() +
+          " HTTP/1.1\r\nHost: office.test:9981\r\nOrigin: http://office.test:9981\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: MDEyMzQ1Njc4OWFiY2RlZg==\r\n\r\n",
+      ),
+      Buffer.from([0x81, 0x85, 1, 2]),
+    ]),
+  );
+  await until(() => f.sourceState.calls >= 2);
+  const id = "7".repeat(32);
+  await f.control("/pause", { id });
+  f.permissions.get("bob").canRead = false;
+  socket.destroy();
+  const revalidating = f.control("/revalidate", { id });
+  f.sourceState.checkGate = undefined;
+  release();
+  await revalidating;
+  await until(() => f.gateway.state.views.size === 0);
+  assert.equal(f.backendViews.size, 0);
 });
