@@ -141,7 +141,7 @@ jobs:
 
   office:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     services:
       postgres:
         image: pgvector/pgvector:pg17@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d
@@ -184,10 +184,10 @@ jobs:
       - run: python3 -m venv .runtime/documents && .runtime/documents/bin/python -m pip install --require-hashes -r runtime/documents/requirements.lock --index-url https://pypi.org/simple
       - run: npm run migrate && npm run workspace:init
       - run: npx playwright install --with-deps chromium
-      - name: Verify the real Nextcloud Office editor
+      - name: Verify real Office editing, revisions, revocation and recovery
         run: |
           bash scripts/ci/office-setup.sh
-          npm run test:nextcloud -- office.spec.ts office-collaboration.spec.ts
+          npm run test:nextcloud -- office.spec.ts office-collaboration.spec.ts office-access.spec.ts
       - name: Verify the same Office core for editable copies
         run: bash scripts/ci/office-batch.sh
       - name: Verify reviewed copies against real Nextcloud and the editor
