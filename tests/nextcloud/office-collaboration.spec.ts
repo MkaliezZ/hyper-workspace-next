@@ -5,7 +5,12 @@ import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { login, password, source } from "./helpers";
 import { observeOffice } from "./office-helpers";
-import { installOfficeOnboardingHandler, replaceOfficeText } from "./office-ui";
+import {
+  acceptOfficeRevisions,
+  installOfficeOnboardingHandler,
+  recordOfficeReplacement,
+  replaceOfficeText,
+} from "./office-ui";
 
 const editorOrigin = "http://127.0.0.1:9980";
 const python = resolve(".runtime/documents/bin/python");
@@ -21,10 +26,10 @@ type Actor = Awaited<ReturnType<typeof login>> & {
   frame?: Frame;
 };
 
-test("Two real Office users preserve simultaneous edits and shared authored comments", async ({
+test("Two real Office users preserve simultaneous edits, authored comments, and accepted revisions", async ({
   browser,
 }) => {
-  test.setTimeout(360000);
+  test.setTimeout(420000);
   const name = "Hyper-shared-office-" + randomUUID() + ".docx";
   const contentUrl = source + "/remote.php/dav/files/" + owner + "/" + name;
   const shareUrl = source + "/ocs/v2.php/apps/files_sharing/api/v1/shares";
@@ -33,10 +38,11 @@ test("Two real Office users preserve simultaneous edits and shared authored comm
     "OCS-APIRequest": "true",
     "Content-Type": "application/x-www-form-urlencoded",
   };
-  const bytes = execFileSync(python, [
-    "tests/fixtures/office-collaboration.py",
-    "create",
-  ]);
+  const bytes = execFileSync(
+    python,
+    ["tests/fixtures/office-collaboration.py", "create"],
+    { timeout: 15000 },
+  );
   expect(
     (
       await fetch(contentUrl, {
@@ -51,6 +57,7 @@ test("Two real Office users preserve simultaneous edits and shared authored comm
   const sharing = await fetch(shareUrl + "?format=json", {
     method: "POST",
     redirect: "error",
+    signal: AbortSignal.timeout(10000),
     headers,
     body: new URLSearchParams({
       path: "/" + name,
@@ -69,6 +76,7 @@ test("Two real Office users preserve simultaneous edits and shared authored comm
     bob: "bob-" + randomUUID(),
     comment: "comment-" + randomUUID(),
     reply: "reply-" + randomUUID(),
+    revision: "revision-" + randomUUID(),
   };
   async function open(uid: string) {
     const session = await login(browser, uid);
@@ -115,6 +123,7 @@ test("Two real Office users preserve simultaneous edits and shared authored comm
         async () => {
           const downloaded = await fetch(contentUrl, {
             redirect: "error",
+            signal: AbortSignal.timeout(10000),
             headers: { Authorization: authorization },
           });
           if (downloaded.status !== 200) return false;
@@ -213,6 +222,24 @@ test("Two real Office users preserve simultaneous edits and shared authored comm
       text: [markers.alice, markers.bob],
       comments: { [owner]: markers.comment, [collaborator]: markers.reply },
     });
+
+    await recordOfficeReplacement(
+      alice.editor,
+      alice.frame,
+      "Revision target",
+      markers.revision,
+    );
+    await verify({
+      text: [markers.alice, markers.bob, markers.revision],
+      comments: { [owner]: markers.comment, [collaborator]: markers.reply },
+      tracked: { author: owner, text: markers.revision },
+    });
+    await acceptOfficeRevisions(bob.editor, bob.frame);
+    await verify({
+      text: [markers.alice, markers.bob, markers.revision],
+      comments: { [owner]: markers.comment, [collaborator]: markers.reply },
+      accepted: true,
+    });
   } catch (error) {
     for (const actor of actors)
       if (actor.editor)
@@ -227,6 +254,7 @@ test("Two real Office users preserve simultaneous edits and shared authored comm
     await fetch(shareUrl + "/" + shareId + "?format=json", {
       method: "DELETE",
       redirect: "error",
+      signal: AbortSignal.timeout(10000),
       headers,
     });
   }

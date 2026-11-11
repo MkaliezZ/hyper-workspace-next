@@ -52,3 +52,44 @@ export async function replaceOfficeText(
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
 }
+
+async function reviewControl(
+  frame: Frame,
+  command: "unoTrackChanges" | "unoAcceptTrackedChanges",
+) {
+  await frame.locator("#Review-tab-label").click();
+  const button = frame.locator(`.${command} > button.unobutton:visible`);
+  if ((await button.count()) === 0)
+    await frame
+      .locator(
+        '#Review-container [id^="overflow-button-review-tracking"].menubutton:visible .arrowbackground',
+      )
+      .click();
+  return button;
+}
+
+/** Recording is established by the saved authored revision, not toolbar state. */
+export async function recordOfficeReplacement(
+  page: Page,
+  frame: Frame,
+  previous: string,
+  replacement: string,
+) {
+  await (await reviewControl(frame, "unoTrackChanges")).click();
+  await page.keyboard.press("Escape");
+  await frame
+    .locator("#document-container")
+    .click({ position: { x: 300, y: 300 } });
+  await replaceOfficeText(page, frame, previous, replacement);
+  await page.keyboard.press("Control+s");
+}
+
+export async function acceptOfficeRevisions(page: Page, frame: Frame) {
+  await (await reviewControl(frame, "unoAcceptTrackedChanges")).click();
+  const dialog = frame.getByRole("dialog").filter({
+    has: frame.getByRole("button", { name: "Accept All", exact: true }),
+  });
+  await dialog.getByRole("button", { name: "Accept All", exact: true }).click();
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await page.keyboard.press("Control+s");
+}
