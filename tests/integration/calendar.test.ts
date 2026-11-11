@@ -17,6 +17,7 @@ import {
   expandMeetingFixture,
   meetingOverride,
 } from "../fixtures/calendar-meetings.js";
+import { createCalendarObject } from "../../apps/api/src/core/calendar-codec.js";
 const url = process.env.TEST_DATABASE_URL;
 if (!url || !new URL(url).pathname.endsWith("_test"))
   throw Error("Isolated _test database required");
@@ -777,6 +778,129 @@ test("Recurring meeting replies verify every exception; whole-series reschedule 
     fixture.mode = "ok";
     fixture.objects.delete(key);
     fixture.objects.delete(copy);
+    fixture.addresses.clear();
+  }
+});
+
+test("An exception-only invitation exposes only invited details and never adds its recipient to the master", async () => {
+  fixture.addresses.set("alice", "alice@example.invalid");
+  fixture.addresses.set("bob", "bob@example.invalid");
+  const objectId = "exception-invite-" + randomUUID() + ".ics",
+    key = "bob/personal/" + objectId;
+  const source = createCalendarObject(
+    {
+      title: "private-master-not-for-bob",
+      description: "private-master-description",
+      location: "Private master room",
+      interval: {
+        kind: "timed",
+        start: "2026-11-04T01:00:00Z",
+        end: "2026-11-04T02:00:00Z",
+      },
+      repeat: { frequency: "WEEKLY", interval: 1, count: 3 },
+    },
+    randomUUID(),
+    randomUUID(),
+    {
+      organizer: "mailto:alice@example.invalid",
+      attendees: ["mailto:carol@example.invalid"],
+    },
+  );
+  let ical = meetingOverride(
+    source,
+    "2026-11-11T01:00:00Z",
+    "2026-11-11T05:00:00Z",
+    "2026-11-11T06:00:00Z",
+  );
+  ical = meetingOverride(
+    ical,
+    "2026-11-18T01:00:00Z",
+    "2026-11-18T05:00:00Z",
+    "2026-11-18T06:00:00Z",
+  );
+  const root = new ICAL.Component(ICAL.parse(ical));
+  const invited = root.getAllSubcomponents("vevent")[1]!;
+  invited.updatePropertyWithValue("summary", "The instance Bob was invited to");
+  invited.updatePropertyWithValue("description", "Visible invitation");
+  invited.getFirstProperty("attendee")!.setValue("mailto:bob@example.invalid");
+  const masterBefore = root.getFirstSubcomponent("vevent")!.toJSON();
+  fixture.objects.set(key, { ical: root.toString() + "\r\n", version: 1 });
+  fixture.mode = "ok";
+  fixture.expand = expandMeetingFixture;
+  const object = { calendarId: "personal", objectId, etag: '"v1"' },
+    window = { start: "2026-11-01T00:00:00Z", end: "2026-12-01T00:00:00Z" };
+  const target = {
+    scope: "occurrence",
+    recurrenceId: "2026-11-11T01:00:00Z",
+    window,
+  };
+  try {
+    for (const query of [
+      object,
+      { ...object, target: { recurrenceId: target.recurrenceId, window } },
+    ]) {
+      const details = await service.meeting(actor("bob"), query);
+      assert.equal(details.role, "attendee");
+      assert.equal(details.title, "The instance Bob was invited to");
+      assert.equal(details.series, undefined);
+      assert.equal(details.ownResponse, undefined);
+      assert.equal(details.responses?.length, 1);
+      assert.ok(!JSON.stringify(details).includes("private-master"));
+    }
+    await assert.rejects(
+      service.meeting(actor("bob"), {
+        ...object,
+        target: { recurrenceId: "2026-11-18T01:00:00Z", window },
+      }),
+      /未被邀请/,
+    );
+    const command = await service.prepare(actor("bob"), {
+      ...object,
+      idempotencyKey: randomUUID(),
+      operation: "update",
+      scope: "meeting",
+      change: { operation: "reply", response: "ACCEPTED", target },
+    });
+    const saved = await service.apply(actor("bob"), command.id);
+    assert.equal(saved.state, "succeeded");
+    assert.equal(saved.title, "The instance Bob was invited to");
+    assert.ok(!JSON.stringify(saved).includes("private-master"));
+    assert.deepEqual(saved.meeting?.responses, [
+      { recurrenceId: target.recurrenceId, response: "accepted" },
+    ]);
+    const all = await service.prepare(actor("bob"), {
+      ...object,
+      etag: saved.sourceEtag,
+      idempotencyKey: randomUUID(),
+      operation: "update",
+      scope: "meeting",
+      change: {
+        operation: "reply",
+        response: "TENTATIVE",
+        target: { scope: "series" },
+      },
+    });
+    assert.equal(
+      (await service.apply(actor("bob"), all.id)).state,
+      "succeeded",
+    );
+    const after = new ICAL.Component(
+      ICAL.parse(fixture.objects.get(key)!.ical),
+    );
+    assert.deepEqual(
+      after.getFirstSubcomponent("vevent")!.toJSON(),
+      masterBefore,
+    );
+    assert.equal(
+      after
+        .getAllSubcomponents("vevent")[2]!
+        .getFirstProperty("attendee")!
+        .getFirstValue(),
+      "mailto:carol@example.invalid",
+    );
+  } finally {
+    fixture.expand = undefined;
+    fixture.objects.delete(key);
     fixture.addresses.clear();
   }
 });

@@ -547,19 +547,39 @@ export function calendarMeeting(
   occurrence?: CalendarOccurrence,
 ): CalendarMeeting {
   const master = meetingMaster(ical);
+  const events = master.parent!.getAllSubcomponents("vevent");
   const organizers = master.getAllProperties("organizer");
   const participants = master.getAllProperties("attendee");
-  if (organizers.length !== 1 || !participants.length)
+  if (
+    organizers.length !== 1 ||
+    !events.some((event) => event.hasProperty("attendee"))
+  )
     throw new BadRequestException("来源日程没有完整的会议身份。");
   const role =
     organizers[0]!.getFirstValue() === address ? "organizer" : "attendee";
   const own = participants.filter((p) => p.getFirstValue() === address);
-  if (role === "attendee" && own.length !== 1)
-    throw new BadRequestException("当前员工不是可核实的会议参会人。");
-  const events = master.parent!.getAllSubcomponents("vevent");
   const responses =
     role === "attendee" ? meetingResponses(master, address) : undefined;
+  if (role === "attendee" && !responses?.length)
+    throw new BadRequestException("当前员工不是可核实的会议参会人。");
+  const ownEvents =
+    role === "attendee"
+      ? events.filter((event) =>
+          event
+            .getAllProperties("attendee")
+            .some((p) => p.getFirstValue() === address),
+        )
+      : [];
+  // A participant invited only to detached instances must not receive the
+  // uninvited master's title, interval or repetition details, even without a target.
+  let visible =
+    role === "organizer" || own.length === 1
+      ? master
+      : (ownEvents.find(
+          (event) => event.getFirstPropertyValue("status") !== "CANCELLED",
+        ) ?? ownEvents[0]!);
   let selectedResponse: CalendarInvitationStatus["response"] | undefined;
+  let selectedCancelled = false;
   if (occurrence && role === "attendee") {
     const { current } = meetingOccurrence(master, occurrence, true);
     const selected = (current ?? master)
@@ -567,12 +587,18 @@ export function calendarMeeting(
       .filter((p) => p.getFirstValue() === address);
     if (selected.length !== 1)
       throw new BadRequestException("当前员工未被邀请参加本次会议。");
+    if (!own.length) visible = current!;
+    selectedCancelled =
+      (current ?? master).getFirstPropertyValue("status") === "CANCELLED";
     selectedResponse = participantResponse(
       selected[0]!.getParameter("partstat"),
     );
   }
   let series: CalendarMeeting["series"];
-  if (master.hasProperty("rrule")) {
+  if (
+    (role === "organizer" || own.length === 1) &&
+    master.hasProperty("rrule")
+  ) {
     try {
       const rule = readCalendarSeriesRule(ical, true);
       if (rule.simple) {
@@ -594,12 +620,19 @@ export function calendarMeeting(
   }
   return {
     role,
-    cancelled: master.getFirstPropertyValue("status") === "CANCELLED",
-    title: String(master.getFirstPropertyValue("summary") ?? "会议").slice(
+    cancelled:
+      master.getFirstPropertyValue("status") === "CANCELLED" ||
+      selectedCancelled ||
+      (role === "attendee" &&
+        !own.length &&
+        ownEvents.every(
+          (event) => event.getFirstPropertyValue("status") === "CANCELLED",
+        )),
+    title: String(visible.getFirstPropertyValue("summary") ?? "会议").slice(
       0,
       500,
     ),
-    ...(role === "attendee"
+    ...(role === "attendee" && own.length === 1
       ? { ownResponse: participantResponse(own[0]!.getParameter("partstat")) }
       : {}),
     ...(responses ? { responses } : {}),
@@ -905,7 +938,7 @@ export function patchCalendarMeeting(
   commandId: string,
   occurrence?: CalendarOccurrence,
 ) {
-  const meeting = calendarMeeting(ical, address);
+  const meeting = calendarMeeting(ical, address, occurrence);
   if (meeting.cancelled) throw new BadRequestException("会议已经取消。");
   const root = new ICAL.Component(ICAL.parse(ical));
   const events = root.getAllSubcomponents("vevent");

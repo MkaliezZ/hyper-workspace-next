@@ -646,7 +646,6 @@ export class CalendarService {
           true,
         );
         meetingActor = address;
-        title = calendarMeeting(original.ical, address).title;
         const occurrence =
           input.change.operation === "reply" &&
           input.change.target?.scope === "occurrence"
@@ -657,6 +656,7 @@ export class CalendarService {
                 input.change.target,
               )
             : undefined;
+        title = calendarMeeting(original.ical, address, occurrence).title;
         desired = patchCalendarMeeting(
           original.ical,
           address,

@@ -244,7 +244,10 @@ test("All-day series retains date boundaries and reschedule rejects ambiguous, o
   assert.throws(
     () =>
       patchCalendarMeeting(
-        textOf(root).replace("20261111", "20261230"),
+        textOf(root).replace(
+          "RECURRENCE-ID;VALUE=DATE:20261111",
+          "RECURRENCE-ID;VALUE=DATE:20261230",
+        ),
         organizer,
         change,
         command,
@@ -512,4 +515,68 @@ test("Meeting reply contract retains historical plans and rejects unbounded or i
     }).success,
     false,
   );
+});
+
+test("An exception-only attendee can reply without changing or exposing the uninvited master", () => {
+  const root = addOverride(
+    rootOf(fixture()),
+    target.recurrenceId,
+    "2026-11-11T15:00:00Z",
+    "2026-11-11T16:00:00Z",
+  );
+  const master = root.getFirstSubcomponent("vevent")!;
+  master.removeProperty(
+    master
+      .getAllProperties("attendee")
+      .find((p) => p.getFirstValue() === attendee)!,
+  );
+  master.updatePropertyWithValue(
+    "summary",
+    "Private master title not invited to Bob",
+  );
+  const original = textOf(root);
+  const details = calendarMeeting(original, attendee, occurrence());
+  assert.equal(details.title, "Special arrangement");
+  assert.equal(details.ownResponse, undefined);
+  assert.equal(details.series, undefined);
+  assert.equal(details.selectedResponse, "tentative");
+  const untargeted = calendarMeeting(original, attendee);
+  assert.equal(untargeted.title, "Special arrangement");
+  assert.equal(untargeted.series, undefined);
+  assert.ok(!JSON.stringify(untargeted).includes("Private master"));
+  assert.throws(
+    () =>
+      calendarMeeting(original, attendee, occurrence("2026-11-18T09:00:00Z")),
+    /未被邀请/,
+  );
+  const one = patchCalendarMeeting(
+    original,
+    attendee,
+    { operation: "reply", response: "DECLINED", target },
+    command,
+    occurrence(),
+  );
+  assert.deepEqual(
+    rootOf(one).getFirstSubcomponent("vevent")!.toJSON(),
+    master.toJSON(),
+    "Only the invited exception changes",
+  );
+  assert.deepEqual(calendarMeeting(one, attendee).responses, [
+    { recurrenceId: target.recurrenceId, response: "declined" },
+  ]);
+  const all = patchCalendarMeeting(
+    one,
+    attendee,
+    { operation: "reply", response: "ACCEPTED", target: { scope: "series" } },
+    command,
+  );
+  assert.deepEqual(
+    rootOf(all).getFirstSubcomponent("vevent")!.toJSON(),
+    master.toJSON(),
+    "Series scope does not add the attendee to the master",
+  );
+  assert.deepEqual(calendarMeeting(all, attendee).responses, [
+    { recurrenceId: target.recurrenceId, response: "accepted" },
+  ]);
+  assert.equal(calendarMeetingRepliesMatch(all, all, attendee), true);
 });
