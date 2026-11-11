@@ -59,6 +59,8 @@ jobs:
       - name: Prepare the browser before application services
         run: |
           stat -Lc 'resolver_permissions=%a' /etc/resolv.conf
+          python3 scripts/ci/test_ubuntu_dns.py
+          sudo python3 scripts/ci/ubuntu-dns.py
           if getent ahostsv4 archive.ubuntu.com >/dev/null; then
             echo 'host_dns=available'
           else
@@ -157,6 +159,8 @@ jobs:
       - name: Prepare the browser before application services
         run: |
           stat -Lc 'resolver_permissions=%a' /etc/resolv.conf
+          python3 scripts/ci/test_ubuntu_dns.py
+          sudo python3 scripts/ci/ubuntu-dns.py
           if getent ahostsv4 archive.ubuntu.com >/dev/null; then
             echo 'host_dns=available'
           else
@@ -239,6 +243,8 @@ jobs:
       - name: Prepare the browser before application services
         run: |
           stat -Lc 'resolver_permissions=%a' /etc/resolv.conf
+          python3 scripts/ci/test_ubuntu_dns.py
+          sudo python3 scripts/ci/ubuntu-dns.py
           if getent ahostsv4 archive.ubuntu.com >/dev/null; then
             echo 'host_dns=available'
           else
@@ -315,6 +321,8 @@ jobs:
       - name: Prepare the browser before application services
         run: |
           stat -Lc 'resolver_permissions=%a' /etc/resolv.conf
+          python3 scripts/ci/test_ubuntu_dns.py
+          sudo python3 scripts/ci/ubuntu-dns.py
           if getent ahostsv4 archive.ubuntu.com >/dev/null; then
             echo 'host_dns=available'
           else
