@@ -37,6 +37,8 @@ HTTPS 使用 Node 默认验证和 `NODE_EXTRA_CA_CERTS` 提供的公司 CA，不
 
 数据口只代理 `GET /hosting/discovery`、`GET /hosting/capabilities`、非管理页面 `/browser/<version>/...` 静态资源和已授权 `POST /browser/<version>/cool.html`。启动页面的 `WOPISrc` 与 form `access_token` 在转发前验证。静态资源可无 Origin；携带 Origin 时只能是固定公开网关或源 origin。WebSocket 必须携带其中一个 Origin。
 
+Nextcloud 33.0.10 的签名页面策略 `Referrer-Policy: no-referrer` 使 richdocuments 的跨源表单启动请求实际携带 `Origin: null`，且没有 Referer。仅上述精确 HTML 启动 POST 接受字面值 `null`；缺少 Origin、任意其他 origin、静态资源的 null 和 WebSocket 的 null 均拒绝。这个值不证明来源或身份，授权仍须同一 WOPISrc、bearer token、CFI 身份及当前 ACL 全部通过；不新增 cookie 或依赖不存在的 Referer/Fetch Metadata。该兼容分支根据真实浏览器请求核验，不能扩大为其他接口的通用例外。
+
 WebSocket 接受固定 CODE 26.04 的 `/cool/ws?WOPISrc=...&access_token=...`，也接受旧 `/cool/<encoded-WOPI-with-token>/ws`。只允许固定 WOPI origin 和 `/index.php/apps/richdocuments/wopi/files/<numericId_instanceId>` 路径；所有身份参数只能出现一次，嵌套/外层冲突、非预期认证参数和 HTTP slow-proxy 传输被拒绝。向上游统一生成新 URL，丢弃旧 reconnect/route hints，每次 upgrade 重新授权。令牌只驻留会话内存，关闭时释放绑定；它不成为日志或持久状态。
 
 授权顺序：

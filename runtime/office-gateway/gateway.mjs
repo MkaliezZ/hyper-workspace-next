@@ -369,18 +369,24 @@ export function createGateway(config) {
       req.on("error", () => {});
       res.on("error", () => {});
       try {
-        checkRequestHeaders(req, config);
         const url = requestUrl(req.url);
         if (url.pathname === "/health" && req.method === "GET") {
+          checkRequestHeaders(req, config);
           reply(res, 200, { ok: true, protocol: "hyper-office-gateway.v1" });
           return;
         }
         const route = publicRoute(url, req.method);
+        // NC 33's no-referrer policy produces literal Origin:null on the signed
+        // connector's cross-origin launch form. This is not an identity signal:
+        // only this exact route accepts it, and every launch still requires the
+        // bound bearer token's CFI identity and current source ACL. No cookies are used.
+        checkRequestHeaders(req, config, false, route === "launch");
         let body;
         if (route === "launch") {
           demand(
             req.headers.origin === config.sourceOrigin ||
-              req.headers.origin === config.publicOrigin,
+              req.headers.origin === config.publicOrigin ||
+              req.headers.origin === "null",
             "invalid_origin",
           );
           demand(!gateway.holds.size, "permission_change_pending", 423);

@@ -388,6 +388,38 @@ test("HTTP exposes static resources only; launch is authenticated; redirects and
       body: "access_token=bob",
     });
   assert.equal((await launch()).status, 200);
+  const opaqueLaunch = (body = "access_token=bob") =>
+    request(f.port, path, {
+      method: "POST",
+      headers: {
+        origin: "null",
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body,
+    });
+  assert.equal((await opaqueLaunch()).status, 200);
+  assert.equal((await opaqueLaunch("access_token=missing")).status, 403);
+  assert.equal(
+    (
+      await request(f.port, path, {
+        method: "POST",
+        headers: {
+          origin: "http://evil.test",
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: "access_token=bob",
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await request(f.port, "/browser/hash/cool.js", {
+        headers: { origin: "null" },
+      })
+    ).status,
+    403,
+  );
   assert.equal(
     (
       await request(f.port, path, {
@@ -400,6 +432,7 @@ test("HTTP exposes static resources only; launch is authenticated; redirects and
   );
   f.permissions.get("bob").canWrite = false;
   assert.equal((await launch()).status, 403);
+  assert.equal((await opaqueLaunch()).status, 403);
   f.permissions.get("bob").canWrite = true;
   f.sourceState.redirect = true;
   assert.equal((await launch()).status, 403);
@@ -417,6 +450,10 @@ test("upgrade uses both CFI identity and current permissions; unauthorized clien
   const f = await fixture(t);
   assert.notEqual(
     (await connect(f.port, wsPath(), { Origin: undefined })).status,
+    101,
+  );
+  assert.notEqual(
+    (await connect(f.port, wsPath(), { Origin: "null" })).status,
     101,
   );
   assert.notEqual((await connect(f.port, wsPath("missing"))).status, 101);

@@ -69,3 +69,35 @@ test("installation cleanup never removes a product database volume or unlabelled
     assert.deepEqual(failures, ["volume_cleanup_failed"]);
   }
 });
+
+test("installation cleanup only removes its labelled empty Office network", async () => {
+  const project = "hyper-deployment-ci";
+  for (const [label, containers, allowed] of [
+    [project, {}, true],
+    ["foreign", {}, false],
+    [project, { foreignEndpoint: {} }, false],
+  ]) {
+    let removed = false;
+    const failures = await cleanupOwnedResources(
+      { project, sourceVolume: project + "_nextcloud_data" },
+      {},
+      {
+        volumeLabels: () => undefined,
+        verifyPreserved: () => {},
+        networkInfo: () => ({
+          Labels: {
+            "com.docker.compose.project": label,
+            "com.docker.compose.network": "office",
+          },
+          Containers: containers,
+        }),
+        removeNetwork: (name) => {
+          assert.equal(name, project + "_office");
+          removed = true;
+        },
+      },
+    );
+    assert.equal(removed, allowed);
+    assert.deepEqual(failures, allowed ? [] : ["network_cleanup_failed"]);
+  }
+});

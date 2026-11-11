@@ -109,7 +109,12 @@ export function requestUrl(raw) {
   uniqueParams(url.search);
   return url;
 }
-export function checkRequestHeaders(req, config, websocket = false) {
+export function checkRequestHeaders(
+  req,
+  config,
+  websocket = false,
+  opaqueLaunch = false,
+) {
   const singleton = new Set([
     "host",
     "origin",
@@ -136,6 +141,10 @@ export function checkRequestHeaders(req, config, websocket = false) {
   const suppliedOrigin = req.headers.origin;
   demand(
     (!websocket && suppliedOrigin === undefined) ||
+      (!websocket &&
+        opaqueLaunch &&
+        req.method === "POST" &&
+        suppliedOrigin === "null") ||
       suppliedOrigin === config.publicOrigin ||
       suppliedOrigin === config.sourceOrigin,
     "invalid_origin",

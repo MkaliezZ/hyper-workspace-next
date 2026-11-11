@@ -129,6 +129,10 @@ async function prepare() {
     ]),
     "",
   );
+  assert.equal(
+    docker(["network", "ls", "-q", "--filter", `name=^${project}_office$`]),
+    "",
+  );
   await mkdir(directory, { mode: 0o700 }); // No recursive overwrite/reuse of a previous run.
   const value = {
     project,
@@ -447,6 +451,22 @@ export async function cleanupOwnedResources(value, owned, operations) {
   } catch {
     failures.push("volume_cleanup_failed");
   }
+  if (operations.networkInfo) {
+    try {
+      const network = await operations.networkInfo(value.project + "_office");
+      if (network) {
+        assert.equal(
+          network.Labels?.["com.docker.compose.project"],
+          value.project,
+        );
+        assert.equal(network.Labels?.["com.docker.compose.network"], "office");
+        assert.equal(Object.keys(network.Containers || {}).length, 0);
+        await operations.removeNetwork(value.project + "_office");
+      }
+    } catch {
+      failures.push("network_cleanup_failed");
+    }
+  }
   try {
     await operations.verifyPreserved();
   } catch {
@@ -484,6 +504,12 @@ async function cleanup() {
       );
     },
     removeVolume: (name) => docker(["volume", "rm", name]),
+    networkInfo: (name) => {
+      if (!docker(["network", "ls", "-q", "--filter", `name=^${name}$`]))
+        return undefined;
+      return JSON.parse(docker(["network", "inspect", name]))[0];
+    },
+    removeNetwork: (name) => docker(["network", "rm", name]),
     verifyPreserved: preserved,
   });
   assert.ok(!recordFailed && failures.length === 0);
