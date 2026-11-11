@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
   installOfficeOnboardingHandler,
+  recordOfficeReplacement,
   recoverOfficeConflict,
 } from "../nextcloud/office-ui";
 
@@ -62,6 +63,58 @@ test("Office onboarding handles late welcome frames and preserves unrelated dial
       );
     expect(clicked).toBe(false);
     await expect(frame.locator("#unrelated")).toBeVisible();
+  } finally {
+    await context.close();
+  }
+});
+
+test("Office revision recording closes its real menu overlay before editing", async ({
+  browser,
+}) => {
+  const context = await browser.newContext();
+  context.setDefaultTimeout(1500);
+  try {
+    await context.route("http://office-ui-editor.test/**", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: `<style>[hidden] { display:none !important }
+          #document-container { width:750px;height:400px;margin-top:80px }
+          .jsdialog-overlay { position:fixed;inset:0;z-index:5 }
+          #menu { position:fixed;left:200px;top:80px;z-index:6;background:white }
+          </style><button id="Review-tab-label">Review</button>
+          <div id="Review-container"><div id="overflow-button-review-tracking" class="menubutton">
+            <button class="arrowbackground" onclick="document.querySelector('#menu').hidden=false;document.querySelector('.jsdialog-overlay').hidden=false">More</button>
+          </div></div>
+          <div id="overflow-button-review-tracking-dropdown-overlay" class="jsdialog-overlay cancellable" hidden
+            onclick="this.hidden=true;document.querySelector('#menu').hidden=true"></div>
+          <div id="menu" hidden><div class="unoTrackChanges"><button class="unobutton"
+            onclick="document.body.dataset.recording='true'">Record</button></div></div>
+          <div id="document-container">Document</div>
+          <div id="searchterm" hidden><input id="searchterm-input-dialog"><input id="replaceterm-input-dialog">
+            <button id="replaceall-button" onclick="document.body.dataset.replacement=document.querySelector('#replaceterm-input-dialog').value">Replace all</button></div>
+          <script>window.addEventListener('keydown', event => {
+            if(event.ctrlKey && event.key==='h') {event.preventDefault();document.querySelector('#searchterm').hidden=false;}
+            if(event.key==='Escape') document.querySelector('#searchterm').hidden=true;
+            if(event.ctrlKey && event.key==='s') {event.preventDefault();document.body.dataset.saved='true';}
+          });</script>`,
+      }),
+    );
+    const page = await context.newPage();
+    await page.setContent(
+      '<iframe name="editor" width="900" height="600" src="http://office-ui-editor.test/review"></iframe>',
+    );
+    const frame = page.frame({ name: "editor" })!;
+    await recordOfficeReplacement(page, frame, "Original", "Replacement");
+    await expect(frame.locator("body")).toHaveAttribute(
+      "data-recording",
+      "true",
+    );
+    await expect(frame.locator("body")).toHaveAttribute(
+      "data-replacement",
+      "Replacement",
+    );
+    await expect(frame.locator("body")).toHaveAttribute("data-saved", "true");
+    expect(await frame.locator(".jsdialog-overlay").isVisible()).toBe(false);
   } finally {
     await context.close();
   }

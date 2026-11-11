@@ -22,7 +22,9 @@ export async function installOfficeOnboardingHandler(frame: Frame) {
       }
       if (await tour.isVisible()) {
         try {
-          await tour.getByText("Skip", { exact: true }).click({ timeout: 2000 });
+          await tour
+            .getByText("Skip", { exact: true })
+            .click({ timeout: 2000 });
         } catch (error) {
           // COOL can remove the animated tour before Skip becomes stable.
           // Only a confirmed disappearance on the same live page is success;
@@ -87,7 +89,15 @@ export async function recordOfficeReplacement(
   replacement: string,
 ) {
   await (await reviewControl(frame, "unoTrackChanges")).click();
-  await page.keyboard.press("Escape");
+  const overflow = frame.locator(
+    "#overflow-button-review-tracking-dropdown-overlay.cancellable",
+  );
+  if (await overflow.isVisible()) {
+    // The fixed COOL dropdown closes through its overlay's normal onclick.
+    // Escape does not consistently dismiss this notebookbar overflow menu.
+    await overflow.click({ position: { x: 8, y: 8 } });
+    await expect.poll(() => overflow.isVisible()).toBe(false);
+  }
   await frame
     .locator("#document-container")
     .click({ position: { x: 300, y: 300 } });
