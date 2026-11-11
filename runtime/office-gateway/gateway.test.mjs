@@ -4,6 +4,9 @@ import http from "node:http";
 import net from "node:net";
 import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
+import { readFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { createGateway } from "./gateway.mjs";
 import { sanitizeGatewayStatus } from "../../scripts/ci/office-gateway-diagnostics.mjs";
 import {
@@ -444,6 +447,37 @@ test("HTTP exposes static resources only; launch is authenticated; redirects and
       })
     ).status,
     403,
+  );
+});
+
+test("the documented Compose health command reaches the strict internal Host over loopback", async (t) => {
+  const f = await fixture(t);
+  assert.equal(
+    (
+      await request(f.port, "/health", {
+        headers: { host: `127.0.0.1:${f.port}` },
+      })
+    ).status,
+    403,
+  );
+  const compose = await readFile(
+    new URL("../../deploy/compose.office.yaml", import.meta.url),
+    "utf8",
+  );
+  const command = compose.match(/^\s+test: \[CMD, node, -e, (".+")\]$/m);
+  assert.ok(command, "The formal gateway health command must be exercised");
+  const script = JSON.parse(command[1]);
+  assert.ok(script.includes("http://127.0.0.1:9981/health"));
+  await promisify(execFile)(
+    process.execPath,
+    [
+      "-e",
+      script.replace(
+        "http://127.0.0.1:9981/health",
+        `http://127.0.0.1:${f.port}/health`,
+      ),
+    ],
+    { timeout: 5000 },
   );
 });
 

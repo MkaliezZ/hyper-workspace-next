@@ -39,7 +39,7 @@ services:
     depends_on:
       collabora: { condition: service_started }
     healthcheck:
-      test: [CMD, node, -e, "fetch('http://127.0.0.1:9981/health',{headers:{host:'office-gateway:9981'},signal:AbortSignal.timeout(3000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: [CMD, node, -e, "require('node:http').get('http://127.0.0.1:9981/health',{headers:{host:'office-gateway:9981'},signal:AbortSignal.timeout(3000)},r=>{r.resume();process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 3
