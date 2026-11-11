@@ -93,16 +93,17 @@ test("Office revision recording closes its real menu overlay before editing", as
           #document-header { position:fixed;top:0;left:0;right:0;height:50px;z-index:8 }
           .jsdialog-overlay { position:fixed;inset:0;z-index:5 }
           #menu { position:fixed;left:200px;top:80px;z-index:6;background:white }
-          </style><div id="document-header"><button id="Review-tab-label">Review</button></div>
-          <div id="Review-container"><div id="overflow-button-review-tracking" class="menubutton">
+          </style><div id="document-header"><button id="Review-tab-label" onclick="document.querySelector('#Review-container').hidden=!document.querySelector('#Review-container').hidden">Review</button></div>
+          <div id="Review-container"><div id="overflow-button-review-tracking" class="menubutton unoTrackChanges">
+            <button class="unobutton" onclick="document.querySelector('#menu').hidden=false;document.querySelector('.jsdialog-overlay').hidden=false">Record overflow</button>
             <button class="arrowbackground" onclick="document.querySelector('#menu').hidden=false;document.querySelector('.jsdialog-overlay').hidden=false">More</button>
           </div></div>
           <div id="overflow-button-review-tracking-dropdown-overlay" class="jsdialog-overlay cancellable" hidden
             onclick="this.hidden=true;document.querySelector('#menu').hidden=true"></div>
-          <div id="menu" hidden><div class="unoTrackChanges"><button class="unobutton"
+          <div id="menu" hidden><div class="unoTrackChanges" modelId="review-track-changes"><button class="unobutton"
             onclick="document.body.dataset.toggleUsed='true'">Record</button>
             <button class="arrowbackground" onclick="document.querySelector('#record-scope').hidden=false">Open Record</button>
-            </div><div id="record-scope" hidden><button onclick="document.body.dataset.recording='true';document.querySelector('.unoTrackChanges > button.unobutton').setAttribute('aria-pressed','true');this.parentNode.hidden=true">This user</button></div></div>
+            </div><div id="record-scope" hidden><button onclick="document.body.dataset.recording='true';document.querySelector('[modelId=review-track-changes] > button.unobutton').setAttribute('aria-pressed','true');this.parentNode.hidden=true">This user</button></div></div>
           <div id="document-container">Document</div>
           <div id="searchterm" hidden><input id="searchterm-input-dialog"><input id="replaceterm-input-dialog">
             <button id="replaceall-button" onclick="document.body.dataset.replacement=document.querySelector('#replaceterm-input-dialog').value">Replace all</button></div>

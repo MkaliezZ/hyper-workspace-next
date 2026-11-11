@@ -77,8 +77,15 @@ async function reviewControl(
   frame: Frame,
   command: "unoTrackChanges" | "unoAcceptTrackedChanges",
 ) {
-  await frame.locator("#Review-tab-label").click();
-  const button = frame.locator(`.${command} > button.unobutton:visible`);
+  // Clicking the active tab collapses the notebookbar in the fixed editor.
+  if (!(await frame.locator("#Review-container").isVisible()))
+    await frame.locator("#Review-tab-label").click();
+  // Overflow launchers inherit the first command's CSS class. The editor's
+  // modelId identifies the actual command, before its generated numeric suffix.
+  const modelId = command === "unoTrackChanges"
+    ? "review-track-changes"
+    : "review-accept-tracked-changes";
+  const button = frame.locator(`[modelId="${modelId}"] > button.unobutton:visible`);
   const overflow = frame.locator(
     '#Review-container [id^="overflow-button-review-tracking"].menubutton:visible .arrowbackground',
   );
@@ -105,7 +112,7 @@ export async function recordOfficeReplacement(
   await frame.getByText("This user", { exact: true }).click();
   await expect
     .poll(() =>
-      frame.locator(".unoTrackChanges > button.unobutton").evaluateAll((buttons) =>
+      frame.locator('[modelId="review-track-changes"] > button.unobutton').evaluateAll((buttons) =>
         buttons.some((button) => button.getAttribute("aria-pressed") === "true"),
       ),
     )
