@@ -128,7 +128,11 @@ const meetingReplies = {
 };
 type SeriesChoice = CalendarRepeat["frequency"] | "none" | "";
 type CalendarScope = "series" | "occurrence" | "meeting" | "series_rule";
-type MeetingAction = keyof typeof meetingReplies | "cancel" | "edit";
+type MeetingAction =
+  | keyof typeof meetingReplies
+  | "cancel"
+  | "edit"
+  | "reschedule_series";
 function commandLabel(plan: CalendarCommandInput) {
   if (plan.operation === "create")
     return plan.booking
@@ -144,9 +148,11 @@ function commandLabel(plan: CalendarCommandInput) {
   if (plan.scope === "meeting")
     return plan.change.operation === "reply"
       ? "提交参会回复"
-      : plan.change.operation === "edit"
-        ? "调整会议并通知参会人"
-        : "取消会议并通知参会人";
+      : plan.change.operation === "reschedule_series"
+        ? "整组会议改期并通知参会人"
+        : plan.change.operation === "edit"
+          ? "调整会议并通知参会人"
+          : "取消会议并通知参会人";
   return plan.change.operation === "edit"
     ? "修改本次重复日程"
     : "取消本次重复日程";
@@ -203,7 +209,18 @@ function CalendarPreview({ receipt }: { receipt: CalendarCommandReceipt }) {
         </>
       ) : plan.operation === "update" && plan.scope === "meeting" ? (
         plan.change.operation === "reply" ? (
-          <p>回复：{meetingReplies[plan.change.response]}</p>
+          <p>
+            回复：{meetingReplies[plan.change.response]} ·{" "}
+            {plan.change.target?.scope === "occurrence"
+              ? `仅本次（${plan.change.target.recurrenceId}）`
+              : "整组，含本人收到的单次例外"}
+          </p>
+        ) : plan.change.operation === "reschedule_series" ? (
+          <p>
+            系列首次时间：{plan.change.interval.start} 至{" "}
+            {plan.change.interval.end}
+            ；保留重复规则和已有单次例外的特殊安排。受改期影响的参会状态由来源重新请求回复。
+          </p>
         ) : (
           <p>向来源提交取消会议。</p>
         )
@@ -283,6 +300,9 @@ export function CalendarPanel({
   const [seriesChoice, setSeriesChoice] = useState<SeriesChoice>("");
   const [meeting, setMeeting] = useState<CalendarMeeting | null>(null);
   const [meetingAction, setMeetingAction] = useState<MeetingAction | "">("");
+  const [replyScope, setReplyScope] = useState<"series" | "occurrence">(
+    "series",
+  );
   const objectLoad = useRef<AbortController | null>(null);
   const [title, setTitle] = useState(""),
     [description, setDescription] = useState(""),
@@ -324,6 +344,7 @@ export function CalendarPanel({
     setIntent(null);
     setMeeting(null);
     setMeetingAction("");
+    setReplyScope("series");
     setSeriesRule(null);
     setSeriesChoice("");
     setInvitees([]);
@@ -521,6 +542,7 @@ export function CalendarPanel({
     objectLoad.current?.abort();
     setMeeting(null);
     setMeetingAction("");
+    setReplyScope("series");
     setSeriesRule(null);
     setSeriesChoice("");
     setScope(actionScope);
@@ -558,6 +580,14 @@ export function CalendarPanel({
         calendarId: event.calendarId,
         objectId: event.objectId,
         etag: event.etag,
+        ...(path === "meeting" && event.recurrenceId
+          ? {
+              target: {
+                recurrenceId: event.recurrenceId,
+                window: weekWindow(day),
+              },
+            }
+          : {}),
       }),
       signal: controller.signal,
     })
@@ -639,6 +669,16 @@ export function CalendarPanel({
         if (eventZone.trim()) {
           const seconds = (value: string) =>
             value.length === 16 ? value + ":00" : value;
+          if (
+            scope === "meeting" &&
+            meetingAction === "reschedule_series" &&
+            meeting?.series?.interval.kind === "timed"
+          )
+            return {
+              kind: "timed" as const,
+              start: seconds(start) + "Z",
+              end: seconds(end) + "Z",
+            };
           return {
             kind: "zoned" as const,
             start: seconds(start),
@@ -734,9 +774,26 @@ export function CalendarPanel({
             change:
               meetingAction === "cancel"
                 ? { operation: "cancel" }
-                : meetingAction === "edit"
-                  ? { operation: "edit", patch: patch! }
-                  : { operation: "reply", response: meetingAction },
+                : meetingAction === "reschedule_series"
+                  ? {
+                      operation: "reschedule_series",
+                      interval: interval(),
+                      exceptions: "preserve_overrides",
+                    }
+                  : meetingAction === "edit"
+                    ? { operation: "edit", patch: patch! }
+                    : {
+                        operation: "reply",
+                        response: meetingAction,
+                        target:
+                          replyScope === "occurrence" && selected.recurrenceId
+                            ? {
+                                scope: "occurrence",
+                                recurrenceId: selected.recurrenceId,
+                                window: weekWindow(day),
+                              }
+                            : { scope: "series" },
+                      },
           };
         } else if (scope === "occurrence") {
           if (!selected.recurrenceId) throw new Error("请重新选择重复实例。");
@@ -1349,14 +1406,42 @@ export function CalendarPanel({
                       <select
                         aria-label="会议操作"
                         value={meetingAction}
-                        onChange={(e) =>
-                          setMeetingAction(e.target.value as MeetingAction | "")
-                        }
+                        onChange={(e) => {
+                          const action = e.target.value as MeetingAction | "";
+                          setMeetingAction(action);
+                          setReschedule(action === "reschedule_series");
+                          if (
+                            action === "reschedule_series" &&
+                            meeting.series
+                          ) {
+                            const value = meeting.series.interval;
+                            setAllDay(value.kind === "all_day");
+                            setEventZone(
+                              value.kind === "zoned"
+                                ? value.timeZone
+                                : value.kind === "timed"
+                                  ? "UTC"
+                                  : "",
+                            );
+                            setStart(value.start.replace(/Z$/u, ""));
+                            setEnd(value.end.replace(/Z$/u, ""));
+                          } else if (selected) {
+                            setAllDay(selected.start.kind === "date");
+                            setEventZone("");
+                            setStart(inputTime(selected.start));
+                            setEnd(inputTime(selected.end));
+                          }
+                        }}
                       >
                         <option value="">请选择</option>
                         {meeting.role === "organizer" ? (
                           <>
                             <option value="edit">调整会议并通知参会人</option>
+                            {meeting.series?.canReschedule ? (
+                              <option value="reschedule_series">
+                                整组改期，保留单次例外安排
+                              </option>
+                            ) : null}
                             <option value="cancel">取消会议并通知参会人</option>
                           </>
                         ) : (
@@ -1371,51 +1456,89 @@ export function CalendarPanel({
                       </select>
                     </label>
                   ) : null}
-                  {meetingAction === "edit" ? (
+                  {meeting.role === "attendee" &&
+                  selected?.recurrenceId &&
+                  meetingAction ? (
+                    <label>
+                      回复范围
+                      <select
+                        aria-label="回复范围"
+                        value={replyScope}
+                        onChange={(e) =>
+                          setReplyScope(
+                            e.target.value as "series" | "occurrence",
+                          )
+                        }
+                      >
+                        <option value="series">
+                          整组，含本人收到的单次例外
+                        </option>
+                        <option value="occurrence">仅所选本次</option>
+                      </select>
+                    </label>
+                  ) : null}
+                  {meetingAction === "edit" ||
+                  meetingAction === "reschedule_series" ? (
                     <>
-                      <label>
-                        会议标题
-                        <input
-                          value={title}
-                          maxLength={500}
-                          required
-                          disabled={selected?.truncatedFields.includes(
-                            "summary",
-                          )}
-                          onChange={(e) => setTitle(e.target.value)}
-                        />
-                      </label>
-                      <label>
-                        会议地点
-                        <input
-                          value={location}
-                          maxLength={1000}
-                          disabled={selected?.truncatedFields.includes(
-                            "location",
-                          )}
-                          onChange={(e) => setLocation(e.target.value)}
-                        />
-                      </label>
-                      <label>
-                        会议说明
-                        <textarea
-                          value={description}
-                          maxLength={10000}
-                          disabled={selected?.truncatedFields.includes(
-                            "description",
-                          )}
-                          onChange={(e) => setDescription(e.target.value)}
-                        />
-                      </label>
-                      {!selected?.recurrenceId ? (
-                        <label className="calendar-check">
-                          <input
-                            type="checkbox"
-                            checked={reschedule}
-                            onChange={(e) => setReschedule(e.target.checked)}
-                          />
-                          同时调整会议时间
-                        </label>
+                      {meetingAction === "reschedule_series" &&
+                      meeting.series ? (
+                        <p>
+                          调整系列首次时间。每 {meeting.series.repeat.interval}{" "}
+                          {frequencyLabel[meeting.series.repeat.frequency]}
+                          重复，共 {meeting.series.repeat.count} 次；保留{" "}
+                          {meeting.series.exceptionCount}{" "}
+                          个单次例外的特殊安排和原时区，其他实例按新时间展开。
+                        </p>
+                      ) : null}
+                      {meetingAction === "edit" ? (
+                        <>
+                          <label>
+                            会议标题
+                            <input
+                              value={title}
+                              maxLength={500}
+                              required
+                              disabled={selected?.truncatedFields.includes(
+                                "summary",
+                              )}
+                              onChange={(e) => setTitle(e.target.value)}
+                            />
+                          </label>
+                          <label>
+                            会议地点
+                            <input
+                              value={location}
+                              maxLength={1000}
+                              disabled={selected?.truncatedFields.includes(
+                                "location",
+                              )}
+                              onChange={(e) => setLocation(e.target.value)}
+                            />
+                          </label>
+                          <label>
+                            会议说明
+                            <textarea
+                              value={description}
+                              maxLength={10000}
+                              disabled={selected?.truncatedFields.includes(
+                                "description",
+                              )}
+                              onChange={(e) => setDescription(e.target.value)}
+                            />
+                          </label>
+                          {!selected?.recurrenceId ? (
+                            <label className="calendar-check">
+                              <input
+                                type="checkbox"
+                                checked={reschedule}
+                                onChange={(e) =>
+                                  setReschedule(e.target.checked)
+                                }
+                              />
+                              同时调整会议时间
+                            </label>
+                          ) : null}
+                        </>
                       ) : null}
                       {reschedule ? (
                         <>
@@ -1424,6 +1547,7 @@ export function CalendarPanel({
                               会议时区
                               <input
                                 value={eventZone}
+                                disabled={meetingAction === "reschedule_series"}
                                 maxLength={100}
                                 placeholder="留空使用本机时区"
                                 onChange={(e) => setEventZone(e.target.value)}
