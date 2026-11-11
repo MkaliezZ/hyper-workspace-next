@@ -114,7 +114,11 @@ GET `/api/calendar/runs` 返回本人当前授权来源下最近20次日历Run�
 
 合同在现有 `scope:"meeting"` 下新增 `change.operation:"reschedule_series"`，包含新的 `interval` 和固定 `exceptions:"preserve_overrides"`；`reply.target` 可选 `series` 或 `occurrence` 加原实例与有界窗口。旧命令缺省 target 继续表示整组回复，解析不增加默认字段，保留已有幂等摘要。人工与 DSH/Hermes 仍执行员工已确认的同一个 `manage_calendar` apply 计划，模型不能提供新的目标。新回执区分改期及回复范围，并使用宿主读回的来源状态。
 
-本机通过 31 项日历纯单测、12 项独立 PostgreSQL/HTTP 集成和 2 项新增 Windows Edge 手机界面测试，类型检查通过。已执行集成含跨用户拒绝、旧 ETag、撤销写权限、逐例外回读失败及只对账不重放。独立复核后补上仅例外受邀员工的身份与读取范围修复，新增服务级回归待 CI；31 项日历单测已覆盖该修复。原生双执行器已增加每个引擎各一次整组改期、单次回复及整组含例外回复；真实 Nextcloud 用例增加跨夏令时、移动实例、排除日期、逐次回传与改期后状态重置。这两项新增端到端验证尚未运行通过：WSL 再次返回 `0x8007274c`，随后独立测试库的 UI seed 出现 `ECONNRESET`。此前短暂连接恢复时完成的 12 项集成结果保留；CI 结果另记，不以旧版本 Actions 或协议测试代替新场景验收。 [手机改期](images/calendar-series-organizer-mobile.png) · [手机单次回复](images/calendar-series-attendee-mobile.png)
+本机通过 31 项日历纯单测、12 项独立 PostgreSQL/HTTP 集成和 2 项新增 Windows Edge 手机界面测试，类型检查通过。已执行集成含跨用户拒绝、旧 ETag、撤销写权限、逐例外回读失败及只对账不重放。独立复核后补上仅例外受邀员工的身份与读取范围修复，新增服务级回归待 CI；31 项日历单测已覆盖该修复。原生双执行器已增加每个引擎各一次整组改期、单次回复及整组含例外回复；真实 Nextcloud 用例增加跨夏令时、移动实例、排除日期、逐次回传与改期后状态重置。本机未完成这两项新增端到端验证：WSL 再次返回 `0x8007274c`，随后独立测试库的 UI seed 出现 `ECONNRESET`。此前短暂连接恢复时完成的 12 项集成结果保留；CI 结果另记，不以旧版本 Actions 或协议测试代替新场景验收。 [手机改期](images/calendar-series-organizer-mobile.png) · [手机单次回复](images/calendar-series-attendee-mobile.png)
+
+后续首轮 CI 中，`0e5a62f` 的真实 CalDAV 与本地调度步骤通过，包含新加入的跨夏令时整组改期、逐次回复与状态回传；Office 与 deployment job 也通过。verify 在 104 项单测中有 1 项失败：测试用宽泛的日期替换误改当天 `DTSTAMP`，没有实际构造孤立例外。`42a3734` 已改为精确匹配 `RECURRENCE-ID`，本机复测通过。verify 的数据库集成与原生步骤因前序单测失败尚未进入；仅例外受邀补修与新增服务级用例也等待后续提交 CI。 [首轮运行](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42927991158)
+
+当前会议处理要求来源对象有唯一主事件。仅包含 detached 组件，或已取消主事件但仍有活动例外的员工副本，尚无本批真实来源形态证据；这些兼容场景继续保留，不能凭协议构造宣称支持。员工只在某些例外的 ATTENDEE 中出现、完整对象仍含主事件的情况已加入本批身份与隐私回归。
 
 映射 P04/P07/P08、C03/C04/C05、A01/A02/A06/A10 与 E01/E04/E07/E08/E09/E10 的日历子场景。本批复用 044–048 的命令、私人计划和回执表，无新增迁移。升级时暂停旧 Worker，备份数据库并同步部署 API、Worker、前端；再恢复日历写入口。回退前停止新入口、核对未完成命令并保留账本，不能让旧 Worker 处理新命令类型；须保留能读取这些回执的版本用于对账。回退产品不撤销已保存的来源会议，也不发送补偿邀请。
 
