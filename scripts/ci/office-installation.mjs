@@ -4,6 +4,8 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdir, readFile, writeFile, lstat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { loadSourceFixtureKey } from "./office-source-fixture.mjs";
+import { collectGatewayStatus } from "./office-gateway-diagnostics.mjs";
 
 export const directory = resolve(".runtime/office-installation");
 const sourceServices = [
@@ -89,6 +91,7 @@ async function prepare() {
   const entry = await lstat(original);
   assert.ok(entry.isFile() && !entry.isSymbolicLink());
   const previous = await readFile(original, "utf8");
+  const sourcePassword = await loadSourceFixtureKey(project, original);
   // Refuse a source-configured installation. This is an overlay onto the disposable CI job only.
   for (const key of [
     "NEXTCLOUD_URL",
@@ -161,7 +164,7 @@ async function prepare() {
     );
   env +=
     "\nHYPER_NEXTCLOUD_DB_PASSWORD=" +
-    randomBytes(32).toString("hex") +
+    sourcePassword +
     "\nHYPER_NEXTCLOUD_ADMIN_USER=" +
     value.admin +
     "\nHYPER_NEXTCLOUD_ADMIN_PASSWORD=" +
@@ -416,11 +419,31 @@ async function probe() {
       "Office installation: signed connector, companion ACL, gateway and real DOCX Document_Loaded passed",
     );
   } finally {
-    if (!passed && observer && page)
-      console.error(
-        "Office installation browser summary:",
-        JSON.stringify(await observer.diagnostics(page)),
-      );
+    if (!passed) {
+      try {
+        if (observer && page)
+          console.error(
+            "Office installation browser summary:",
+            JSON.stringify(await observer.diagnostics(page)),
+          );
+      } catch {
+        console.error("Office installation browser summary unavailable");
+      }
+      try {
+        const id = container(
+          value.project,
+          "office-gateway",
+          resolve(directory, "compose.env"),
+          true,
+        );
+        owns(id, value.project, "office-gateway");
+        console.error(
+          JSON.stringify({ office_gateway: collectGatewayStatus(id) }),
+        );
+      } catch {
+        console.error(JSON.stringify({ office_gateway: { available: false } }));
+      }
+    }
     await context?.close().catch(() => {});
     await browser?.close().catch(() => {});
     // Source files are synthetic and the owned source volume is removed by the shell finalizer.

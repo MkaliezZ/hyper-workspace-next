@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { saveSourceFixtureKey } from "../../scripts/ci/office-source-fixture.mjs";
 const origin = "http://127.0.0.1:8080";
 const args = [
   "compose",
@@ -117,6 +118,13 @@ test("Optional source database initialization is idempotent, cannot read product
     expect(
       JSON.parse(run("/app/scripts/deploy-nextcloud.mjs", "--execute")).status,
     ).toBe("ready");
+    // The later installation overlay must reuse this already validated source
+    // credential. The production initializer deliberately refuses rotation.
+    await saveSourceFixtureKey(
+      process.env.COMPOSE_TEST_PROJECT ?? "hyper-deployment-ci",
+      process.env.COMPOSE_TEST_ENV ?? ".runtime/compose-ci.env",
+      password,
+    );
   } finally {
     if (previous === undefined) delete process.env.HYPER_NEXTCLOUD_DB_PASSWORD;
     else process.env.HYPER_NEXTCLOUD_DB_PASSWORD = previous;

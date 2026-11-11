@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { cleanupOwnedResources } from "./office-installation.mjs";
+import {
+  saveSourceFixtureKey,
+  loadSourceFixtureKey,
+} from "./office-source-fixture.mjs";
+import { mkdtemp, rm, writeFile, lstat, chmod } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { resolve, join } from "node:path";
 
 test("installation cleanup rejects foreign labels, continues other cleanup and preserves the existing stack", async () => {
   const project = "hyper-deployment-ci",
@@ -100,4 +107,44 @@ test("installation cleanup only removes its labelled empty Office network", asyn
     assert.equal(removed, allowed);
     assert.deepEqual(failures, allowed ? [] : ["network_cleanup_failed"]);
   }
+});
+
+test("source fixture handoff reuses only the matching private credential and never rotates it", async (t) => {
+  const folder = await mkdtemp(join(tmpdir(), "hyper-office-source-test-"));
+  t.after(async () => {
+    assert.ok(
+      resolve(folder).startsWith(
+        resolve(tmpdir()) + (process.platform === "win32" ? "\\" : "/"),
+      ),
+    );
+    await rm(folder, { recursive: true, force: true });
+  });
+  const path = join(folder, "key.json"),
+    project = "hyper-deployment-ci",
+    env = join(folder, "compose.env"),
+    key = "ab".repeat(32);
+  await saveSourceFixtureKey(project, env, key, path);
+  assert.equal(await loadSourceFixtureKey(project, env, path), key);
+  if (process.platform !== "win32")
+    assert.equal((await lstat(path)).mode & 0o077, 0);
+  await assert.rejects(
+    saveSourceFixtureKey(project, env, "cd".repeat(32), path),
+  );
+  await assert.rejects(loadSourceFixtureKey(project + "-other", env, path));
+  await assert.rejects(loadSourceFixtureKey(project, env + ".other", path));
+  if (process.platform !== "win32") {
+    await chmod(path, 0o644);
+    await assert.rejects(loadSourceFixtureKey(project, env, path));
+    await chmod(path, 0o600);
+  }
+  await writeFile(
+    path,
+    JSON.stringify({
+      format: "hyper-office-source-test.v1",
+      project,
+      environment: resolve(env),
+      password: "invalid",
+    }),
+  );
+  await assert.rejects(loadSourceFixtureKey(project, env, path));
 });

@@ -5,6 +5,7 @@ import net from "node:net";
 import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { createGateway } from "./gateway.mjs";
+import { sanitizeGatewayStatus } from "../../scripts/ci/office-gateway-diagnostics.mjs";
 import {
   websocketBinding,
   requestUrl,
@@ -703,4 +704,47 @@ test("denied pending authorization discards a coalesced partial frame after clie
   await revalidating;
   await until(() => f.gateway.state.views.size === 0);
   assert.equal(f.backendViews.size, 0);
+});
+
+test("private diagnostics retain only bounded counters and distinguish authorization from socket close", async (t) => {
+  const f = await fixture(t);
+  assert.equal(
+    (await request(f.port, "/status", { method: "POST", body: {} })).status,
+    403,
+  );
+  assert.equal(
+    (await f.control("/status", {}, { "x-hyper-office-guard-secret": "wrong" }))
+      .status,
+    403,
+  );
+  assert.equal(
+    (await f.control("/status", {}, { origin: "http://source.test" })).status,
+    403,
+  );
+  assert.equal(
+    (await f.control("/status", { extra: "forbidden" })).status,
+    400,
+  );
+  const peer = await connect(f.port);
+  f.permissions.get("bob").canWrite = false;
+  await f.control("/invalidate", {});
+  await until(() => peer.closed);
+  const response = await f.control("/status", {});
+  assert.equal(response.status, 200);
+  const value = sanitizeGatewayStatus(JSON.parse(response.body));
+  assert.equal(value.connected, 1);
+  assert.equal(value.active, 0);
+  assert.equal(value.closed.authorization_source_denied, 1);
+  assert.ok(value.source.cfi["200"] >= 2);
+  assert.ok(value.source.acl["200"] >= 2);
+  const filtered = sanitizeGatewayStatus({
+    ok: true,
+    token: "synthetic-secret",
+    active: "synthetic-secret",
+    closed: { unknown: "synthetic-secret", client_closed: 3 },
+    source: { cfi: { 200: 2, unknown: "synthetic-secret" } },
+  });
+  assert.equal(JSON.stringify(filtered).includes("synthetic-secret"), false);
+  assert.equal(filtered.closed.client_closed, 3);
+  assert.equal(filtered.active, 0);
 });

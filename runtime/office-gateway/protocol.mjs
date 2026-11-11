@@ -1,6 +1,41 @@
 import { timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 
+export const CLOSE_REASONS = [
+  "client_closed",
+  "client_error",
+  "client_end",
+  "upstream_closed",
+  "upstream_error",
+  "upstream_end",
+  "upstream_handshake",
+  "upstream_timeout",
+  "authorization_source_denied",
+  "authorization_source_identity",
+  "authorization_source_response",
+  "authorization_source_unavailable",
+  "authorization_failed",
+  "buffer_limit",
+  "hold_timeout",
+  "shutdown",
+  "closed",
+];
+export const SOURCE_STATUS_BUCKETS = [
+  "200",
+  "400",
+  "401",
+  "403",
+  "404",
+  "409",
+  "429",
+  "500",
+  "502",
+  "503",
+  "504",
+  "other",
+  "transport",
+];
+
 export class GuardError extends Error {
   constructor(code = "denied", status = 403) {
     super(code);

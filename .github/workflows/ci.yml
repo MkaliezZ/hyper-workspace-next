@@ -194,6 +194,7 @@ jobs:
         run: bash scripts/ci/office-tools-source.sh
       - if: failure()
         run: |
+          node scripts/ci/office-gateway-diagnostics.mjs hyper-office-gateway-test
           if docker inspect hyper-collabora-test >/dev/null 2>&1; then
             docker inspect --format '{{.State.Status}} OOM={{.State.OOMKilled}} exit={{.State.ExitCode}}' hyper-collabora-test
             docker logs --tail 300 hyper-collabora-test 2>&1 | python3 scripts/ci/office-diagnostics.py

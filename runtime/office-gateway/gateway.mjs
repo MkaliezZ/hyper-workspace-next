@@ -12,6 +12,8 @@ import {
   websocketBinding,
   launchBinding,
   publicRoute,
+  CLOSE_REASONS,
+  SOURCE_STATUS_BUCKETS,
 } from "./protocol.mjs";
 
 const SECRET_HEADER = "x-hyper-office-guard-secret";
@@ -62,7 +64,7 @@ function readBody(req, max, timeout) {
     req.once("aborted", aborted);
   });
 }
-async function sourceJson(config, path, body, signal) {
+async function sourceJson(config, path, body, signal, observe, stage) {
   const url = endpoint(config.sourceInternalOrigin, path);
   return new Promise((resolve, reject) => {
     const bytes =
@@ -85,6 +87,7 @@ async function sourceJson(config, path, body, signal) {
         },
       },
       (response) => {
+        observe(stage, String(response.statusCode));
         if (response.statusCode !== 200) {
           response.destroy();
           reject(new GuardError("source_denied"));
@@ -111,19 +114,27 @@ async function sourceJson(config, path, body, signal) {
         });
       },
     );
-    request.on("error", () =>
-      reject(new GuardError("source_unavailable", 503)),
-    );
+    request.on("error", () => {
+      observe(stage, "transport");
+      reject(new GuardError("source_unavailable", 503));
+    });
     request.end(bytes);
   });
 }
-async function authorize(config, binding, signal) {
+async function authorize(config, binding, signal, observe) {
   const timeout = AbortSignal.timeout(config.checkTimeoutMs);
   const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
   const cfiPath =
     binding.path + "?access_token=" + encodeURIComponent(binding.token);
   // CFI binds this token to the WOPI identity. Its historical canwrite is not current ACL.
-  const cfi = await sourceJson(config, cfiPath, undefined, combined);
+  const cfi = await sourceJson(
+    config,
+    cfiPath,
+    undefined,
+    combined,
+    observe,
+    "cfi",
+  );
   demand(
     cfi &&
       typeof cfi.UserId === "string" &&
@@ -140,6 +151,8 @@ async function authorize(config, binding, signal) {
       token: binding.token,
     },
     combined,
+    observe,
+    "acl",
   );
   demand(
     acl &&
@@ -167,8 +180,8 @@ class View {
     this.initialHead = head;
     this.paused = true;
     client.pause();
-    client.on("error", () => this.close());
-    client.on("close", () => this.close());
+    client.on("error", () => this.close("client_error"));
+    client.on("close", () => this.close("client_closed"));
   }
   pause() {
     this.paused = true;
@@ -206,6 +219,7 @@ class View {
             this.gateway.config,
             this.binding,
             this.controller.signal,
+            this.gateway.observeSource,
           );
           if (this.closed) return false;
           if (this.identity)
@@ -219,8 +233,13 @@ class View {
           this.validUntil = Date.now() + this.gateway.config.leaseMs;
           this.resume();
           return true;
-        } catch {
-          this.close();
+        } catch (error) {
+          const reason =
+            "authorization_" +
+            (error instanceof GuardError ? error.code : "failed");
+          this.close(
+            CLOSE_REASONS.includes(reason) ? reason : "authorization_failed",
+          );
           return false;
         }
       }
@@ -234,19 +253,23 @@ class View {
   }
   connect(backend, backendHead) {
     this.backend = backend;
+    this.gateway.connected = Math.min(
+      Number.MAX_SAFE_INTEGER,
+      this.gateway.connected + 1,
+    );
     backend.pause();
-    backend.on("error", () => this.close());
-    backend.on("close", () => this.close());
+    backend.on("error", () => this.close("upstream_error"));
+    backend.on("close", () => this.close("upstream_closed"));
     this.directions = [
-      this.direction(this.client, backend),
-      this.direction(backend, this.client),
+      this.direction(this.client, backend, "client_end"),
+      this.direction(backend, this.client, "upstream_end"),
     ];
     if (this.initialHead.length) this.directions[0].enqueue(this.initialHead);
     if (backendHead.length) this.directions[1].enqueue(backendHead);
     this.initialHead = Buffer.alloc(0);
     this.resume();
   }
-  direction(input, output) {
+  direction(input, output, endReason) {
     const view = this;
     const direction = {
       queue: [],
@@ -259,7 +282,7 @@ class View {
           this.bytes + output.writableLength >
           view.gateway.config.maxBuffer
         ) {
-          view.close();
+          view.close("buffer_limit");
           return;
         }
         this.queue.push(chunk);
@@ -301,12 +324,17 @@ class View {
       direction.waiting = false;
       direction.flush();
     });
-    input.on("end", () => view.close());
+    input.on("end", () => view.close(endReason));
     return direction;
   }
-  close() {
+  close(reason = "closed") {
     if (this.closed) return;
     this.closed = true;
+    const key = CLOSE_REASONS.includes(reason) ? reason : "closed";
+    this.gateway.closedReasons[key] = Math.min(
+      Number.MAX_SAFE_INTEGER,
+      this.gateway.closedReasons[key] + 1,
+    );
     clearTimeout(this.leaseTimer);
     this.controller.abort();
     this.client.destroy();
@@ -329,6 +357,15 @@ export function createGateway(config) {
     holds: new Map(),
     finishedHolds: new Map(),
     generation: 0,
+    attempted: 0,
+    connected: 0,
+    closedReasons: Object.fromEntries(CLOSE_REASONS.map((key) => [key, 0])),
+    sourceStatuses: Object.fromEntries(
+      ["cfi", "acl"].map((stage) => [
+        stage,
+        Object.fromEntries(SOURCE_STATUS_BUCKETS.map((key) => [key, 0])),
+      ]),
+    ),
     pauseAll() {
       this.generation++;
       for (const view of this.views) view.pause();
@@ -358,6 +395,13 @@ export function createGateway(config) {
       while (this.finishedHolds.size > 256)
         this.finishedHolds.delete(this.finishedHolds.keys().next().value);
     },
+  };
+  gateway.observeSource = (stage, status) => {
+    const key = SOURCE_STATUS_BUCKETS.includes(status) ? status : "other";
+    gateway.sourceStatuses[stage][key] = Math.min(
+      Number.MAX_SAFE_INTEGER,
+      gateway.sourceStatuses[stage][key] + 1,
+    );
   };
   const server = http.createServer(
     {
@@ -397,7 +441,12 @@ export function createGateway(config) {
             415,
           );
           body = await readBody(req, config.maxBody, config.requestTimeoutMs);
-          await authorize(config, launchBinding(url, body, config));
+          await authorize(
+            config,
+            launchBinding(url, body, config),
+            undefined,
+            gateway.observeSource,
+          );
           demand(!gateway.holds.size, "permission_change_pending", 423);
         } else
           demand(
@@ -511,6 +560,10 @@ export function createGateway(config) {
       );
       const binding = websocketBinding(req.url, config);
       view = new View(gateway, socket, binding, head);
+      gateway.attempted = Math.min(
+        Number.MAX_SAFE_INTEGER,
+        gateway.attempted + 1,
+      );
       gateway.views.add(view);
       if (!(await view.check())) return;
       demand(
@@ -535,7 +588,10 @@ export function createGateway(config) {
         headers,
       });
       view.pendingRequest = proxy;
-      const timer = setTimeout(() => view.close(), config.checkTimeoutMs);
+      const timer = setTimeout(
+        () => view.close("upstream_timeout"),
+        config.checkTimeoutMs,
+      );
       proxy.once("upgrade", (response, upstream, upstreamHead) => {
         clearTimeout(timer);
         view.pendingRequest = undefined;
@@ -553,7 +609,7 @@ export function createGateway(config) {
           upstreamHead.length > config.maxBuffer
         ) {
           upstream.destroy();
-          view.close();
+          view.close("upstream_handshake");
           return;
         }
         socket.write(
@@ -566,11 +622,11 @@ export function createGateway(config) {
       proxy.once("response", (response) => {
         clearTimeout(timer);
         response.destroy();
-        view.close();
+        view.close("upstream_handshake");
       });
       proxy.once("error", () => {
         clearTimeout(timer);
-        view.close();
+        view.close("upstream_error");
       });
       proxy.end();
     } catch (error) {
@@ -596,7 +652,9 @@ export function createGateway(config) {
         );
         demand(
           req.method === "POST" &&
-            ["/pause", "/revalidate", "/invalidate"].includes(req.url),
+            ["/pause", "/revalidate", "/invalidate", "/status"].includes(
+              req.url,
+            ),
           "unsupported_route",
         );
         demand(
@@ -618,6 +676,19 @@ export function createGateway(config) {
           "invalid_body",
           400,
         );
+        if (req.url === "/status") {
+          demand(Object.keys(body).length === 0, "invalid_body", 400);
+          reply(res, 200, {
+            ok: true,
+            attempted: gateway.attempted,
+            connected: gateway.connected,
+            active: gateway.views.size,
+            holds: gateway.holds.size,
+            closed: gateway.closedReasons,
+            source: gateway.sourceStatuses,
+          });
+          return;
+        }
         if (req.url === "/invalidate") {
           demand(Object.keys(body).length === 0, "invalid_body", 400);
           gateway.pauseAll();
@@ -642,7 +713,7 @@ export function createGateway(config) {
           if (!gateway.holds.has(body.id)) {
             const hold = { expired: false, timer: undefined };
             hold.timer = setTimeout(() => {
-              for (const view of [...gateway.views]) view.close();
+              for (const view of [...gateway.views]) view.close("hold_timeout");
               // Keep the gate held until the authenticated mutation's completion arrives.
               // A lost completion never silently reopens access after an unknown mutation.
               hold.expired = true;
@@ -683,7 +754,7 @@ export function createGateway(config) {
     control,
     state: gateway,
     async close() {
-      for (const view of [...gateway.views]) view.close();
+      for (const view of [...gateway.views]) view.close("shutdown");
       for (const hold of gateway.holds.values()) clearTimeout(hold.timer);
       gateway.holds.clear();
       await Promise.all(
