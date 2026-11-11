@@ -192,6 +192,17 @@ jobs:
         run: bash scripts/ci/office-batch.sh
       - name: Verify reviewed copies against real Nextcloud and the editor
         run: bash scripts/ci/office-tools-source.sh
+      - name: Preserve synthetic revision evidence on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: synthetic-office-revisions
+          path: |
+            .runtime/office-evidence/collaboration-saved.docx
+            .runtime/office-evidence/summary.json
+          if-no-files-found: ignore
+          retention-days: 7
+          include-hidden-files: true
       - if: failure()
         run: |
           node scripts/ci/office-gateway-diagnostics.mjs hyper-office-gateway-test

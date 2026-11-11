@@ -1,10 +1,10 @@
-# 日历排期：开发中
+# 日历排期：能力与验证
 
-当前支持来源日历、重复日程与例外、候选预约、会议邀请与回复、单次会议改期及私人项目关联。真实来源和真实模型仍分开验收。 [v2.0 基线](PHASE2-BASELINE.md)
+当前支持来源日历、重复日程与例外、候选预约、会议邀请、本次或整组含例外的回复、单次和有界整组会议改期及私人项目关联。真实来源和真实模型分别记录。 [v2.0 基线](PHASE2-BASELINE.md)
 
 ## 来源边界
 
-`apps/api/src/providers/calendar.ts` 定义 CalendarProvider；`nextcloud-calendar.ts` 使用员工来源凭据和后端解析的 remote UID。日历路径限制在本人 CalDAV calendar-home，支持来源挂载到本人根下的共享日历；实际共享路径兼容性待真实 Nextcloud 验证。不使用模型指定身份、服务器或任意 URL。
+`apps/api/src/providers/calendar.ts` 定义 CalendarProvider；`nextcloud-calendar.ts` 使用员工来源凭据和后端解析的 remote UID。日历路径限制在本人 CalDAV calendar-home，支持来源挂载到本人根下的共享日历；Nextcloud 33.0.10 的只读共享挂载与撤权已由真实来源用例验证，兼容范围见下文。不使用模型指定身份、服务器或任意 URL。
 
 PROPFIND 按 XML namespace 识别日历及当前读取/新增/修改/删除权限。REPORT 查询采用半开 UTC 时间窗口，单次最多 93 天、500 对象、2 MiB；单对象最多 256 KiB。不静默截断结果。返回完整 VCALENDAR，保留 VTIMEZONE、重复主事件/例外/EXDATE；REPORT 的 XML 换行规范化回 CRLF，GET 保留来源文本。原始查询不展开重复实例。新增 occurrences 查询将相同有界窗口交给来源 CalDAV expand，返回标记为 expanded 的只读表示；编辑前必须重新读取原始主事件。calendar-projection 将已展开事件转成日期/UTC 实例，缺失时区或浮动时间保持明确状态，不能偷偷采用服务器本地时区；来源未展开、反向时间、重复实例或超过1000实例则整体失败。忙闲查询同时核对原始日程与来源展开结果。详见下文。
 
@@ -117,6 +117,8 @@ GET `/api/calendar/runs` 返回本人当前授权来源下最近20次日历Run�
 本机通过 31 项日历纯单测、12 项独立 PostgreSQL/HTTP 集成和 2 项新增 Windows Edge 手机界面测试，类型检查通过。已执行集成含跨用户拒绝、旧 ETag、撤销写权限、逐例外回读失败及只对账不重放。独立复核后补上仅例外受邀员工的身份与读取范围修复，新增服务级回归待 CI；31 项日历单测已覆盖该修复。原生双执行器已增加每个引擎各一次整组改期、单次回复及整组含例外回复；真实 Nextcloud 用例增加跨夏令时、移动实例、排除日期、逐次回传与改期后状态重置。本机未完成这两项新增端到端验证：WSL 再次返回 `0x8007274c`，随后独立测试库的 UI seed 出现 `ECONNRESET`。此前短暂连接恢复时完成的 12 项集成结果保留；CI 结果另记，不以旧版本 Actions 或协议测试代替新场景验收。 [手机改期](images/calendar-series-organizer-mobile.png) · [手机单次回复](images/calendar-series-attendee-mobile.png)
 
 后续首轮 CI 中，`0e5a62f` 的真实 CalDAV 与本地调度步骤通过，包含新加入的跨夏令时整组改期、逐次回复与状态回传；Office 与 deployment job 也通过。verify 在 104 项单测中有 1 项失败：测试用宽泛的日期替换误改当天 `DTSTAMP`，没有实际构造孤立例外。`42a3734` 已改为精确匹配 `RECURRENCE-ID`，本机复测通过。verify 的数据库集成与原生步骤因前序单测失败尚未进入；仅例外受邀补修与新增服务级用例也等待后续提交 CI。 [首轮运行](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42927991158)
+
+后续 `eb5a20a` 的 [CI 42931572205](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42931572205) 四项全部成功，合入 `bab00cf` 后的 [CI 42934329226](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42934329226) 也四项全部成功。3 项真实 CalDAV 场景覆盖新增整组改期、例外回复及回传；双原生执行器新增操作、仅例外受邀员工的服务权限与手机入口均通过。新增双原生场景使用合成模型响应，不扩展下方六次真实供应商样例的范围。原失败记录保留。
 
 当前会议处理要求来源对象有唯一主事件。仅包含 detached 组件，或已取消主事件但仍有活动例外的员工副本，尚无本批真实来源形态证据；这些兼容场景继续保留，不能凭协议构造宣称支持。员工只在某些例外的 ATTENDEE 中出现、完整对象仍含主事件的情况已加入本批身份与隐私回归。
 

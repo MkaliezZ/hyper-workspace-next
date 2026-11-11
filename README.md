@@ -11,7 +11,7 @@
 
 忙闲查询支持在多个获准日历中，按指定时区、工作日、工作时间和会议时长合并占用、识别冲突并列出候选时段。来源时间无法确定时，结果会指出疑点并暂缓推荐。可以从候选时段直接新建日程。确认提交前会重新核对所选日历，若时段被占用则停止写入。整组重复规则可调整，原有例外会保留。在日程中可选择项目或待办建立仅本人可见的关联，适用于整个重复系列。人工、DSH 和 Hermes 保存前同时核对来源日历和目标权限。DSH 和 Hermes 已各用真实模型通过忙闲查询、候选预约及私人关联检查。 [日历能力与验证记录](docs/CALENDAR.md)
 
-会议支持从本人日历选择当前企业员工并确认发出邀请。参会人可接受、暂定或拒绝，并明确选择整组含例外或仅本次。组织者可查看逐次回复，调整单次会议，或对有界重复会议整组改期：保留频率、次数、时区及单独调整过的时间，普通实例和仅保存回复的例外跟随新系列时间。回执分开记录来源保存、送达和实际参会回复。人工、DSH 和 Hermes 共用相同操作服务。新增整组改期与例外回复已通过本机单元、数据库及手机界面测试；原生双执行器和真实 CalDAV 新场景待本提交 CI 验证。 [改期界面](docs/images/calendar-series-organizer-mobile.png) · [单次回复](docs/images/calendar-series-attendee-mobile.png) · [验证边界](docs/CALENDAR.md#整组会议改期与逐次参会回复)
+会议支持从本人日历选择当前企业员工并确认发出邀请。参会人可接受、暂定或拒绝，并明确选择整组含例外或仅本次。组织者可查看逐次回复，调整单次会议，或对有界重复会议整组改期：保留频率、次数、时区及单独调整过的时间，普通实例和仅保存回复的例外跟随新系列时间。回执分开记录来源保存、送达和实际参会回复。人工、DSH 和 Hermes 共用相同操作服务。新增整组改期与例外回复的单元、数据库、手机界面、双原生执行器及真实 CalDAV 检查已通过；合入 `bab00cf` 后的[四项 CI](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42934329226) 全部成功。双原生新增场景使用合成模型响应，实际供应商样例范围见验证记录。 [改期界面](docs/images/calendar-series-organizer-mobile.png) · [单次回复](docs/images/calendar-series-attendee-mobile.png) · [验证边界](docs/CALENDAR.md#整组会议改期与逐次参会回复)
 
 忙闲查询提交 `db963fa` 的常规、真实 Nextcloud 和容器部署三项 CI 全部通过，其中 84 项浏览器用例、19 项真实来源用例和 7 项容器用例通过。重复日程提交 `48ff0a7` 的三项 CI 也全部通过，真实 Nextcloud 用例验证了跨夏令时展开、单次改期和取消。 [忙闲查询 Actions](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42321513248) · [重复日程 Actions](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42323672261)
 
@@ -45,7 +45,7 @@ Office 助手提供可编辑的修改方案与新副本回执。人工、DSH 和
 
 面向企业内部的 AI 协作 IM：讨论有沉淀，行动有回执，成果能修改，经验能复用。蓝、白、黑配色；拥有自己的业务核心与企业资产服务。
 
-**首阶段可安装源码与部署指南已齐，公司局域网服务器待准备。** 当前已实现聊天/项目、任务/成果、来源文档、模型配置、向量检索、方法复用、权限与执行恢复。阿里杭州私有试用中，真实 Nextcloud + DeepSeek + 双原生执行器已完成22次成功Run，3次失败保留并核对；仅使用合成资料。公司服务器尚未安装，不据此声称生产上线。Calendar、复杂办公/媒体按冻结基线后续阶段补齐。
+**可安装源码与部署指南已齐，公司局域网服务器待准备。** 当前已实现聊天/项目、任务/成果、来源文档、模型配置、向量检索、方法复用、权限与执行恢复，日历、审批、OCR 与 Office 的扩展范围见上文。首阶段阿里杭州私有试用中，真实 Nextcloud + DeepSeek + 双原生执行器已完成22次成功Run，3次失败保留并核对；仅使用合成资料。公司服务器尚未安装。音视频/媒体编辑仍为后续范围。
 
 实现 `5b7d0bb8490b45d2c69939b35d8ac6173d3d599f` 的 [CI 41696471949](https://github.com/MkaliezZ/hyper-workspace/actions/runs/41696471949) 三个任务全部成功，逐份完成日志核对453项：65单元、9 Python、8解析、255数据库、9原生、78 UI、18真实来源、7容器、4 IP TLS/代理；78 UI无重试，来源18项用时13.5分钟。真实来源新增本人历史元数据与来源撤权404，容器包括043迁移及配套产品恢复。协议模型与真实供应商结果仍分别记录。 [软件交付入口](docs/DELIVERY.md) · [交付核对](docs/DELIVERY-CHECKLIST.md#当前交付状态) · [云端联合记录](docs/CLOUD-TRIAL-ACCEPTANCE.md) · [公司内网安装](docs/DEPLOYMENT-INTRANET.md)。
 
@@ -245,7 +245,7 @@ HYPER_REVISION=$(git rev-parse HEAD) docker compose --env-file .env.compose up -
 
 ## 企业文件与个人资料
 
-Nextcloud Files/WebDAV 支持浏览与显式导入，副本仅本人可见，可建立语义索引。读取、检索和索引重新检查来源；源更新、删除或撤权后停止使用旧正文和向量。文本/Markdown 与 PDF/DOCX/XLSX/PPTX 受控文本提取的真实来源/容器场景已通过 CI，成果保存界面竞态修复也已通过完整 CI。长文分块与多资料问答已通过整批 CI；来源文件共享发布、Calendar 和真实检索质量仍待完成。[文件契约](docs/NEXTCLOUD-FILES.md) · [文档提取、限额与部署](docs/DOCUMENT-INGESTION.md)。
+Nextcloud Files/WebDAV 支持浏览与显式导入，副本仅本人可见，可建立语义索引。读取、检索和索引重新检查来源；源更新、删除或撤权后停止使用旧正文和向量。文本/Markdown 与 PDF/DOCX/XLSX/PPTX 受控文本提取的真实来源/容器场景已通过 CI，成果保存界面竞态修复也已通过完整 CI。长文分块与多资料问答已通过整批 CI；日历、来源共享与检索质量的后续证据分别见 [日历](docs/CALENDAR.md)、[文件契约](docs/NEXTCLOUD-FILES.md)和[中文检索记录](docs/SEMANTIC-QUALITY.md)。[文档提取、限额与部署](docs/DOCUMENT-INGESTION.md)。
 
 下图使用明确 UI 协议测试资料，非真实公司文件。
 
