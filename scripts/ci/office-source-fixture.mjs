@@ -14,7 +14,10 @@ export async function saveSourceFixtureKey(
   path = target(),
 ) {
   const scope = binding(project, environment);
-  assert.match(password, /^[a-f0-9]{64}$/);
+  assert.ok(
+    typeof password === "string" && /^[a-f0-9]{64}$/.test(password),
+    "Invalid synthetic source credential",
+  );
   await writeFile(
     path,
     JSON.stringify({
@@ -43,6 +46,9 @@ export async function loadSourceFixtureKey(
   assert.equal(value.format, "hyper-office-source-test.v1");
   assert.equal(value.project, scope.project);
   assert.equal(value.environment, scope.environment);
-  assert.match(value.password, /^[a-f0-9]{64}$/);
+  assert.ok(
+    typeof value.password === "string" && /^[a-f0-9]{64}$/.test(value.password),
+    "Invalid synthetic source credential",
+  );
   return value.password;
 }
