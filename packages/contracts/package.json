@@ -9,7 +9,9 @@
     "./notifications": "./src/notifications.ts",
     "./calendar": "./src/calendar.ts",
     "./approvals": "./src/approvals.ts",
-    "./ocr": "./src/ocr.ts"
+    "./ocr": "./src/ocr.ts",
+    "./office": "./src/office.ts",
+    "./office-runs": "./src/office-runs.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

@@ -1,0 +1,201 @@
+import { expect, type Frame, type Page } from "@playwright/test";
+
+/** Interact through the visible editor UI after the strict load observer passes. */
+export async function installOfficeOnboardingHandler(frame: Frame) {
+  const welcome = frame.locator(".iframe-welcome-wrap");
+  const tour = frame.locator("#modal-dialog-onboarding-tour-overlay");
+  // A welcome frame can appear after Document_Loaded, including while another
+  // collaborator opens the file. Check before each actionability retry rather
+  // than assuming that a one-time absence means onboarding has finished.
+  const page = frame.page();
+  await page.addLocatorHandler(
+    page.locator("body"),
+    async () => {
+      if (await welcome.isVisible()) {
+        const welcomeFrame = frame
+          .childFrames()
+          .find((child) => child.name() === "iframe-welcome-form");
+        if (!welcomeFrame)
+          throw new Error("The visible Office welcome frame is unavailable");
+        await welcomeFrame.waitForLoadState("load");
+        // CODE paints its X as a pseudo-element of a zero-size div. Use the
+        // actual Next / Next / Close buttons, verified with its fixed assets.
+        for (const selector of [
+          "#slide-1-button",
+          "#slide-2-button",
+          "#slide-3-button",
+        ]) {
+          if (!(await welcome.isVisible())) break;
+          await welcomeFrame.locator(selector).click();
+        }
+        await expect.poll(() => welcome.isVisible()).toBe(false);
+      }
+      if (await tour.isVisible()) {
+        try {
+          await tour
+            .getByText("Skip", { exact: true })
+            .click({ timeout: 2000 });
+        } catch (error) {
+          // COOL can remove the animated tour before Skip becomes stable.
+          // Only a confirmed disappearance on the same live page is success;
+          // a remaining overlay or a lost editor must still fail the action.
+          if (page.isClosed() || frame.isDetached() || (await tour.isVisible()))
+            throw error;
+        }
+        await expect.poll(() => tour.isVisible()).toBe(false);
+      }
+    },
+    { noWaitAfter: true },
+  );
+}
+
+export async function replaceOfficeText(
+  page: Page,
+  frame: Frame,
+  previous: string,
+  replacement: string,
+) {
+  await page.keyboard.press("Control+h");
+  await expect.poll(() => frame.locator("#searchterm").count()).toBe(1);
+  // These controls consume keyboard events; DOM fill alone does not update the
+  // remote engine's search/replace state.
+  for (const [selector, value] of [
+    ["#searchterm-input-dialog", previous],
+    ["#replaceterm-input-dialog", replacement],
+  ] as const) {
+    const input = frame.locator(selector);
+    await input.press("Control+a");
+    await input.press("Backspace");
+    await input.pressSequentially(value);
+  }
+  await frame.locator("#replaceall-button").click();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+}
+
+async function reviewControl(
+  frame: Frame,
+  command: "unoTrackChanges" | "unoAcceptTrackedChanges",
+) {
+  // Clicking the active tab collapses the notebookbar in the fixed editor.
+  if (!(await frame.locator("#Review-container").isVisible()))
+    await frame.locator("#Review-tab-label").click();
+  // Overflow launchers inherit the first command's CSS class. The editor's
+  // modelId identifies the actual command, before its generated numeric suffix.
+  const modelId =
+    command === "unoTrackChanges"
+      ? "review-track-changes"
+      : "review-accept-tracked-changes";
+  const button = frame.locator(
+    `[modelId="${modelId}"] > button.unobutton:visible`,
+  );
+  const overflow = frame.locator(
+    '#Review-container [id^="overflow-button-review-tracking"].menubutton:visible .arrowbackground',
+  );
+  await expect
+    .poll(
+      async () => (await button.isVisible()) || (await overflow.isVisible()),
+    )
+    .toBe(true);
+  if (!(await button.isVisible())) await overflow.click();
+  return button;
+}
+
+/** Recording is established by the saved authored revision, not toolbar state. */
+export async function recordOfficeReplacement(
+  page: Page,
+  frame: Frame,
+  previous: string,
+  replacement: string,
+) {
+  const record = await reviewControl(frame, "unoTrackChanges");
+  // The pinned editor offers explicit recording scopes on its split button.
+  // Select this author rather than toggling the current document-wide state.
+  await record.locator("..").locator("button.arrowbackground").click();
+  await frame.getByText("This user", { exact: true }).click();
+  await expect
+    .poll(() =>
+      frame
+        .locator('[modelId="review-track-changes"] > button.unobutton')
+        .evaluateAll((buttons) =>
+          buttons.some(
+            (button) => button.getAttribute("aria-pressed") === "true",
+          ),
+        ),
+    )
+    .toBe(true);
+  const overflow = frame.locator(
+    "#overflow-button-review-tracking-dropdown-overlay.cancellable",
+  );
+  if (await overflow.isVisible()) {
+    // The fixed COOL dropdown closes through its overlay's normal onclick.
+    // Escape does not consistently dismiss this notebookbar overflow menu.
+    const position = await overflow.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      const left = Math.max(0, bounds.left);
+      const top = Math.max(0, bounds.top);
+      const width =
+        Math.min(document.documentElement.clientWidth, bounds.right) - left;
+      const height =
+        Math.min(document.documentElement.clientHeight, bounds.bottom) - top;
+      // The document header sits above this overlay. Read hit targets to pick
+      // exposed menu-dismiss space rather than clicking a fixed covered corner.
+      for (const [xRatio, yRatio] of [
+        [0.5, 0.5],
+        [0.25, 0.75],
+        [0.75, 0.75],
+        [0.1, 0.9],
+      ] as const) {
+        const x = left + width * xRatio;
+        const y = top + height * yRatio;
+        if (document.elementFromPoint(x, y) === element)
+          return { x: x - bounds.left, y: y - bounds.top };
+      }
+      return null;
+    });
+    if (!position)
+      throw new Error("The Office review menu has no exposed dismiss area");
+    await overflow.click({ position });
+    await expect.poll(() => overflow.isVisible()).toBe(false);
+  }
+  await frame
+    .locator("#document-container")
+    .click({ position: { x: 300, y: 300 } });
+  await replaceOfficeText(page, frame, previous, replacement);
+  await page.keyboard.press("Control+s");
+}
+
+export async function acceptOfficeRevisions(page: Page, frame: Frame) {
+  await (await reviewControl(frame, "unoAcceptTrackedChanges")).click();
+  const dialog = frame.getByRole("dialog").filter({
+    has: frame.getByRole("button", { name: "Accept All", exact: true }),
+  });
+  const acceptAll = dialog.getByRole("button", {
+    name: "Accept All",
+    exact: true,
+  });
+  await expect(acceptAll).toBeEnabled();
+  await acceptAll.click();
+  // The dialog is driven by the remote core. Closing it before the updated
+  // empty review list arrives can race the acceptance and subsequent save.
+  await expect(acceptAll).toBeDisabled();
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await frame
+    .locator("#document-container")
+    .click({ position: { x: 300, y: 300 } });
+  await page.keyboard.press("Control+s");
+}
+
+export async function recoverOfficeConflict(frame: Frame, timeout = 30000) {
+  const dialog = frame.locator("#modal-dialog-document-conflict-popup");
+  await expect
+    .poll(() => dialog.isVisible(), {
+      timeout,
+      message: "The live editor must expose the storage conflict",
+    })
+    .toBe(true);
+  await dialog
+    .getByRole("button", { name: "Save to new file", exact: true })
+    .click({ timeout });
+}

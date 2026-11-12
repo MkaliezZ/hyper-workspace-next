@@ -4,15 +4,17 @@
 
 ## 办公内核评估
 
-首轮测试目标是 Collabora CODE 26.04.6.1.1 和 Nextcloud Office 10.3.3。官方发布的连接器清单支持当前部署的 Nextcloud 33。Collabora 官方说明支持桌面和移动设备编辑，也把 CODE 定位为测试和小团队版本。ONLYOFFICE Docs 10.0.0 和连接器 10.2.1 是另一组兼容候选。ONLYOFFICE 社区版可用于桌面网页编辑，官方将手机网页编辑和 Automation API 列在商业版本的能力中。两种编辑器共用 Nextcloud 文件入口，一个部署使用其管理员选定的默认编辑器。 [Collabora CODE](https://www.collaboraonline.com/code/) · [Nextcloud Office 10.3.3](https://github.com/nextcloud/richdocuments/releases/tag/v10.3.3) · [ONLYOFFICE 手机网页能力](https://api.onlyoffice.com/docs/docs-api/get-started/how-it-works/mobile-integration) · [Automation API](https://api.onlyoffice.com/docs/docs-api/usage-api/automation-api)
+本版固定 Collabora CODE 26.04.6.1.1 和 Nextcloud Office 10.3.3，在线编辑与后台 OfficeTools 使用同一版本内核；连接器支持固定的 Nextcloud 33。CODE 面向测试和小团队，目标机并发容量需要实测。早期评估保留 ONLYOFFICE Docs 10.0.0／连接器 10.2.1 作为候选，手机网页编辑与 Automation API 的商业授权是当时的选型约束；它们未接入本版执行链。 [Collabora CODE](https://www.collaboraonline.com/code/) · [Nextcloud Office 10.3.3](https://github.com/nextcloud/richdocuments/releases/tag/v10.3.3) · [ONLYOFFICE 手机网页能力](https://api.onlyoffice.com/docs/docs-api/get-started/how-it-works/mobile-integration) · [Automation API](https://api.onlyoffice.com/docs/docs-api/usage-api/automation-api)
 
-已有经管理员配置的 Nextcloud 办公编辑器时，在私有 Compose 环境文件启用 `NEXTCLOUD_FILES_ENABLED=true` 和 `NEXTCLOUD_OFFICE_ENABLED=true`，然后按现有部署命令重新应用配置。登录企业账号后，从知识库的企业文件中选择“Office 协作”。这是按需启用的入口，编辑器部署与健康情况需要在 Nextcloud 核对。
+按下方配置固定编辑器、网关和来源伴随应用后，在私有 Compose 环境文件启用 `NEXTCLOUD_FILES_ENABLED=true` 和 `NEXTCLOUD_OFFICE_ENABLED=true`，然后按现有部署命令重新应用配置。登录企业账号后，从知识库的企业文件中选择“Office 协作”。现有外部 Nextcloud 也按这组组件及来源当前权限接口接入，实际加载和撤权须在其配置上核对。
 
 ## 当前验证
 
-PostgreSQL 与合成 WebDAV 来源覆盖了功能开关、员工本人、同工作区管理员无文件权限、共享后打开、撤销读取后拒绝、文件 ID 或 ETag 变化，以及不支持的格式。Chromium 在桌面和手机尺寸下验证了入口、链接和撤权提示。编辑器连接、真实往返与并发保存、复杂工作簿及双执行器工具属于后续验收。 [合成表格的手机入口](images/office-source-link-mobile.png)
+`b3eaf5c` 的[四项 CI 已通过](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42930241845)。真实 Collabora UI 修改并保存 DOCX/XLSX/PPTX，WebDAV 下载后核对内容和保留结构，再回工作台确认来源版本变化。双人修改与评论也已通过。覆盖 DOCX 段落/加粗/表格，XLSX 公式缓存/跨表结果/筛选/数据验证/图表，PPTX 幻灯片/表格；样例结果对应这些已列明的结构。
 
-GitHub Actions 加入固定版本的真实编辑器检查。隔离运行器验证公开组件的镜像和安装包、Nextcloud 的 WOPI 连接，并等待 Collabora 报告三种合成文档加载完成。这个检查验证实际打开，协作保存和格式往返另行验收。
+PostgreSQL 与合成 WebDAV 来源覆盖功能开关、员工本人、同工作区管理员无文件权限、共享后打开、撤销读取后拒绝、文件 ID 或 ETag 变化，以及不支持的格式。桌面和手机入口已验证。[OfficeTools](OFFICE-TOOLS.md) 使用同版内核生成可编辑副本，人工/DSH/Hermes 共用权限、方案和回执；真实供应商六份三格式副本的记录见[模型验收](REAL-OFFICE-ACCEPTANCE.md)。命名表与受控 SUM 透视的固定内核验证已通过，限制见[兼容记录](../runtime/office/COMPATIBILITY.md)。修订接受、活动会话撤权、保存冲突恢复和网关组合安装是发布前必须通过的专项检查；发布清单给出对应 revision 与完整 CI 结果。 [合成表格的手机入口](images/office-source-link-mobile.png)
+
+GitHub Actions 的独立 Office job 使用固定镜像与连接器，检查三格式加载、真实编辑保存、双人协作、同核批处理及真实 Nextcloud 新副本。加载断言仍要求 Collabora 报告文档完成，保存断言要求来源文件回读，两个结果分别核对。
 
 ### Windows 接续诊断
 
@@ -48,11 +50,15 @@ office_compose() {
     -f deploy/compose.office.yaml "$@"
 }
 office_compose config --quiet
+node scripts/office-guard-init.mjs
 python3 runtime/nextcloud/install-office.py
-office_compose up -d --wait nextcloud collabora
+office_compose build office-gateway
+office_compose up -d --wait nextcloud collabora office-gateway
 source_container="$(office_compose ps -q nextcloud)"
 editor_container="$(office_compose ps -q collabora)"
+gateway_container="$(office_compose ps -q office-gateway)"
 office_occ() { docker exec --user www-data "$source_container" php occ "$@"; }
+office_occ config:system:set loglevel --type=integer --value=2
 office_install_connector() {
   docker exec "$source_container" test ! -e /var/www/html/custom_apps/richdocuments &&
     docker cp .runtime/nextcloud/richdocuments "$source_container":/var/www/html/custom_apps/ &&
@@ -61,15 +67,37 @@ office_install_connector() {
     office_occ integrity:check-app richdocuments
 }
 office_install_connector
-editor_ip="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$editor_container")"
+office_project="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$gateway_container")"
+office_network="${office_project}_office"
+editor_ip="$(docker inspect --format "{{(index .NetworkSettings.Networks \"$office_network\").IPAddress}}" "$editor_container")"
+gateway_ip="$(docker inspect --format "{{(index .NetworkSettings.Networks \"$office_network\").IPAddress}}" "$gateway_container")"
 test -n "$editor_ip"
-office_occ config:app:set richdocuments wopi_allowlist --value="$editor_ip"
+test -n "$gateway_ip"
+office_occ config:app:set richdocuments wopi_allowlist --value="$editor_ip,$gateway_ip"
 python3 runtime/nextcloud/office-settings.py "$editor_ip"
 docker cp .runtime/nextcloud/zz-hyper-office-settings.config.php "$source_container":/var/www/html/config/
 docker exec --user root "$source_container" chmod 644 /var/www/html/config/zz-hyper-office-settings.config.php
 docker exec -i "$source_container" php /dev/stdin /var/www/html/config/zz-hyper-office-settings.config.php "$editor_ip" < tests/fixtures/office-settings.php
-office_occ richdocuments:activate-config --wopi-url=http://collabora:9980 --callback-url=http://nextcloud
+member_group="$(office_compose exec -T api printenv NEXTCLOUD_MEMBER_GROUP)"
+test -n "$member_group"
+python3 runtime/nextcloud/install-office-guard.py \
+  --secret-file .runtime/office-guard/secret \
+  --gateway-url http://office-gateway:9982 --gateway-ip "$gateway_ip" \
+  --member-group "$member_group"
+docker cp .runtime/nextcloud/hyper_office_guard "$source_container":/var/www/html/custom_apps/
+docker cp .runtime/nextcloud/zz-hyper-office-guard.config.php "$source_container":/var/www/html/config/
+docker exec --user root "$source_container" chown -R www-data:www-data /var/www/html/custom_apps/hyper_office_guard
+docker exec --user root "$source_container" chown www-data:www-data /var/www/html/config/zz-hyper-office-guard.config.php
+docker exec --user root "$source_container" chmod 640 /var/www/html/config/zz-hyper-office-guard.config.php
+office_occ app:enable hyper_office_guard
+office_occ richdocuments:activate-config --wopi-url=http://office-gateway:9981 --callback-url=http://nextcloud
 office_occ config:app:get richdocuments public_wopi_url
 ```
 
-公开编辑器地址应为公司固定 IP 上的 `https://192.168.10.50:8444`。安装 [Office Nginx 模板](../deploy/nginx.office.intranet.conf.example)，替换监听 IP、证书路径和回环端口，执行 `nginx -t` 后再重载。通过受信任的公司根证书访问 `/hosting/discovery`，再从员工浏览器打开 DOCX、XLSX 和 PPTX。应用容器内的 Collabora 地址只供 Nextcloud 查询发现和功能；文件回调和设置预设均走隔离容器网络。若重建 Collabora 后容器地址变化，重新设置 WOPI 白名单、重新生成并复制设置片段，再复核实际文档加载。片段只包含容器 IP，不含凭据；回退时删除该片段并恢复经过验证的应用组合。若另行接入 HTTPS 来源，需要为其配置可信 CA，保留 `ssl.ssl_verification=true`。确认来源连接器和编辑器都可用后，以同一 Compose 文件组合重建 API 和 Worker 让入口启用。
+公开编辑器地址应为公司固定 IP 上的 `https://192.168.10.50:8444`。安装 [Office Nginx 模板](../deploy/nginx.office.intranet.conf.example)，替换监听 IP、证书路径和回环端口，执行 `nginx -t` 后再重载。通过受信任的公司根证书访问 `/hosting/discovery`，再从员工浏览器打开 DOCX、XLSX 和 PPTX。网关同时接入专用 `office-ingress` 网络和隔离的 `office` 网络；前者支持回环数据端口映射，后者承载来源检查和编辑器流量。本次 Linux Docker 实测中，网关仅接入 internal 网络时未建立可用的宿主端口映射。Collabora 仅接入 internal `office` 网络且不发布主机端口；网关控制端口也不发布。此组合要求 Nextcloud 安装在来源地址根路径。已有外部来源必须同样安装伴随应用，并按实际内部地址、网关在来源网络上的直连 IP 与 WOPI 来源配置专用网络。
+
+`hyper_office_guard` 是本仓库维护的独立 Nextcloud 33 应用。它按当前文件读取/修改权限、账号状态和工作区成员组复核 WOPI 身份。普通共享删除和权限更新先暂停编辑流，再按变更后的权限恢复合法会话；其他权限变化以事件通知和短租约复核补充。复核超时会关闭会话。源变更与网关通知不是跨系统事务，不能承诺任意后台路径在零延迟内失效。网关初版限制编辑器导出、剪贴板文件及转换 HTTP 路由；原件和已保存副本通过 Nextcloud 当前授权下载。真实撤权与保存冲突的验收状态以对应提交的专项测试为准。
+
+网关秘密仅存于 `.runtime/office-guard/secret` 与来源私有配置，备份时按凭据保护。初始化脚本保留现有值，父目录为 `0700`，文件以只读方式挂入非 root 网关。Nextcloud 配置由 `www-data` 持有且权限为 `0640`。Nextcloud 日志保持 warning（`loglevel=2`）或更严格，签名连接器的 debug 日志可能包含 WOPI 记录，不能对这些接口开启调试日志。重建 Collabora 或网关后若容器 IP 变化，重新设置两者的 WOPI 白名单、生成并复制对应配置，再核对实际文档加载和撤权。不要只移除网关恢复直连来回退；先停止 Office 入口及编辑会话，回到经过验证的整个组件组合。若另行接入 HTTPS 来源，需要配置可信 CA，保留 `ssl.ssl_verification=true`。确认来源连接器、网关和编辑器均可用后，以同一 Compose 文件组合重建 API 和 Worker 让入口启用。
+
+网关校验连接初始 token 绑定的身份与当前权限。Collabora 协作保存会选择可写会话，且上游支持 token 更新；具体保存身份仍由编辑器与 Nextcloud 共同决定。该网关不提供逐次 PUT 的单作者归因，也不回撤撤权前已经进入共享内核的修改。

@@ -2887,6 +2887,37 @@ p {
 .approval-editor-step { background: #f7f9fd; }
 .approval-reviewers ul { overflow-wrap: anywhere; }
 
+.office-tools-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+}
+.office-tools section { display: grid; gap: 12px; }
+.office-tools button:not(.primary) {
+  border: 1px solid var(--line); border-radius: 7px; padding: 9px 13px;
+  background: white; min-height: 40px;
+}
+.office-tools button:not(.primary):hover:not(:disabled) { background: #f2f7ff; }
+.office-tools h3 { font-size: 16px; }
+.office-tools label { display: grid; gap: 6px; }
+.office-tools textarea { width: 100%; min-height: 90px; }
+.office-tools select { width: 100%; max-width: 100%; }
+.office-tools li { margin-bottom: 12px; overflow-wrap: anywhere; }
+.office-tools li p { white-space: pre-wrap; }
+.office-tools .office-confirm { display: flex; align-items: start; gap: 10px; }
+.office-confirm input { width: auto; margin-top: 4px; }
+.office-preview-scroll { overflow-x: auto; }
+.office-preview-scroll table { width: 100%; border-collapse: collapse; }
+.office-preview-scroll th, .office-preview-scroll td {
+  border: 1px solid #dbe5f2; padding: 10px; text-align: left;
+  white-space: pre-wrap; overflow-wrap: anywhere; vertical-align: top;
+}
+.office-preview-scroll th { background: #f2f7ff; }
+@media (max-width: 680px) {
+  .office-tools-controls { align-items: stretch; flex-direction: column; }
+  .office-preview-scroll table { min-width: 480px; }
+}
 .ocr-actions,
 .ocr-actions form {
   display: flex;

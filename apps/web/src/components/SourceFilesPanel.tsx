@@ -4,6 +4,7 @@ import { officeFormat, type RunState, type SourceFile } from "@hyper/contracts";
 import { supportsOcr } from "@hyper/contracts/ocr";
 import { OcrPanel } from "./OcrPanel";
 import { OfficeFileDialog } from "./OfficeFileDialog";
+import { OfficeToolsDialog } from "./OfficeToolsDialog";
 import { FileReaderPanel } from "./FileReaderPanel";
 import { api, mutation } from "../api";
 interface Imported {
@@ -46,6 +47,7 @@ export function SourceFilesPanel({
     [preview, setPreview] = useState<Preview>(),
     [ocrFile, setOcrFile] = useState<SourceFile>(),
     [officeFile, setOfficeFile] = useState<SourceFile>(),
+    [officeToolsFile, setOfficeToolsFile] = useState<SourceFile>(),
     [notice, setNotice] = useState(""),
     [error, setError] = useState(""),
     [loading, setLoading] = useState(false);
@@ -163,7 +165,8 @@ export function SourceFilesPanel({
       <h3>选择文件，加入个人资料</h3>
       <p className="muted">
         从你有权限的文件中显式选择。支持短文本/Markdown（64 KiB），以及
-        PDF、DOCX、XLSX、PPTX（8 MiB）。文本提取上限 180000 字符。图片和扫描 PDF 可另选 OCR。副本仅你可见，不自动加入项目 AI 上下文。
+        PDF、DOCX、XLSX、PPTX（8 MiB）。文本提取上限 180000 字符。图片和扫描 PDF
+        可另选 OCR。副本仅你可见，不自动加入项目 AI 上下文。
       </p>
       <form
         className="source-folder-form"
@@ -264,8 +267,21 @@ export function SourceFilesPanel({
                 </button>
               ) : null}
               {supportsOcr(file) ? (
-                <button type="button" disabled={busy} onClick={() => setOcrFile(file)}>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setOcrFile(file)}
+                >
                   图片与扫描件 OCR
+                </button>
+              ) : null}
+              {officeEnabled && officeFormat(file) ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setOfficeToolsFile(file)}
+                >
+                  Office 助手
                 </button>
               ) : null}
             </article>
@@ -276,11 +292,28 @@ export function SourceFilesPanel({
         </div>
       )}
       {ocrFile ? (
-        <OcrPanel file={ocrFile} engines={engines} run={run} onRun={onRun}
-          onClose={() => setOcrFile(undefined)} />
+        <OcrPanel
+          file={ocrFile}
+          engines={engines}
+          run={run}
+          onRun={onRun}
+          onClose={() => setOcrFile(undefined)}
+        />
       ) : null}
       {officeFile ? (
-        <OfficeFileDialog file={officeFile} onClose={() => setOfficeFile(undefined)} />
+        <OfficeFileDialog
+          file={officeFile}
+          onClose={() => setOfficeFile(undefined)}
+        />
+      ) : null}
+      {officeToolsFile ? (
+        <OfficeToolsDialog
+          file={officeToolsFile}
+          engines={engines}
+          run={run}
+          onRun={onRun}
+          onClose={() => setOfficeToolsFile(undefined)}
+        />
       ) : null}
       <header className="source-import-heading">
         <h3>已选择的个人文件</h3>

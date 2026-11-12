@@ -31,75 +31,90 @@ export async function createCalendarScope(db: Database) {
     CREDENTIAL_MASTER_KEY: "ab".repeat(32),
   };
   const original = new Map(Object.keys(env).map((k) => [k, process.env[k]]));
-  Object.assign(process.env, env);
-  await db.pool.query(
-    "INSERT INTO cw_workspaces(id,name)VALUES($1,'Synthetic calendar run')",
-    [workspaceId],
-  );
-  const actors: Subject[] = [];
-  for (const uid of ["alice", "bob"]) {
-    const actor: Subject = {
-      id: randomUUID(),
-      workspaceId,
-      name: uid,
-      role: uid === "bob" ? "admin" : "member",
-      demo: false,
-      identityCredentialId: randomUUID(),
-    };
-    const identityId = randomUUID(),
-      password = "synthetic-calendar-password-" + randomUUID();
-    source.add(uid, password);
-    await db.pool.query("INSERT INTO cw_users(id,name)VALUES($1,$2)", [
-      actor.id,
-      uid,
-    ]);
-    await db.pool.query(
-      "INSERT INTO cw_members(workspace_id,user_id,role)VALUES($1,$2,$3)",
-      [workspaceId, actor.id, actor.role],
-    );
-    await db.pool.query(
-      "INSERT INTO cw_external_identities(id,provider_key,remote_uid,user_id,workspace_id)VALUES($1,$2,$3,$4,$5)",
-      [identityId, requireNextcloud().providerKey, uid, actor.id, workspaceId],
-    );
-    await db.pool.query(
-      "INSERT INTO cw_identity_credentials(id,identity_id,login_name,credential_enc)VALUES($1,$2,$3,$4)",
-      [
-        actor.identityCredentialId,
-        identityId,
-        uid,
-        new Vault().encrypt(password),
-      ],
-    );
-    actors.push(actor);
-  }
-  return {
-    source,
-    actor: actors[0]!,
-    peer: actors[1]!,
-    service: new CalendarService(db),
-    create: () =>
-      CalendarCommandInput.parse({
-        operation: "create",
-        calendarId: "personal",
-        idempotencyKey: randomUUID(),
-        draft: {
-          title: "Synthetic private calendar event",
-          description: "Untrusted source data",
-          location: "Synthetic room",
-          interval: {
-            kind: "timed",
-            start: "2026-11-04T01:00:00Z",
-            end: "2026-11-04T02:00:00Z",
-          },
-        },
-      }) as Extract<CalendarCommandInput, { operation: "create" }>,
-    async close() {
+  const close = async () => {
+    try {
       server.closeAllConnections();
       await new Promise<void>((r) => server.close(() => r()));
+    } finally {
       for (const [k, v] of original) {
         if (v === undefined) delete process.env[k];
         else process.env[k] = v;
       }
-    },
+    }
   };
+  Object.assign(process.env, env);
+  try {
+    await db.pool.query(
+      "INSERT INTO cw_workspaces(id,name)VALUES($1,'Synthetic calendar run')",
+      [workspaceId],
+    );
+    const actors: Subject[] = [];
+    for (const uid of ["alice", "bob"]) {
+      const actor: Subject = {
+        id: randomUUID(),
+        workspaceId,
+        name: uid,
+        role: uid === "bob" ? "admin" : "member",
+        demo: false,
+        identityCredentialId: randomUUID(),
+      };
+      const identityId = randomUUID(),
+        password = "synthetic-calendar-password-" + randomUUID();
+      source.add(uid, password);
+      await db.pool.query("INSERT INTO cw_users(id,name)VALUES($1,$2)", [
+        actor.id,
+        uid,
+      ]);
+      await db.pool.query(
+        "INSERT INTO cw_members(workspace_id,user_id,role)VALUES($1,$2,$3)",
+        [workspaceId, actor.id, actor.role],
+      );
+      await db.pool.query(
+        "INSERT INTO cw_external_identities(id,provider_key,remote_uid,user_id,workspace_id)VALUES($1,$2,$3,$4,$5)",
+        [
+          identityId,
+          requireNextcloud().providerKey,
+          uid,
+          actor.id,
+          workspaceId,
+        ],
+      );
+      await db.pool.query(
+        "INSERT INTO cw_identity_credentials(id,identity_id,login_name,credential_enc)VALUES($1,$2,$3,$4)",
+        [
+          actor.identityCredentialId,
+          identityId,
+          uid,
+          new Vault().encrypt(password),
+        ],
+      );
+      actors.push(actor);
+    }
+    return {
+      source,
+      actor: actors[0]!,
+      peer: actors[1]!,
+      service: new CalendarService(db),
+      create: () =>
+        CalendarCommandInput.parse({
+          operation: "create",
+          calendarId: "personal",
+          idempotencyKey: randomUUID(),
+          draft: {
+            title: "Synthetic private calendar event",
+            description: "Untrusted source data",
+            location: "Synthetic room",
+            interval: {
+              kind: "timed",
+              start: "2026-11-04T01:00:00Z",
+              end: "2026-11-04T02:00:00Z",
+            },
+          },
+        }) as Extract<CalendarCommandInput, { operation: "create" }>,
+      close,
+    };
+  } catch (error) {
+    await close();
+    throw error;
+  }
 }

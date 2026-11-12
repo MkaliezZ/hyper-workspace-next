@@ -1,0 +1,19 @@
+{
+  "engineImage": "collabora/code:26.04.6.1.1@sha256:95f29f1c0a1778999125f53f058d968fe0afb37c95e32ebfb9f3444140faebd2",
+  "engineVersion": "Collabora Office 26.04.6.1 febe91b27107ff458ddb8dcdf8c0c6d521483033",
+  "architecture": "amd64",
+  "pyuno": {
+    "package": "collaboraofficebasis-pyuno",
+    "version": "26.04.6-1",
+    "url": "https://www.collaboraoffice.com/repos/CollaboraOnline/26.04-CODE/CODE-deb/collaboraofficebasis-pyuno_26.04.6-1_amd64.deb",
+    "size": 10149642,
+    "sha256": "8ca07ea032c33cea52d37203d7c97f4a34762eef0d971064be4b2c2711e3fd37",
+    "pythonVersion": "3.14.10",
+    "index": "https://www.collaboraoffice.com/repos/CollaboraOnline/26.04-CODE/CODE-deb/Packages"
+  },
+  "engineFiles": {
+    "soffice.bin": "8b01fb5a1700c14454ef996a1e7a33bd3803c6a4d606333637a7748e93172a53",
+    "libmergedlo.so": "07529c3eefa92971d92f59497de7249bfc546a52cfeacdca961680d424770f9a",
+    "types.rdb": "59138547a045461ae22d43fbb62b4b942985742eb691a4d514ab6cdc5ff97b0d"
+  }
+}

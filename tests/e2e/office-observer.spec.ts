@@ -1,10 +1,76 @@
 import { expect, test, type Frame } from "@playwright/test";
+import { createHash } from "node:crypto";
+import { createServer } from "node:http";
+import type { Socket } from "node:net";
 import { observeOffice } from "../nextcloud/office-helpers";
 
 const sourceOrigin = "http://office-source.test";
 const editorOrigin = "http://office-editor.test";
 const foreignOrigin = "http://office-foreign.test";
 const secret = "synthetic-token-must-not-appear";
+
+test("Office connection counts isolate old closed editor sockets without treating a socket as document readiness", async ({
+  browser,
+}) => {
+  const sockets: Socket[] = [];
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { "Content-Type": "text/html" });
+    response.end("<p>Socket counter fixture</p>");
+  });
+  server.on("upgrade", (request, socket) => {
+    const accept = createHash("sha1")
+      .update(
+        request.headers["sec-websocket-key"] +
+          "258EAFA5-E914-47DA-95CA-C5AB0DC85B11",
+      )
+      .digest("base64");
+    socket.write(
+      "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " +
+        accept +
+        "\r\n\r\n",
+    );
+    sockets.push(socket as Socket);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string")
+    throw new Error("Fixture listener unavailable");
+  const origin = "http://127.0.0.1:" + address.port;
+  const context = await browser.newContext();
+  try {
+    const office = await observeOffice(context, origin, sourceOrigin);
+    const first = await context.newPage();
+    const second = await context.newPage();
+    for (const page of [first, second]) {
+      await page.goto(origin);
+      await page.evaluate(
+        (url) => {
+          new WebSocket(url);
+        },
+        origin.replace("http:", "ws:") + "/cool/ws?access_token=" + secret,
+      );
+      await expect.poll(() => office.connections(page).active).toBe(1);
+      expect(office.hasLoaded(page)).toBe(false);
+    }
+    sockets[0]!.end(Buffer.from([0x88, 0x02, 0x03, 0xe8]));
+    await expect
+      .poll(() => office.connections(first))
+      .toEqual({ created: 1, closed: 1, active: 0 });
+    expect(office.connections(second)).toEqual({
+      created: 1,
+      closed: 0,
+      active: 1,
+    });
+    expect(JSON.stringify(await office.diagnostics(first))).not.toContain(
+      secret,
+    );
+    expect(office.hasLoaded(first)).toBe(false);
+  } finally {
+    await context.close();
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
 
 test("Office loading observation rejects unrelated messages and sees the real editor in a nested host", async ({
   browser,

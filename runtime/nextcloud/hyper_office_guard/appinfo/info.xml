@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
+  <id>hyper_office_guard</id>
+  <name>Hyper Office Guard</name>
+  <summary>Current workspace permissions for managed Office sessions</summary>
+  <description>Validates named workspace members and pauses managed Office connections during share changes. The signed Nextcloud Office app is unchanged.</description>
+  <version>0.1.0</version>
+  <licence>mit</licence>
+  <author>Hyper Workspace</author>
+  <namespace>HyperOfficeGuard</namespace>
+  <category>security</category>
+  <dependencies><nextcloud min-version="33" max-version="33"/><php min-version="8.3"/></dependencies>
+</info>

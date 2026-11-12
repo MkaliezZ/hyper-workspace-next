@@ -1,6 +1,20 @@
+import { OfficeRunInput } from "@hyper/contracts/office-runs";
+import {
+  OfficeProposalCreate,
+  OfficeProposalEdit,
+  OfficeProposalApply,
+  OfficeProposalCancel,
+} from "@hyper/contracts/office";
+import { OfficeService } from "./core/office.js";
+import { OfficeRunService } from "./core/office-runs.js";
 import { OcrRunService } from "./core/ocr-runs.js";
 import { verifyKnowledgeSources } from "./core/knowledge-sources.js";
-import { OcrCorrection, OcrRecognition, OcrRunInput, OcrSource } from "@hyper/contracts/ocr";
+import {
+  OcrCorrection,
+  OcrRecognition,
+  OcrRunInput,
+  OcrSource,
+} from "@hyper/contracts/ocr";
 import { OcrService } from "./core/ocr.js";
 import { ApprovalRunInput } from "@hyper/contracts/approvals";
 import { NotificationPolicyService } from "./core/notification-policy.js";
@@ -22,7 +36,11 @@ import {
   RoomManagementRunInput,
 } from "@hyper/contracts/room-management";
 import { OrganizationService } from "./core/organization.js";
-import { OfficeSource, OrganizationPlan, OrganizationQuery } from "@hyper/contracts";
+import {
+  OfficeSource,
+  OrganizationPlan,
+  OrganizationQuery,
+} from "@hyper/contracts";
 import { KnowledgeContextService } from "./core/knowledge-context.js";
 import { WorkPlanService } from "./core/work-plans.js";
 import { WorkPlanResponse, WorkProposal } from "@hyper/contracts";
@@ -336,7 +354,8 @@ class ApiController {
       demoEnabled: process.env.DEMO_MODE === "true",
       nextcloudConfigured,
       filesEnabled,
-      officeEnabled: filesEnabled && process.env.NEXTCLOUD_OFFICE_ENABLED === "true",
+      officeEnabled:
+        filesEnabled && process.env.NEXTCLOUD_OFFICE_ENABLED === "true",
     };
   }
   @Post("auth/nextcloud/start") async startLogin(
@@ -757,41 +776,159 @@ class ApiController {
     await queue.enqueue(r.id);
     return r;
   }
-  @Post("ocr/lookup") async lookupOcr(@Req() req: Request, @Body() body: unknown) {
-    return new OcrRunService(db).review(await subject(req), OcrSource.parse(body));
+  @Post("office/lookup") async lookupOffice(
+    @Req() req: Request,
+    @Body() body: unknown,
+  ) {
+    return new OfficeRunService(db).history(
+      await subject(req),
+      OfficeSource.parse(body),
+    );
+  }
+  @Post("office/inspect") async inspectOffice(
+    @Req() req: Request,
+    @Body() body: unknown,
+  ) {
+    return new OfficeService(db).inspect(
+      await subject(req),
+      OfficeSource.parse(body),
+    );
+  }
+  @Post("office/proposals") async createOffice(
+    @Req() req: Request,
+    @Body() body: unknown,
+  ) {
+    return new OfficeService(db).create(
+      await subject(req),
+      OfficeProposalCreate.parse(body),
+    );
+  }
+  @Get("office/proposals") async listOffice(@Req() req: Request) {
+    return new OfficeService(db).list(await subject(req));
+  }
+  @Get("office/proposals/:id") async getOffice(
+    @Req() req: Request,
+    @Param("id") id: string,
+  ) {
+    return new OfficeService(db).get(await subject(req), uuid(id));
+  }
+  @Post("office/proposals/:id/edit") async editOffice(
+    @Req() req: Request,
+    @Param("id") id: string,
+    @Body() body: unknown,
+  ) {
+    return new OfficeService(db).edit(
+      await subject(req),
+      uuid(id),
+      OfficeProposalEdit.parse(body),
+    );
+  }
+  @Post("office/proposals/:id/apply") async applyOffice(
+    @Req() req: Request,
+    @Param("id") id: string,
+    @Body() body: unknown,
+  ) {
+    return new OfficeService(db).apply(
+      await subject(req),
+      uuid(id),
+      OfficeProposalApply.parse(body),
+    );
+  }
+  @Post("office/proposals/:id/reconcile") async reconcileOffice(
+    @Req() req: Request,
+    @Param("id") id: string,
+    @Body() body: unknown,
+  ) {
+    z.object({}).strict().parse(body);
+    return new OfficeService(db).reconcile(await subject(req), uuid(id));
+  }
+  @Post("office/proposals/:id/cancel") async cancelOffice(
+    @Req() req: Request,
+    @Param("id") id: string,
+    @Body() body: unknown,
+  ) {
+    return new OfficeService(db).cancel(
+      await subject(req),
+      uuid(id),
+      OfficeProposalCancel.parse(body),
+    );
+  }
+  @Post("office/runs") async startOfficeRun(
+    @Req() req: Request,
+    @Body() body: unknown,
+  ) {
+    const run = await service.startOfficeRun(
+      await subject(req),
+      OfficeRunInput.parse(body),
+    );
+    await queue.enqueue(run.id);
+    return run;
+  }
+  @Post("ocr/lookup") async lookupOcr(
+    @Req() req: Request,
+    @Body() body: unknown,
+  ) {
+    return new OcrRunService(db).review(
+      await subject(req),
+      OcrSource.parse(body),
+    );
   }
   @Post("ocr/source-preview") async previewOcrSource(
     @Req() req: Request,
     @Res() res: Response,
     @Body() body: unknown,
   ) {
-    const result = await new OcrService(db).preview(await subject(req), OcrSource.parse(body));
+    const result = await new OcrService(db).preview(
+      await subject(req),
+      OcrSource.parse(body),
+    );
     res.setHeader("Content-Security-Policy", "sandbox");
     res.setHeader("Content-Disposition", "inline");
     return res.status(200).type(result.mime).send(result.bytes);
   }
-  @Post("ocr/runs") async startOcrRun(@Req() req: Request, @Body() body: unknown) {
-    const run = await service.startOcrRun(await subject(req), OcrRunInput.parse(body));
+  @Post("ocr/runs") async startOcrRun(
+    @Req() req: Request,
+    @Body() body: unknown,
+  ) {
+    const run = await service.startOcrRun(
+      await subject(req),
+      OcrRunInput.parse(body),
+    );
     await queue.enqueue(run.id);
     return run;
   }
-  @Post("ocr/recognitions") async recognizeOcr(@Req() req: Request, @Body() body: unknown) {
-    return new OcrService(db).recognize(await subject(req), OcrRecognition.parse(body));
+  @Post("ocr/recognitions") async recognizeOcr(
+    @Req() req: Request,
+    @Body() body: unknown,
+  ) {
+    return new OcrService(db).recognize(
+      await subject(req),
+      OcrRecognition.parse(body),
+    );
   }
   @Get("ocr/documents/:id") async getOcr(
     @Req() req: Request,
     @Param("id") id: string,
     @Query("revision") revision?: string,
   ) {
-    return new OcrService(db).detail(await subject(req), uuid(id),
-      revision === undefined ? undefined : z.coerce.number().int().min(1).max(2147483647).parse(revision));
+    return new OcrService(db).detail(
+      await subject(req),
+      uuid(id),
+      revision === undefined
+        ? undefined
+        : z.coerce.number().int().min(1).max(2147483647).parse(revision),
+    );
   }
   @Post("ocr/documents/:id/confirm") async confirmOcr(
     @Req() req: Request,
     @Param("id") id: string,
     @Body() body: unknown,
   ) {
-    return new OcrService(db).confirm(await subject(req), uuid(id), OcrCorrection.parse(body));
+    return new OcrService(db).confirm(
+      await subject(req),
+      uuid(id),
+      OcrCorrection.parse(body),
+    );
   }
   @Post("files/list") async sourceFiles(
     @Req() req: Request,
@@ -804,7 +941,10 @@ class ApiController {
     @Req() req: Request,
     @Body() body: unknown,
   ) {
-    return new SourceFileService(db).officeLink(await subject(req), OfficeSource.parse(body));
+    return new SourceFileService(db).officeLink(
+      await subject(req),
+      OfficeSource.parse(body),
+    );
   }
   @Post("files/office-version") async officeVersion(
     @Req() req: Request,
@@ -855,8 +995,15 @@ class ApiController {
     @Req() req: Request,
     @Body() body: unknown,
   ) {
-    const input = z.object({ ids: z.array(z.uuid()).min(1).max(50) }).strict().parse(body);
-    return { versions: Object.fromEntries(await verifyKnowledgeSources(db, await subject(req), input.ids)) };
+    const input = z
+      .object({ ids: z.array(z.uuid()).min(1).max(50) })
+      .strict()
+      .parse(body);
+    return {
+      versions: Object.fromEntries(
+        await verifyKnowledgeSources(db, await subject(req), input.ids),
+      ),
+    };
   }
   @Post("knowledge/index") async indexKnowledge(
     @Req() req: Request,
@@ -1432,12 +1579,23 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 app.use((req: Request, res: Response, next: NextFunction) => {
-  if (req.method !== "POST" || !/^\/api\/ocr\/documents\/[0-9a-f-]+\/confirm$/.test(req.path))
+  if (
+    req.method !== "POST" ||
+    !(
+      /^\/api\/ocr\/documents\/[0-9a-f-]+\/confirm$/.test(req.path) ||
+      /^\/api\/office\/proposals(?:\/[0-9a-f-]+\/edit)?$/.test(req.path)
+    )
+  )
     return next();
-  express.json({ limit: "1mb", inflate: false })(req, res, (error?: unknown) => {
-    if (error) res.status(400).json({ message: "校对内容过大或请求不完整。" });
-    else next();
-  });
+  express.json({ limit: "1mb", inflate: false })(
+    req,
+    res,
+    (error?: unknown) => {
+      if (error)
+        res.status(400).json({ message: "校对内容过大或请求不完整。" });
+      else next();
+    },
+  );
 });
 // Binary input is scoped to this one authenticated endpoint; JSON limits remain unchanged.
 app.use(async (req: Request, res: Response, next: NextFunction) => {

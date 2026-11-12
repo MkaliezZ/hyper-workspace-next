@@ -8,12 +8,47 @@ services:
       extra_params: >-
         --o:ssl.enable=false --o:ssl.termination=true --o:ssl.ssl_verification=true
         --o:server_name=${HYPER_OFFICE_PUBLIC_HOST:?Set the HTTPS Office hostname and port without a scheme}
-    ports: ["127.0.0.1:${HYPER_OFFICE_PORT:-8091}:9980"]
     networks: [office]
     stop_grace_period: 45s
+    restart: unless-stopped
+  office-gateway:
+    build:
+      context: .
+      dockerfile: runtime/office-gateway/Dockerfile
+    image: hyper-office-gateway:${HYPER_IMAGE_TAG:-local}
+    init: true
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 192m
+    cpus: 0.50
+    pids_limit: 32
+    environment:
+      HYPER_OFFICE_GATEWAY_BACKEND: http://collabora:9980
+      HYPER_OFFICE_GATEWAY_PUBLIC_ORIGIN: https://${HYPER_OFFICE_PUBLIC_HOST:?Set the HTTPS Office hostname and port without a scheme}
+      HYPER_OFFICE_GATEWAY_INTERNAL_ORIGIN: http://office-gateway:9981
+      HYPER_OFFICE_GATEWAY_SOURCE_ORIGIN: ${NEXTCLOUD_URL:?Set the public HTTPS Nextcloud origin}
+      HYPER_OFFICE_GATEWAY_SOURCE_INTERNAL_ORIGIN: http://nextcloud
+      HYPER_OFFICE_GATEWAY_WOPI_ORIGIN: http://nextcloud
+      HYPER_OFFICE_GATEWAY_GUARD_SECRET_FILE: /run/secrets/office_guard
+    volumes:
+      - ./.runtime/office-guard/secret:/run/secrets/office_guard:ro
+    ports: ["127.0.0.1:${HYPER_OFFICE_PORT:-8091}:9981"]
+    networks: [office, office-ingress]
+    depends_on:
+      collabora: { condition: service_started }
+    healthcheck:
+      test: [CMD, node, -e, "require('node:http').get('http://127.0.0.1:9981/health',{headers:{host:'office-gateway:9981'},signal:AbortSignal.timeout(3000)},r=>{r.resume();process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    stop_grace_period: 15s
     restart: unless-stopped
   nextcloud:
     networks: [default, office]
 networks:
   office:
     internal: true
+  office-ingress:
+    internal: false

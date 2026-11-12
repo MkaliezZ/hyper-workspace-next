@@ -186,7 +186,11 @@ export class NextcloudFilesProvider implements StorageProvider {
     }
     throw new Error("Foreign href");
   }
-  private async properties(path: string[], depth: 0 | 1) {
+  private async properties(
+    path: string[],
+    depth: 0 | 1,
+    requireCreate = false,
+  ) {
     const response = await this.request(
       path,
       "PROPFIND",
@@ -195,7 +199,9 @@ export class NextcloudFilesProvider implements StorageProvider {
         "Content-Type": "application/xml; charset=utf-8",
         Accept: "application/xml",
       },
-      REQUEST,
+      requireCreate
+        ? REQUEST.replace("<oc:fileid/>", "<oc:fileid/><oc:permissions/>")
+        : REQUEST,
     );
     if (response.status !== 207) {
       await response.body?.cancel();
@@ -261,6 +267,13 @@ export class NextcloudFilesProvider implements StorageProvider {
         ).length
           ? "directory"
           : "file";
+        if (
+          requireCreate &&
+          same(selectedPath, path) &&
+          (kind !== "directory" ||
+            !scalar(property(prop, OC, "permissions")).includes("C"))
+        )
+          throw new FileSourceRejected(403);
         const sizeText = scalar(property(prop, DAV, "getcontentlength")).trim(),
           size = sizeText ? Number(sizeText) : 0;
         if (!Number.isSafeInteger(size) || size < 0)
@@ -293,11 +306,16 @@ export class NextcloudFilesProvider implements StorageProvider {
       if (!files.some((file) => same(file.path, path)))
         throw new Error("Missing selected resource");
       return files;
-    } catch {
+    } catch (error) {
+      if (error instanceof FileSourceRejected) throw error;
       throw new ServiceUnavailableException(
         "文件目录格式、来源或范围不受支持。",
       );
     }
+  }
+  /** Nextcloud's live create permission on this employee's DAV directory, before any new-file intent. */
+  async assertWritableDirectory(path: string[]) {
+    await this.properties(path, 0, true);
   }
   /** A single conditional PUT to an employee-owned, newly generated path. Never retries. */
   async uploadNew(path: string[], bytes: Buffer) {
