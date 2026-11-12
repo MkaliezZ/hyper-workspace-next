@@ -1,5 +1,7 @@
 # Hyper Workspace 软件交付入口
 
+**2026-11-12 定位：可安装、受控试用交付版。** [中文首页](../README.md)与[English README](../README.en.md)提供对等的能力、安装和边界说明；[本机跨功能验收](LOCAL-PILOT-ACCEPTANCE.md)记录真实服务/模型与合成业务结果。公司实际安装、真实员工质量验收和切流仍按下文单独完成。
+
 软件沿用冻结三层定义与 DSH 默认/Hermes 必需的技术基线，扩展模块的安装增量见本页末尾。每个源码包的 `manifest.json` 记录完整 Git revision、源码归档 SHA-256、逐文件清单和该 revision 的 CI；`SHA256SUMS.txt` 用于核对归档与清单。当前包和版本说明从 [hyper-workspace-next Releases](https://github.com/MkaliezZ/hyper-workspace-next/releases) 获取。
 
 软件、技术验收、公司安装与组织签收分别记录。公司已选择局域网 Linux 服务器，机器和内网 IP 仍“待准备”；云端合成试用不替代该机器。
@@ -34,5 +36,6 @@
 - OCR 在原部署组合后加入 `deploy/compose.local-ocr.yaml`；服务权重固定并在构建时校验，安装与样例范围见 [OCR](OCR.md)。
 - 在线办公按 [Office](OFFICE.md)准备受限连接器设置、私有网关秘密、来源伴随应用、HTTPS 入口与 `deploy/compose.office.yaml`。该叠加文件用于本仓库自管 Nextcloud 的组合；已有外部来源按其实际地址与直连网关 IP 配置。编辑器本体和网关控制端口均不公开。
 - 生成可编辑副本另加入 `deploy/compose.office-tools.yaml`，按 [批处理安装](../runtime/office/README.md)构建同核服务。保留此前用于来源、OCR、内网代理及证书的所有叠加文件，不用新模块示例替换原安装命令。API/Worker 与相关内网服务一起验证，数据库迁移和受限角色由初始化服务处理。
+- 若环境存在首次 HTTPS 建连失败，可选追加 `deploy/compose.worker-preflight.yaml`；它仅对明确的模型列表端点做无凭据 GET，不生成内容、不重放业务动作，见[启用与验证范围](WORKER-TRANSPORT-PREFLIGHT.md)。
 
 新安装使用生成器创建的 `.env.compose`；已有安装沿用原配置文件、主密钥与数据卷。Office 提案/来源写入进入不明状态时先对账，回退应用不代表已生成的来源副本被撤销。复杂工作簿的支持范围及已知标题限制见 [同核兼容记录](../runtime/office/COMPATIBILITY.md)。

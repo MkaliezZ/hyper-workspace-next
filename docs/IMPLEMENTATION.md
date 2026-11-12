@@ -1,5 +1,13 @@
 # 当前实现进展
 
+## 受控试用软件交付与双语入口（2026-11-12）
+
+- 当前定位为可安装、受控试用交付。源码基线 `50c64f22fb65b7e8497061883ef0dcb1bcad167f` 的四项 CI 全绿；公司 Linux 服务器/IP 仍待准备，正式签收独立记录。
+- WSL2 Ubuntu/Linux amd64 的 9 个真实服务、正常来源登录、两原生执行器和实际 DeepSeek/BGE/OCR/Office 完成合成跨功能验收。初次批次保留 18 成功、15 失败与 20 条未知传输结果；独立诊断不计成业务成果。完整范围、用量和失败见[本机验收摘要](LOCAL-PILOT-ACCEPTANCE.md)。
+- 实际覆盖群聊/纪要/员工任务/修订、报告 v3、私人检索引用、CalDAV 邀请回复、条件并行与串行审批、私人 OCR、三格式 Office 新副本、协作/撤权/冲突恢复，以及空闲时 API/Worker/PostgreSQL 重启持久性。
+- 提取可选无凭据启动预检，保留原模型传输及健康检查；5 项真实子进程/本机网络回归在 Windows 与 Linux Node 24 通过，实际 Compose 与重启后的首项 DSH 模型回读通过。该复验单独记录，说明见[启动预检](WORKER-TRANSPORT-PREFLIGHT.md)。
+- README 改为当前交付入口，增加英文对等说明、贡献/许可边界及已核对的合成界面截图。原 README 批次移到[历史快照](README-HISTORY.zh-CN.md)，PRD 的过时日历/Office 状态已更新；冻结交接包保持不变。本次新提交的完整 CI 与归档以其发布清单为准。
+
 ## Office 结构化修改与实际保存（2026-11-10，美国太平洋时间）
 
 - 加载修复 `fd616a8` 的 [CI 42919022456](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42919022456) 四个 job 全通过，已以 `525a23c` 合入 main；该主分支的 [CI 42922463118](https://github.com/MkaliezZ/hyper-workspace-next/actions/runs/42922463118) 也四项全通过。旧失败记录保留。

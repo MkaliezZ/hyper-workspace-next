@@ -1,0 +1,16 @@
+# Opt-in only. Append to the complete deployment combination; this is not a replacement.
+services:
+  worker:
+    environment:
+      HYPER_WORKER_PREFLIGHT_URL: ${HYPER_WORKER_PREFLIGHT_URL:?Set an explicit unauthenticated model-list endpoint}
+    command:
+      - node
+      - --import
+      - /opt/hyper-worker-transport-preflight.mjs
+      - --import
+      - tsx
+      - dist/worker.js
+    volumes:
+      - ./scripts/worker-transport-preflight.mjs:/opt/hyper-worker-transport-preflight.mjs:ro
+    healthcheck:
+      start_period: 60s
