@@ -82,10 +82,13 @@ async function reviewControl(
     await frame.locator("#Review-tab-label").click();
   // Overflow launchers inherit the first command's CSS class. The editor's
   // modelId identifies the actual command, before its generated numeric suffix.
-  const modelId = command === "unoTrackChanges"
-    ? "review-track-changes"
-    : "review-accept-tracked-changes";
-  const button = frame.locator(`[modelId="${modelId}"] > button.unobutton:visible`);
+  const modelId =
+    command === "unoTrackChanges"
+      ? "review-track-changes"
+      : "review-accept-tracked-changes";
+  const button = frame.locator(
+    `[modelId="${modelId}"] > button.unobutton:visible`,
+  );
   const overflow = frame.locator(
     '#Review-container [id^="overflow-button-review-tracking"].menubutton:visible .arrowbackground',
   );
@@ -112,9 +115,13 @@ export async function recordOfficeReplacement(
   await frame.getByText("This user", { exact: true }).click();
   await expect
     .poll(() =>
-      frame.locator('[modelId="review-track-changes"] > button.unobutton').evaluateAll((buttons) =>
-        buttons.some((button) => button.getAttribute("aria-pressed") === "true"),
-      ),
+      frame
+        .locator('[modelId="review-track-changes"] > button.unobutton')
+        .evaluateAll((buttons) =>
+          buttons.some(
+            (button) => button.getAttribute("aria-pressed") === "true",
+          ),
+        ),
     )
     .toBe(true);
   const overflow = frame.locator(
@@ -163,8 +170,20 @@ export async function acceptOfficeRevisions(page: Page, frame: Frame) {
   const dialog = frame.getByRole("dialog").filter({
     has: frame.getByRole("button", { name: "Accept All", exact: true }),
   });
-  await dialog.getByRole("button", { name: "Accept All", exact: true }).click();
+  const acceptAll = dialog.getByRole("button", {
+    name: "Accept All",
+    exact: true,
+  });
+  await expect(acceptAll).toBeEnabled();
+  await acceptAll.click();
+  // The dialog is driven by the remote core. Closing it before the updated
+  // empty review list arrives can race the acceptance and subsequent save.
+  await expect(acceptAll).toBeDisabled();
   await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await frame
+    .locator("#document-container")
+    .click({ position: { x: 300, y: 300 } });
   await page.keyboard.press("Control+s");
 }
 

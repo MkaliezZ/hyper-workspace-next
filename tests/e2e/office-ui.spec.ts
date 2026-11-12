@@ -1,9 +1,56 @@
 import { expect, test } from "@playwright/test";
 import {
+  acceptOfficeRevisions,
   installOfficeOnboardingHandler,
   recordOfficeReplacement,
   recoverOfficeConflict,
 } from "../nextcloud/office-ui";
+
+test("Office acceptance waits for the core response and saves from the document", async ({
+  browser,
+}) => {
+  const context = await browser.newContext();
+  try {
+    await context.route("http://office-ui-editor.test/**", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: `<style>[hidden]{display:none!important}#document-container{width:700px;height:400px}</style>
+          <div id="Review-container"><div modelId="review-accept-tracked-changes">
+            <button class="unobutton" onclick="document.querySelector('[role=dialog]').hidden=false">Manage</button>
+          </div></div>
+          <div role="dialog" hidden><button id="accept-all" onclick="setTimeout(()=>{this.disabled=true;document.body.dataset.accepted='true'},300)">Accept All</button>
+            <button onclick="document.body.dataset.closedAfterAcceptance=String(document.querySelector('#accept-all').disabled);this.parentNode.hidden=true;document.querySelector('#outside').focus()">Close</button>
+          </div><input id="outside"><div id="document-container" tabindex="0">Document</div>
+          <script>window.addEventListener('keydown', event=>{
+            if(event.ctrlKey&&event.key==='s'){
+              event.preventDefault();
+              document.body.dataset.savedFromDocument=String(document.activeElement.id==='document-container');
+            }
+          });</script>`,
+      }),
+    );
+    const page = await context.newPage();
+    await page.setContent(
+      '<iframe name="editor" width="900" height="600" src="http://office-ui-editor.test/accept"></iframe>',
+    );
+    const frame = page.frame({ name: "editor" })!;
+    await acceptOfficeRevisions(page, frame);
+    await expect(frame.locator("body")).toHaveAttribute(
+      "data-accepted",
+      "true",
+    );
+    await expect(frame.locator("body")).toHaveAttribute(
+      "data-closed-after-acceptance",
+      "true",
+    );
+    await expect(frame.locator("body")).toHaveAttribute(
+      "data-saved-from-document",
+      "true",
+    );
+  } finally {
+    await context.close();
+  }
+});
 
 test("Office onboarding handles late welcome frames and preserves unrelated dialogs", async ({
   browser,
